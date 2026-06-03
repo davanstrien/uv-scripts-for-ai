@@ -1,0 +1,16 @@
+# hf download writes its cache here — never commit it
+.cache/
+**/.cache/
+
+# OS / editor cruft
+.DS_Store
+**/.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.ruff_cache/
+
+# tooling
+.playwright-mcp/

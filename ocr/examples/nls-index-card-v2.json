@@ -1,0 +1,13 @@
+{
+  "image_type": ["index_card", "verso", "cover", "blank", "other"],
+  "heading": "verbatim-string",
+  "heading_type": ["person", "family", "corporate", "geographic", "subject"],
+  "epithet": "string",
+  "entries": [
+    {
+      "ms_no": "verbatim-string",
+      "folios": ["verbatim-string"],
+      "description": "string"
+    }
+  ]
+}

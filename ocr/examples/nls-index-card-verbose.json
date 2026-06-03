@@ -1,0 +1,13 @@
+{
+  "image_type": ["index_card", "verso", "cover", "blank", "other"],
+  "main_heading_name": "verbatim-string",
+  "heading_category": ["person", "family", "corporate", "geographic", "subject"],
+  "epithet_title_or_occupation": "string",
+  "manuscript_references": [
+    {
+      "manuscript_number": "verbatim-string",
+      "folio_references": ["verbatim-string"],
+      "entry_description_with_date": "string"
+    }
+  ]
+}
