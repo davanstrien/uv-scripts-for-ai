@@ -1,7 +1,7 @@
 # Contributing
 
-Every recipe here is a single, self-contained **UV script** ([PEP 723](https://peps.python.org/pep-0723/)
-inline metadata) that runs on Hugging Face Jobs in one command. No shared library, no packaging — one file
+Every recipe here is a single, self-contained **[UV script](https://docs.astral.sh/uv/guides/scripts/)**
+([PEP 723](https://peps.python.org/pep-0723/) inline metadata) that runs on Hugging Face Jobs in one command. No shared library, no packaging — one file
 you can `hf jobs uv run`.
 
 ## Add or change a recipe

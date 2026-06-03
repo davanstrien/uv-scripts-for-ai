@@ -28,6 +28,8 @@ A normal Python file with a metadata block at the top declaring its dependencies
 
 `uv` — and `hf jobs uv run` — reads that block, builds the environment, and runs the file. One file, no `requirements.txt`, no setup.
 
+This is the standard [PEP 723](https://peps.python.org/pep-0723/) inline-script-metadata format — see the [uv scripts guide](https://docs.astral.sh/uv/guides/scripts/) to learn more.
+
 ## Recipes
 
 | Domain | What it does | Status |
