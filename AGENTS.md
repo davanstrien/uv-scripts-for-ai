@@ -34,7 +34,7 @@ mirror the org's Spaces; don't add a folder for the private `embeddings` repo.
 
 ## Script conventions
 
-- Self-contained **PEP 723 / UV script** — deps inline, no `requirements.txt`, no shared importable lib:
+- Self-contained **[PEP 723](https://peps.python.org/pep-0723/) / [UV script](https://docs.astral.sh/uv/guides/scripts/)** — deps inline, no `requirements.txt`, no shared importable lib:
   ```python
   # /// script
   # requires-python = ">=3.10"
