@@ -43,6 +43,7 @@ That's it! The script will:
 | `hunyuan-ocr.py` | [HunyuanOCR](https://huggingface.co/tencent/HunyuanOCR) | 1B | vLLM | Lightweight VLM |
 | `dots-ocr.py` | [DoTS.ocr](https://huggingface.co/Tencent/DoTS.ocr) | 1.7B | vLLM | 100+ languages |
 | `firered-ocr.py` | [FireRed-OCR](https://huggingface.co/FireRedTeam/FireRed-OCR) | 2.1B | vLLM | Qwen3-VL fine-tune, Apache 2.0 |
+| `abot-ocr.py` | [ABot-OCR](https://huggingface.co/acvlab/ABot-OCR) | 2B | vLLM | Qwen3-VL based, doc→Markdown (text/LaTeX/HTML tables). Needs `vllm/vllm-openai` image. [paper](https://arxiv.org/abs/2605.27978) |
 | `nanonets-ocr.py` | [Nanonets-OCR-s](https://huggingface.co/nanonets/Nanonets-OCR-s) | 2B | vLLM | LaTeX, tables, forms |
 | `dots-mocr.py` | [dots.mocr](https://huggingface.co/rednote-hilab/dots.mocr) | 3B | vLLM | 8 prompt modes incl. SVG generation, layout + bbox, 100+ languages |
 | `nanonets-ocr2.py` | [Nanonets-OCR2-3B](https://huggingface.co/nanonets/Nanonets-OCR2-s) | 3B | vLLM | Next-gen, Qwen2.5-VL base |
