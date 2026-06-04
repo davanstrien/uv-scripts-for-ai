@@ -28,7 +28,7 @@ hf jobs uv run --flavor l4x1 \
   davanstrien/ufo-ColPali your-username/ufo-ocr
 ```
 
-No GPU of your own, no `pip install`. (Jobs needs the `hf` CLI — `uv tool install huggingface_hub` — and a Hub account with a positive [credit balance](https://huggingface.co/settings/billing); a small CPU job costs ~$0.01/hr. Run `hf jobs hardware` for current flavors and prices.)
+No GPU of your own, no `pip install`. (Jobs needs the `hf` CLI — `uv tool install huggingface_hub` — and a [Pro, Team, or Enterprise](https://huggingface.co/pricing) account; it's pay-as-you-go, billed by the second, and a small CPU job costs ~$0.01/hr. Run `hf jobs hardware` for current flavors and prices.)
 
 ## What's a UV script?
 
@@ -53,7 +53,7 @@ A self-contained, pinned script is easy to run and reuse, for a few reasons:
 - **Composable** — recipes hand off through the Hub (usually a dataset in, a dataset or model out), so you can chain them into a pipeline.
 - **Runs anywhere** — `uv run` locally, `hf jobs uv run` for GPU, or anywhere `uv` is installed.
 
-**Built for agents, too.** Every recipe takes its arguments in the same `input output` order and runs from a URL, so an AI agent can pick a tool from its header and run it with no setup. On Jobs the agent runs in a sandbox: a throwaway disk, access limited to what the token's repo permissions allow, and a cost cap per job — not arbitrary code on your machine.
+**Built for agents, too.** Every recipe takes its arguments in the same `input output` order and runs from a URL, so an AI agent can pick a tool from its header and run it with no setup. On Jobs the agent runs in a sandbox: a throwaway disk, access limited to what the token's repo permissions allow, and a cost cap per job — not arbitrary code on your machine. (Hugging Face also ships an [`hf` CLI skill for agents](https://huggingface.co/docs/hub/agents-cli) for driving Jobs from an editor.)
 
 ## Recipes
 
@@ -87,18 +87,23 @@ Each arrow is a Hub dataset; each box is one `hf jobs uv run` (or `uv run`), and
 
 ## Run anywhere; use Jobs for a GPU
 
-Every recipe runs the same way wherever `uv` is installed:
+Every recipe runs the same way wherever `uv` is installed — locally, or on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs) for a managed GPU. Same file, same arguments:
 
 ```bash
-uv run <script-url> [args]          # local — your CPU/GPU
-hf jobs uv run <script-url> [args]  # managed — runs on a rented GPU, no setup
+SCRIPT=https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py
+
+# locally — on your own machine
+uv run $SCRIPT davanstrien/ufo-ColPali your-username/ufo-ocr
+
+# on a managed GPU — pick hardware with --flavor
+hf jobs uv run --flavor l4x1 $SCRIPT davanstrien/ufo-ColPali your-username/ufo-ocr
 ```
 
-Why reach for Jobs:
+Why reach for [Jobs](https://huggingface.co/docs/hub/jobs):
 
-- **Pay by the minute** — you're billed only while the job runs.
-- **No infra** — `hf jobs uv run <url>` and you're done.
-- **Hub-native** — mount datasets/models/buckets with `-v hf://…`; write results straight back to the Hub. Running from the `https://huggingface.co/datasets/uv-scripts/…` URL also attributes usage to the recipe.
+- **Pay by the second** — billed only while the job runs. Run `hf jobs hardware`, or see the [flavors](https://huggingface.co/docs/huggingface_hub/guides/jobs#select-the-hardware) and [pricing](https://huggingface.co/docs/hub/jobs).
+- **No infra** — `hf jobs uv run <url>` and you're done. See the [`hf jobs` CLI](https://huggingface.co/docs/huggingface_hub/guides/cli#hf-jobs).
+- **Hub-native** — read and write datasets, models, and [storage buckets](https://huggingface.co/docs/hub/storage-buckets) directly. Running from the `https://huggingface.co/datasets/uv-scripts/…` URL also attributes usage to the recipe.
 
 ---
 
