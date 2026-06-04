@@ -1,0 +1,40 @@
+name: _sync-folder
+
+# Reusable: gate (superset) + LFS guard + hub-sync for one folder → uv-scripts/<folder>.
+# Per-repo callers (sync-<repo>.yml) invoke this with the folder name; the logic lives here only.
+on:
+  workflow_call:
+    inputs:
+      folder:
+        description: top-level folder = uv-scripts/<folder> Hub repo name
+        required: true
+        type: string
+    secrets:
+      HF_TOKEN:
+        required: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gate — folder must be a superset of the Hub repo (guards --delete="*")
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: bash ./tools/verify-superset.sh "${{ inputs.folder }}" "uv-scripts/${{ inputs.folder }}"
+
+      - name: Guard — no LFS pointers (would corrupt Hub binaries)
+        run: |
+          if grep -rIl '^version https://git-lfs' "${{ inputs.folder }}/"; then
+            echo "::error::LFS pointer file found in ${{ inputs.folder }}/ — would upload pointer text and corrupt the Hub asset"
+            exit 1
+          fi
+
+      - uses: huggingface/hub-sync@v0.1.0
+        with:
+          github_repo_id: ${{ github.repository }}
+          huggingface_repo_id: uv-scripts/${{ inputs.folder }}
+          repo_type: dataset          # required — action defaults to 'space'
+          subdirectory: ${{ inputs.folder }}
+          hf_token: ${{ secrets.HF_TOKEN }}

@@ -50,8 +50,10 @@ mirror the org's Spaces; don't add a folder for the private `embeddings` repo.
 
 ## The mirror — how it works
 
-- `.github/workflows/sync-<repo>.yml`, one per folder, triggered on `push` to `main` filtered to
-  `['<repo>/**', '.github/workflows/sync-<repo>.yml']`.
+- `.github/workflows/sync-<repo>.yml`, one **thin caller** per folder (triggered on `push` to `main` filtered
+  to `['<repo>/**', '.github/workflows/sync-<repo>.yml']`), which calls the shared reusable workflow
+  `.github/workflows/_sync-folder.yml` — the single place the gate + LFS guard + `hub-sync` logic lives, so an
+  action-version bump or gate change is a one-file edit.
 - It uploads file **bytes** over HTTP, creates the repo if missing (`--exist-ok`), makes **one squashed
   commit**, and **excludes `.git*` and `.github*`** (so `.gitattributes` is not synced). No git history carried.
 - **`repo_type: dataset` is required** (the action defaults to `space`). Pin `huggingface/hub-sync@v0.1.0`.
@@ -66,8 +68,8 @@ mirror the org's Spaces; don't add a folder for the private `embeddings` repo.
 1. `uv-scripts/<repo>` exists? **Yes** → `hf download` it into `<repo>/` (+ `rm -rf <repo>/.cache
    <repo>/.gitattributes`), then `git add <repo>/` and run `tools/verify-superset.sh <repo> uv-scripts/<repo>`
    (must pass). **No** → create `<repo>/` with scripts + a `viewer:false` README; the action births it.
-2. Add `.github/workflows/sync-<repo>.yml` from the template (set `huggingface_repo_id`, `subdirectory: <repo>`,
-   `repo_type: dataset`, paths filter).
+2. Add `.github/workflows/sync-<repo>.yml` — a 13-line caller from the template below (just set the workflow
+   `name`, the `paths` filter, and `folder: <repo>`). All sync logic is inherited from `_sync-folder.yml`.
 3. Make sure `HF_TOKEN` (repo secret, fine-grained Write on the `uv-scripts` org) covers `<repo>`.
 4. Commit + push to `main`. Only this repo syncs. Then confirm on the Hub: file count ≥ before, named assets present.
 5. Add the recipe to the root `README.md` under its domain group.
@@ -79,25 +81,22 @@ repo creation; it does NOT grant whole-repo deletion). Re-create/rotate rather t
 
 ## Workflow template
 
+Each folder gets a thin **caller**; the gate + LFS guard + `hub-sync` logic lives once in the reusable
+`.github/workflows/_sync-folder.yml` (so an action-version bump or a gate change is a single edit, not one per
+repo). To add a repo, copy this caller and change the two `<repo>` occurrences + `folder:`:
+
 ```yaml
+# .github/workflows/sync-<repo>.yml
 name: Sync <repo> → HF
-on: { push: { branches: [main], paths: ['<repo>/**', '.github/workflows/sync-<repo>.yml'] } }
+on:
+  push:
+    branches: [main]
+    paths: ['<repo>/**', '.github/workflows/sync-<repo>.yml']
 jobs:
   sync:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Gate — folder must be a superset of the Hub repo (guards --delete="*")
-        env: { HF_TOKEN: "${{ secrets.HF_TOKEN }}" }
-        run: bash ./tools/verify-superset.sh <repo> uv-scripts/<repo>
-      - name: Guard — no LFS pointers (would corrupt Hub binaries)
-        run: |
-          if grep -rIl '^version https://git-lfs' <repo>/; then echo "::error::LFS pointer in <repo>/"; exit 1; fi
-      - uses: huggingface/hub-sync@v0.1.0
-        with:
-          github_repo_id: ${{ github.repository }}
-          huggingface_repo_id: uv-scripts/<repo>
-          repo_type: dataset            # required — action defaults to 'space'
-          subdirectory: <repo>
-          hf_token: ${{ secrets.HF_TOKEN }}
+    uses: ./.github/workflows/_sync-folder.yml
+    with:
+      folder: <repo>
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
 ```
