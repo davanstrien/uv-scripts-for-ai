@@ -1,10 +1,10 @@
 # uv-scripts-for-ai
 
-> **A UV script is the smallest reliable unit of data & ML work: one file, with its dependencies pinned inside it, that runs the same on your laptop or on a managed GPU. Run one in a command — `uv run` locally or `hf jobs uv run` on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs) — and chain many into a pipeline.**
+> **A UV script is a single Python file that declares its own dependencies inline, so it runs the same way on your laptop or on a managed GPU. Run one with `uv run` locally or `hf jobs uv run` on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs), and chain several into a pipeline.**
 
-Because each script is self-contained and self-describing, it's easy for **people and AI agents alike** to run and compose. No clone, no environment to set up, no `requirements.txt` — the script *is* the unit.
+Each script carries its own dependencies, so people and agents can run one without cloning a repo, making a virtualenv, or installing a `requirements.txt` first.
 
-A **recipe** here is one such UV script: a single Python file that declares its own dependencies inline. Most read and write the [Hugging Face Hub](https://huggingface.co/datasets), so the Hub is the substrate that passes data from one step to the next.
+A **recipe** here is one such script. Most read and write the [Hugging Face Hub](https://huggingface.co/datasets), so one script's output dataset becomes the next one's input.
 
 ## Quickstart
 
@@ -14,13 +14,13 @@ A **recipe** here is one such UV script: a single Python file that declares its 
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-**Kick the tires** — run a recipe straight from its URL; `uv` reads its dependency block and builds the environment for you (a few seconds, no account needed):
+**Try it locally** — run a recipe straight from its URL. `uv` reads its dependency block and builds the environment for you (a few seconds, no account needed):
 
 ```bash
 uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py --help
 ```
 
-**Run it for real on a GPU** — point Hugging Face Jobs at the same URL. Here `davanstrien/ufo-ColPali` is a small *public* image dataset you can use as-is; the output lands in your namespace:
+**Run it on a GPU** — point Hugging Face Jobs at the same URL. Here `davanstrien/ufo-ColPali` is a small *public* image dataset you can use as-is; the output lands in your namespace:
 
 ```bash
 hf jobs uv run --flavor l4x1 \
@@ -32,7 +32,7 @@ No GPU of your own, no `pip install`. (Jobs needs the `hf` CLI — `uv tool inst
 
 ## What's a UV script?
 
-A normal Python file with a metadata block at the top declaring its dependencies:
+A normal Python file with a metadata block at the top that lists its dependencies:
 
 ```python
 # /// script
@@ -41,19 +41,19 @@ A normal Python file with a metadata block at the top declaring its dependencies
 # ///
 ```
 
-`uv` — and `hf jobs uv run` — reads that block, builds the environment, and runs the file. One file, no `requirements.txt`, no setup. This is the standard [PEP 723](https://peps.python.org/pep-0723/) inline-script-metadata format — see the [uv scripts guide](https://docs.astral.sh/uv/guides/scripts/) to learn more.
+Normally, running someone's Python script means cloning their repo, making a virtual environment, and `pip install`-ing a `requirements.txt` first — and if your versions don't match theirs, it can still break. Here the dependencies live inside the file, in that comment block, so `uv` (and `hf jobs uv run`) reads them, installs exactly those versions into a throwaway environment, and runs the file — straight from a URL, with nothing to set up. This is the standard [PEP 723](https://peps.python.org/pep-0723/) inline-script-metadata format; see the [uv scripts guide](https://docs.astral.sh/uv/guides/scripts/) to learn more.
 
 ## Why UV scripts
 
-A self-contained, pinned script is the smallest *reliable* unit of work — which is what makes it a good building block for both people and agents:
+A self-contained, pinned script is easy to run and reuse, for a few reasons:
 
-- **Discrete & single-purpose** — one script, one job. That job can be a two-second transform or a multi-hour fine-tune; either way it's one self-contained unit you pick by reading a header, not a codebase.
-- **Self-describing** — the [PEP 723](https://peps.python.org/pep-0723/) dependency block, the docstring, and `--help` together declare what it needs and how to call it.
-- **Reproducible by construction** — dependencies are pinned *in the file*. No env drift, nothing to debug later, no "works on my machine."
+- **Discrete & single-purpose** — one script, one job. That job can be a two-second transform or a multi-hour fine-tune; either way it's one self-contained unit you pick by reading a header instead of a whole codebase.
+- **Self-describing** — the [PEP 723](https://peps.python.org/pep-0723/) dependency block, the docstring, and `--help` tell you what it needs and how to call it.
+- **Reproducible** — dependencies are pinned *in the file*, so there's no env drift and no "works on my machine."
 - **Composable** — recipes hand off through the Hub (usually a dataset in, a dataset or model out), so you can chain them into a pipeline.
-- **Runs anywhere** — `uv run` locally, `hf jobs uv run` for GPU, or anywhere `uv` is installed. Same file, same result.
+- **Runs anywhere** — `uv run` locally, `hf jobs uv run` for GPU, or anywhere `uv` is installed.
 
-**Built for agents, too.** Every recipe takes the same `input output` shape and is callable from a URL, so an AI agent can pick a tool from its header and run it with no setup. And on Jobs the agent runs **disposable, Hub-scoped managed compute** — ephemeral disk, I/O bounded by the token's repo permissions, a per-job cost ceiling — never arbitrary code on your machine. That sandboxing is the difference between "an agent *could* call this" and "I'd let an agent run this unattended."
+**Built for agents, too.** Every recipe takes its arguments in the same `input output` order and runs from a URL, so an AI agent can pick a tool from its header and run it with no setup. On Jobs the agent runs in a sandbox: a throwaway disk, access limited to what the token's repo permissions allow, and a cost cap per job — not arbitrary code on your machine.
 
 ## Recipes
 
@@ -83,20 +83,20 @@ PDFs / scans          →   OCR to markdown      →   dedup + stats        → 
 dataset-creation          ocr/glm-ocr.py           deduplication            build-atlas
 ```
 
-Each arrow is a Hub dataset; each box is one `hf jobs uv run` (or `uv run`) — and every box runs today from its Hub URL, even before it's migrated into this repo. A pipeline can just as well end in a *trained model* instead of another dataset. A human writes the chain as a shell script; an agent writes it as a plan — same scripts either way.
+Each arrow is a Hub dataset; each box is one `hf jobs uv run` (or `uv run`), and every box runs today from its Hub URL, even before it's migrated into this repo. A pipeline can also end in a *trained model* instead of another dataset. You can write the chain as a shell script, or an agent can generate it — the scripts are the same.
 
-## Run anywhere — and reach for Jobs when you need a GPU
+## Run anywhere; use Jobs for a GPU
 
 Every recipe runs the same way wherever `uv` is installed:
 
 ```bash
 uv run <script-url> [args]          # local — your CPU/GPU
-hf jobs uv run <script-url> [args]  # managed — HF Jobs is the easy GPU button
+hf jobs uv run <script-url> [args]  # managed — runs on a rented GPU, no setup
 ```
 
 Why reach for Jobs:
 
-- **Cheapest managed serverless GPU** — pay by the minute, only while the job runs.
+- **Pay by the minute** — you're billed only while the job runs.
 - **No infra** — `hf jobs uv run <url>` and you're done.
 - **Hub-native** — mount datasets/models/buckets with `-v hf://…`; write results straight back to the Hub. Running from the `https://huggingface.co/datasets/uv-scripts/…` URL also attributes usage to the recipe.
 
