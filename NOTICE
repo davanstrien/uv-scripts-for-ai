@@ -1,0 +1,9 @@
+uv-scripts-for-ai
+Copyright 2026 Daniel van Strien and contributors
+
+This software is licensed under the Apache License, Version 2.0.
+
+This repository orchestrates third-party machine-learning models that it
+downloads at runtime but does not redistribute. Each model is governed by its
+own license, available on its Hugging Face model card. Users are responsible
+for complying with the license of every model they run.

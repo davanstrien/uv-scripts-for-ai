@@ -105,6 +105,14 @@ Why reach for [Jobs](https://huggingface.co/docs/hub/jobs):
 - **No infra** — `hf jobs uv run <url>` and you're done. See the [`hf jobs` CLI](https://huggingface.co/docs/huggingface_hub/guides/cli#hf-jobs).
 - **Hub-native** — read and write datasets, models, and [storage buckets](https://huggingface.co/docs/hub/storage-buckets) directly. Running from the `https://huggingface.co/datasets/uv-scripts/…` URL also attributes usage to the recipe.
 
+## Model licenses
+
+These scripts are orchestration code: they download third-party models from the Hugging Face Hub at runtime and run inference. **This repo does not redistribute any model weights.** Each model you run carries its own license (MIT, Apache-2.0, OpenRAIL-M, and some with non-commercial or other use-based terms); those terms govern your use of the *model*, not this repo's code. **You are responsible for checking each model's license** — on its Hugging Face model card — before using it, especially in production.
+
+## License
+
+The code and documentation in this repository are licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
+
 ---
 
 *Recipes mirror to the [`uv-scripts`](https://huggingface.co/uv-scripts) Hugging Face org via GitHub Actions — GitHub is the source of truth. See [CONTRIBUTING.md](CONTRIBUTING.md) to add one.*
