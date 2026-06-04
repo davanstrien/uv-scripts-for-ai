@@ -1,6 +1,6 @@
 # uv-scripts-for-ai
 
-> **A UV script is a single Python file that declares its own dependencies inline, so it runs the same way on your laptop or on a managed GPU. Run one with `uv run` locally or `hf jobs uv run` on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs), and chain several into a pipeline.**
+> **A UV script is a single Python file that declares its own dependencies inline — a *portable* unit you run with `uv run` where you have the hardware, or hand to `hf jobs uv run` on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs) for a GPU. Chain several into a pipeline.**
 
 Each script carries its own dependencies, so people and agents can run one without cloning a repo, making a virtualenv, or installing a `requirements.txt` first.
 
@@ -14,13 +14,7 @@ A **recipe** here is one such script. Most read and write the [Hugging Face Hub]
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-**Try it locally** — run a recipe straight from its URL. `uv` reads its dependency block and builds the environment for you (a few seconds, no account needed):
-
-```bash
-uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py --help
-```
-
-**Run it on a GPU** — point Hugging Face Jobs at the same URL. Here `davanstrien/ufo-ColPali` is a small *public* image dataset you can use as-is; the output lands in your namespace:
+**Run a recipe on a GPU** — point Hugging Face Jobs at the script's URL and it runs on managed hardware, no GPU of your own needed. Here `davanstrien/ufo-ColPali` is a small *public* image dataset you can use as-is; the output lands in your namespace:
 
 ```bash
 hf jobs uv run --flavor l4x1 \
@@ -28,7 +22,13 @@ hf jobs uv run --flavor l4x1 \
   davanstrien/ufo-ColPali your-username/ufo-ocr
 ```
 
-No GPU of your own, no `pip install`. (Jobs needs the `hf` CLI — `uv tool install huggingface_hub` — and a [Pro, Team, or Enterprise](https://huggingface.co/pricing) account; it's pay-as-you-go, billed by the second, and a small CPU job costs ~$0.01/hr. Run `hf jobs hardware` for current flavors and prices.)
+No `pip install`, no local setup. (Jobs needs the `hf` CLI — `uv tool install huggingface_hub` — and a [Pro, Team, or Enterprise](https://huggingface.co/pricing) account; it's pay-as-you-go, billed by the second, and a small CPU job costs ~$0.01/hr. Run `hf jobs hardware` for current flavors and prices.)
+
+**Prefer your own machine?** A recipe is just a UV script, so on a box with the hardware it needs — most recipes here want a CUDA GPU — you can run it (or inspect it with `--help`) directly, no Jobs required:
+
+```bash
+uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py --help
+```
 
 ## What's a UV script?
 
@@ -51,7 +51,7 @@ A self-contained, pinned script is easy to run and reuse, for a few reasons:
 - **Self-describing** — the [PEP 723](https://peps.python.org/pep-0723/) dependency block, the docstring, and `--help` tell you what it needs and how to call it.
 - **Reproducible** — dependencies are pinned *in the file*, so there's no env drift and no "works on my machine."
 - **Composable** — recipes hand off through the Hub (usually a dataset in, a dataset or model out), so you can chain them into a pipeline.
-- **Runs anywhere** — `uv run` locally, `hf jobs uv run` for GPU, or anywhere `uv` is installed.
+- **Portable** — one self-contained file; run it with `uv run` where you have the hardware (most recipes need a GPU), or `hf jobs uv run` it on a managed GPU.
 
 **Built for agents, too.** Every recipe takes its arguments in the same `input output` order and runs from a URL, so an AI agent can pick a tool from its header and run it with no setup. On Jobs the agent runs in a sandbox: a throwaway disk, access limited to what the token's repo permissions allow, and a cost cap per job — not arbitrary code on your machine. (Hugging Face also ships an [`hf` CLI skill for agents](https://huggingface.co/docs/hub/agents-cli) for driving Jobs from an editor.)
 
@@ -85,14 +85,14 @@ dataset-creation          ocr/glm-ocr.py           deduplication            buil
 
 Each arrow is a Hub dataset; each box is one `hf jobs uv run` (or `uv run`), and every box runs today from its Hub URL, even before it's migrated into this repo. A pipeline can also end in a *trained model* instead of another dataset. You can write the chain as a shell script, or an agent can generate it — the scripts are the same.
 
-## Run anywhere; use Jobs for a GPU
+## Portable: run it locally or on Jobs
 
-Every recipe runs the same way wherever `uv` is installed — locally, or on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs) for a managed GPU. Same file, same arguments:
+A recipe is the same file wherever you run it — on a machine with the hardware it needs, or on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs) for a managed GPU. Same file, same arguments:
 
 ```bash
 SCRIPT=https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py
 
-# locally — on your own machine
+# locally — needs the right hardware (a GPU for most recipes)
 uv run $SCRIPT davanstrien/ufo-ColPali your-username/ufo-ocr
 
 # on a managed GPU — pick hardware with --flavor
