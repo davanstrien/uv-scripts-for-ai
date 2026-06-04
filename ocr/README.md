@@ -5,7 +5,7 @@ tags: [uv-script, ocr, vision-language-model, document-processing, hf-jobs]
 
 # OCR UV Scripts
 
-> Part of [uv-scripts](https://huggingface.co/uv-scripts) — self-contained UV scripts you run on Hugging Face Jobs in one command. Source on [GitHub](https://github.com/davanstrien/uv-scripts-for-ai).
+> Part of [uv-scripts](https://huggingface.co/uv-scripts) — self-contained UV scripts you run on Hugging Face Jobs in one command.
 
 A model zoo of OCR scripts — one per model — that add a `markdown` column to an image dataset. Pick a model from the table below, point it at your dataset, and run it on a GPU with one command. Two companions sit alongside: `pp-doclayout.py` detects layout regions (bboxes for text/title/table/figure/…) instead of text, and `ocr-vllm-judge.py` compares model outputs head-to-head.
 
