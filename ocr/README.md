@@ -87,7 +87,7 @@ Source/sink can be either an HF dataset repo OR an `hf://buckets/...` URL (auto-
 
 ## Common Options
 
-All scripts accept the same core flags. Model-specific defaults (batch size, context length, temperature) are tuned per model based on model card recommendations and can be overridden.
+The scripts aim to expose a **consistent interface**: every OCR model script takes `input-dataset output-dataset` as positional arguments, accepts the shared core flags below, and writes a `markdown` column — so switching models is usually just swapping the script URL. Models differ where they need to, though: some add their own flags (task modes, resolution presets, `--think`, vocab sizes), a few need a specific Docker image, and per-model defaults (batch size, context length, temperature) are tuned to each model card. Always check a script's `--help` for its specifics.
 
 | Option | Description |
 |--------|-------------|
