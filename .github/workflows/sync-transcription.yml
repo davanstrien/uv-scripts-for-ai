@@ -1,0 +1,31 @@
+name: Sync transcription → HF
+on:
+  push:
+    branches: [main]
+    paths: ['transcription/**', '.github/workflows/sync-transcription.yml']
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gate — folder must be a superset of the Hub repo (guards --delete="*")
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: bash ./tools/verify-superset.sh transcription uv-scripts/transcription
+
+      - name: Guard — no LFS pointers (would corrupt Hub binaries)
+        run: |
+          if grep -rIl '^version https://git-lfs' transcription/; then
+            echo "::error::LFS pointer file found in transcription/ — would upload pointer text and corrupt the Hub asset"
+            exit 1
+          fi
+
+      - uses: huggingface/hub-sync@v0.1.0
+        with:
+          github_repo_id: ${{ github.repository }}
+          huggingface_repo_id: uv-scripts/transcription
+          repo_type: dataset          # required — action defaults to 'space'
+          subdirectory: transcription
+          hf_token: ${{ secrets.HF_TOKEN }}

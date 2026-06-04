@@ -1,0 +1,31 @@
+name: Sync build-atlas → HF
+on:
+  push:
+    branches: [main]
+    paths: ['build-atlas/**', '.github/workflows/sync-build-atlas.yml']
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gate — folder must be a superset of the Hub repo (guards --delete="*")
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: bash ./tools/verify-superset.sh build-atlas uv-scripts/build-atlas
+
+      - name: Guard — no LFS pointers (would corrupt Hub binaries)
+        run: |
+          if grep -rIl '^version https://git-lfs' build-atlas/; then
+            echo "::error::LFS pointer file found in build-atlas/ — would upload pointer text and corrupt the Hub asset"
+            exit 1
+          fi
+
+      - uses: huggingface/hub-sync@v0.1.0
+        with:
+          github_repo_id: ${{ github.repository }}
+          huggingface_repo_id: uv-scripts/build-atlas
+          repo_type: dataset          # required — action defaults to 'space'
+          subdirectory: build-atlas
+          hf_token: ${{ secrets.HF_TOKEN }}
