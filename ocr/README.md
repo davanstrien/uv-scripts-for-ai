@@ -5,9 +5,9 @@ tags: [uv-script, ocr, vision-language-model, document-processing, hf-jobs]
 
 # OCR UV Scripts
 
-> Part of [uv-scripts](https://huggingface.co/uv-scripts) - ready-to-run ML tools powered by UV and HuggingFace Jobs.
+> Part of [uv-scripts](https://huggingface.co/uv-scripts) — self-contained UV scripts you run on Hugging Face Jobs in one command. Source on [GitHub](https://github.com/davanstrien/uv-scripts-for-ai).
 
-21 OCR scripts (text extraction) + 1 layout-detection script. Pick a model, point at your dataset, get markdown — no setup required. Layout-detection runs separately when you need bboxes for regions (text/title/table/figure/...) rather than the text itself.
+A model zoo of OCR scripts — one per model — that add a `markdown` column to an image dataset. Pick a model from the table below, point it at your dataset, and run it on a GPU with one command. Two companions sit alongside: `pp-doclayout.py` detects layout regions (bboxes for text/title/table/figure/…) instead of text, and `ocr-vllm-judge.py` compares model outputs head-to-head.
 
 ## 🚀 Quick Start
 
@@ -29,7 +29,11 @@ That's it! The script will:
 - Push the results to a new dataset
 - View results at: `https://huggingface.co/datasets/[your-output-dataset]`
 
-<details><summary>All scripts at a glance (sorted by model size)</summary>
+## Models at a glance
+
+**Start here:** for a quick first run, try **`lighton-ocr2.py`** (1B, very fast) or **`paddleocr-vl-1.6.py`** (0.9B, current OmniDocBench SOTA); for the smallest footprint, **`falcon-ocr.py`** (0.3B, strong on tables). Reach for a 7–8B model only when quality demands it. Which model "wins" is document-dependent — rather than a single leaderboard, we compare outputs head-to-head with `ocr-vllm-judge.py` (pairwise VLM-judge ELO).
+
+_Sorted by model size:_
 
 | Script | Model | Size | Backend | Notes |
 |--------|-------|------|---------|-------|
@@ -38,6 +42,7 @@ That's it! The script will:
 | `glm-ocr.py` | [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) | 0.9B | vLLM | 94.62% OmniDocBench V1.5 |
 | `paddleocr-vl.py` | [PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL) | 0.9B | Transformers | 4 task modes (ocr/table/formula/chart) |
 | `paddleocr-vl-1.5.py` | [PaddleOCR-VL-1.5](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.5) | 0.9B | Transformers | 94.5% OmniDocBench, 6 task modes |
+| `paddleocr-vl-1.6.py` | [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) | 0.9B | vLLM | **96.33% OmniDocBench v1.6** (SOTA), drop-in upgrade of 1.5 |
 | `lighton-ocr.py` | [LightOnOCR-1B](https://huggingface.co/lightonai/LightOnOCR-1B-1025) | 1B | vLLM | Fast, 3 vocab sizes |
 | `lighton-ocr2.py` | [LightOnOCR-2-1B](https://huggingface.co/lightonai/LightOnOCR-2-1B) | 1B | vLLM | 7× faster than v1, RLVR trained |
 | `hunyuan-ocr.py` | [HunyuanOCR](https://huggingface.co/tencent/HunyuanOCR) | 1B | vLLM | Lightweight VLM |
@@ -56,7 +61,7 @@ That's it! The script will:
 | `rolm-ocr.py` | [RolmOCR](https://huggingface.co/reducto/RolmOCR) | 7B | vLLM | Qwen2.5-VL based, general-purpose |
 | `numarkdown-ocr.py` | [NuMarkdown-8B](https://huggingface.co/numind/NuMarkdown-8B-Thinking) | 8B | vLLM | Reasoning-based OCR |
 
-</details>
+**Variants & tools** (same models, different I/O): `glm-ocr-v2.py` adds checkpoint/resume for very large jobs · `glm-ocr-bucket.py` and `falcon-ocr-bucket.py` read images/PDFs from a mounted bucket and write one `.md` per page · `ocr-vllm-judge.py` runs pairwise OCR-quality comparisons.
 
 ## Layout detection (not OCR)
 
@@ -592,11 +597,11 @@ High-quality document OCR using [allenai/olmOCR-2-7B-1025-FP8](https://huggingfa
 - 🧩 **YAML metadata** - Structured front matter (language, rotation, content type)
 - 🚀 **Based on Qwen2.5-VL-7B** - Fine-tuned with reinforcement learning
 
-## 🆕 New Features
+## Features
 
 ### Multi-Model Comparison Support
 
-All scripts now include `inference_info` tracking for comparing multiple OCR models:
+All scripts include `inference_info` tracking for comparing multiple OCR models:
 
 ```bash
 # First model
@@ -632,9 +637,9 @@ Every OCR run now generates comprehensive dataset documentation including:
 
 ## 💻 Usage Examples
 
-### Run on HuggingFace Jobs (Recommended)
+### Run on Hugging Face Jobs (recommended)
 
-No GPU? No problem! Run on HF infrastructure:
+Run on managed infrastructure — no local GPU needed:
 
 ```bash
 # PaddleOCR-VL - Smallest model (0.9B) with task modes
