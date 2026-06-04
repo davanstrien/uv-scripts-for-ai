@@ -37,7 +37,7 @@ This will:
 hf datasets leaderboard allenai/olmOCR-bench
 ```
 
-But which model wins on *your* documents is still document-dependent, so we also compare outputs head-to-head with `ocr-vllm-judge.py` (pairwise VLM-judge ELO).
+But which model wins on *your* documents is still document-dependent — so [ocr-bench](https://github.com/davanstrien/ocr-bench) builds a **per-collection leaderboard** for your own data (pairwise VLM-as-judge, optionally human-validated), using these scripts under the hood.
 
 _Sorted by model size:_
 
