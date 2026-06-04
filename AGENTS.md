@@ -6,6 +6,9 @@ This is a GitHub-authoritative cookbook of **UV scripts you run on Hugging Face 
 Action on push to `main`. GitHub is the source of truth; the Hub repos are mirrors. (Claude Code: this
 file is the runbook — `CLAUDE.md` only points here.)
 
+**Going public?** Readiness checklist + launch plan live in [LAUNCH.md](LAUNCH.md). The repo stays private
+until that gate is green.
+
 ## ⛔ The one rule: never delete a file from the Hub
 
 The sync runs `hf upload <repo> <folder> --delete="*"` on every push. **Any file on the Hub repo that is
