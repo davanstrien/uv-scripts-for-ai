@@ -17,12 +17,12 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 **Run a recipe on a GPU** — point Hugging Face Jobs at the script's URL and it runs on managed hardware, no GPU of your own needed. Here `davanstrien/ufo-ColPali` is a small *public* image dataset you can use as-is; the output lands in your namespace:
 
 ```bash
-hf jobs uv run --flavor l4x1 \
+hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \
   davanstrien/ufo-ColPali your-username/ufo-ocr
 ```
 
-No `pip install`, no local setup. (Jobs needs the `hf` CLI — `uv tool install huggingface_hub` — and a [Pro, Team, or Enterprise](https://huggingface.co/pricing) account; it's pay-as-you-go, billed by the second, and a small CPU job costs ~$0.01/hr. Run `hf jobs hardware` for current flavors and prices.)
+No `pip install`, no local setup. `--secrets HF_TOKEN` forwards your token so the job can write the output dataset back to the Hub. (Jobs needs the `hf` CLI — `uv tool install huggingface_hub` — and a [Pro, Team, or Enterprise](https://huggingface.co/pricing) account; it's pay-as-you-go, billed by the second, and a small CPU job costs ~$0.01/hr. Run `hf jobs hardware` for current flavors and prices.)
 
 **Prefer your own machine?** A recipe is just a UV script, so on a box with the hardware it needs — most recipes here want a CUDA GPU — you can run it (or inspect it with `--help`) directly, no Jobs required:
 
@@ -95,8 +95,8 @@ SCRIPT=https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py
 # locally — needs the right hardware (a GPU for most recipes)
 uv run $SCRIPT davanstrien/ufo-ColPali your-username/ufo-ocr
 
-# on a managed GPU — pick hardware with --flavor
-hf jobs uv run --flavor l4x1 $SCRIPT davanstrien/ufo-ColPali your-username/ufo-ocr
+# on a managed GPU — pick hardware with --flavor; --secrets forwards your write token
+hf jobs uv run --flavor l4x1 --secrets HF_TOKEN $SCRIPT davanstrien/ufo-ColPali your-username/ufo-ocr
 ```
 
 Why reach for [Jobs](https://huggingface.co/docs/hub/jobs):
