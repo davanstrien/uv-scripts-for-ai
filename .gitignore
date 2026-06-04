@@ -14,3 +14,7 @@ __pycache__/
 
 # tooling
 .playwright-mcp/
+
+# Local-only working docs (launch plans, planning notes) — never published
+LAUNCH.md
+*.local.md
