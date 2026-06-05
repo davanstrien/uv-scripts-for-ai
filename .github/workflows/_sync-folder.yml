@@ -1,14 +1,27 @@
 name: _sync-folder
 
-# Reusable: gate (superset) + LFS guard + hub-sync for one folder → uv-scripts/<folder>.
-# Per-repo callers (sync-<repo>.yml) invoke this with the folder name; the logic lives here only.
+# Reusable: gate (superset) + LFS guard + hub-sync for one folder → a uv-scripts Hub repo.
+# Per-repo callers (sync-<repo>.yml) invoke this; the logic lives here only.
+# Defaults mirror a top-level folder to uv-scripts/<folder> as a dataset. The optional
+# repo_id / repo_type let a folder map to a differently-named repo or a non-dataset repo
+# (e.g. the org profile card: org-card/ → uv-scripts/README, a static Space).
 on:
   workflow_call:
     inputs:
       folder:
-        description: top-level folder = uv-scripts/<folder> Hub repo name
+        description: local top-level folder to mirror
         required: true
         type: string
+      repo_id:
+        description: target Hub repo id (default uv-scripts/<folder>)
+        required: false
+        type: string
+        default: ''
+      repo_type:
+        description: Hub repo type (dataset | space | model)
+        required: false
+        type: string
+        default: dataset
     secrets:
       HF_TOKEN:
         required: true
@@ -16,13 +29,15 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    env:
+      REPO_ID: ${{ inputs.repo_id != '' && inputs.repo_id || format('uv-scripts/{0}', inputs.folder) }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Gate — folder must be a superset of the Hub repo (guards --delete="*")
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: bash ./tools/verify-superset.sh "${{ inputs.folder }}" "uv-scripts/${{ inputs.folder }}"
+        run: bash ./tools/verify-superset.sh "${{ inputs.folder }}" "$REPO_ID" "${{ inputs.repo_type }}"
 
       - name: Guard — no LFS pointers (would corrupt Hub binaries)
         run: |
@@ -34,7 +49,7 @@ jobs:
       - uses: huggingface/hub-sync@v0.1.0
         with:
           github_repo_id: ${{ github.repository }}
-          huggingface_repo_id: uv-scripts/${{ inputs.folder }}
-          repo_type: dataset          # required — action defaults to 'space'
+          huggingface_repo_id: ${{ env.REPO_ID }}
+          repo_type: ${{ inputs.repo_type }}
           subdirectory: ${{ inputs.folder }}
           hf_token: ${{ secrets.HF_TOKEN }}

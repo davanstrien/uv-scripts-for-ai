@@ -30,7 +30,9 @@ absent from its GitHub folder is permanently deleted.** Therefore:
 
 `ocr/ → uv-scripts/ocr`, `sam3/ → uv-scripts/sam3`, … `subdirectory == folder == repo name`, so the mapping
 can't be mis-typed. Domain grouping for readers lives in the root `README.md`, not in folder nesting. Don't
-mirror the org's Spaces; don't add a folder for the private `embeddings` repo.
+mirror the org's *demo* Spaces; don't add a folder for the private `embeddings` repo. (One Space *is*
+mirrored — the org profile card: `org-card/` → `uv-scripts/README`, a static Space, via the reusable
+workflow's optional `repo_id` / `repo_type` inputs.)
 
 ## Script conventions
 

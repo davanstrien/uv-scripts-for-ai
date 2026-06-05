@@ -1,0 +1,15 @@
+name: Sync org card → HF
+on:
+  push:
+    branches: [main]
+    paths: ['org-card/**', '.github/workflows/sync-org-card.yml']
+
+jobs:
+  sync:
+    uses: ./.github/workflows/_sync-folder.yml
+    with:
+      folder: org-card
+      repo_id: uv-scripts/README
+      repo_type: space
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
