@@ -1,0 +1,13 @@
+name: Sync iiif-tiles → HF
+on:
+  push:
+    branches: [main]
+    paths: ['iiif-tiles/**', '.github/workflows/sync-iiif-tiles.yml']
+
+jobs:
+  sync:
+    uses: ./.github/workflows/_sync-folder.yml
+    with:
+      folder: iiif-tiles
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}

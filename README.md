@@ -73,7 +73,7 @@ A self-contained, pinned script is easy to run and reuse, for a few reasons:
 | **entity extraction** | NER / structured extraction over text | [`gliner`](https://huggingface.co/datasets/uv-scripts/gliner) |
 | ***…and more*** | *Training, evaluation, RAG indexing — migrating as they mature* | [`training`](https://huggingface.co/datasets/uv-scripts/training) · [`transformers-training`](https://huggingface.co/datasets/uv-scripts/transformers-training) |
 
-So far **[ocr/](ocr/)**, **[sam3/](sam3/)**, **[transcription/](transcription/)**, **[build-atlas/](build-atlas/)**, **[vlm-object-detection/](vlm-object-detection/)**, **[gliner/](gliner/)**, and **[object-detection/](object-detection/)** live in this repo; the rest link to the [`uv-scripts`](https://huggingface.co/uv-scripts) Hugging Face org where they run today, and migrate here over time. (each folder mirrors to its Hub dataset repo.)
+Most recipes now live in this repo; the rest link to the [`uv-scripts`](https://huggingface.co/uv-scripts) Hugging Face org where they run today, and migrate here over time. (each folder mirrors to its Hub dataset repo.)
 
 **What fits here:** any self-contained UV script for data or ML work on the Hub. OCR and dataset work are the current focus, but inference, evaluation, RAG indexing, and **training** (fine-tuning with TRL / `transformers`, producing a model) are all in scope. If it's one pinned script that reads from or writes to the Hub, it belongs.
 
