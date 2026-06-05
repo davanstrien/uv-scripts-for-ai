@@ -8,13 +8,14 @@
 # Runs both locally (after `git add <folder>`) and as a CI pre-step in the sync workflow.
 set -euo pipefail
 
-folder="${1:?usage: verify-superset.sh <folder> <hf_repo_id>}"
-repo="${2:?usage: verify-superset.sh <folder> <hf_repo_id>}"
+folder="${1:?usage: verify-superset.sh <folder> <hf_repo_id> [repo_type]}"
+repo="${2:?usage: verify-superset.sh <folder> <hf_repo_id> [repo_type]}"
+rtype="${3:-dataset}"   # dataset | space | model — selects the /api/<type>s tree endpoint
 tok="${HF_TOKEN:-$(hf auth token 2>/dev/null)}"
 
 code=$(curl -s -o /tmp/tree.json -w '%{http_code}' \
   -H "Authorization: Bearer $tok" \
-  "https://huggingface.co/api/datasets/$repo/tree/main?recursive=true")
+  "https://huggingface.co/api/${rtype}s/$repo/tree/main?recursive=true")
 
 case "$code" in
   404) echo "✅ OK — $repo doesn't exist yet (brand-new repo); nothing on the Hub to preserve."; exit 0 ;;
