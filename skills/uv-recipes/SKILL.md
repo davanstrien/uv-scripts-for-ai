@@ -5,7 +5,7 @@ description: "Run self-contained UV-script recipes over Hugging Face datasets on
 
 # uv-recipes
 
-A recipe is one self-contained Python file (PEP 723 UV script) that reads a Hugging Face dataset and writes a new one. Recipes take arguments in the same `INPUT_DATASET OUTPUT_DATASET` order and run straight from a URL — no clone, no venv, no install. They're self-describing: the dependency block, docstring, and `--help` say what each needs.
+A recipe is one self-contained Python file (a [PEP 723](https://peps.python.org/pep-0723/) [UV script](https://docs.astral.sh/uv/guides/scripts/)) that reads a Hugging Face dataset and writes a new one. Recipes take arguments in the same `INPUT_DATASET OUTPUT_DATASET` order and run straight from a URL — no clone, no venv, no install. They're self-describing: the dependency block, docstring, and `--help` say what each needs.
 
 ## Requires
 
@@ -13,9 +13,9 @@ A recipe is one self-contained Python file (PEP 723 UV script) that reads a Hugg
 - **The `hf` CLI** — `curl -LsSf https://hf.co/cli/install.sh | bash -s` (or `uv tool install "huggingface_hub[cli]"`). Authenticate with `hf auth login`, or set `HF_TOKEN`. Jobs needs a Pro/Team/Enterprise account.
 - **Strongly recommended — install the Hugging Face skills:** `hf skills add`. This installs the **`hf-cli`** skill (the full `hf` surface: jobs, auth, repos, datasets, buckets, webhooks) and stays current via `hf skills update`. The two compose: `uv-recipes` picks and runs a recipe, `hf-cli` drives everything else on the Hub.
 
-## Run a recipe (prefer Jobs)
+## Run a recipe
 
-Default to **Hugging Face Jobs** — managed GPU, no local CUDA, pay-per-second:
+**Jobs is recommended, not required.** It gives a managed GPU — pay-per-second, no local CUDA — which matters because most recipes need a GPU you may not have locally. Run a recipe on Jobs:
 
 ```bash
 hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
@@ -30,8 +30,7 @@ hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
 - Track a run: `hf jobs logs <job-id>`, `hf jobs ps`, `hf jobs inspect <job-id>`.
 - Jobs concepts, hardware flavors, and pricing: https://huggingface.co/docs/hub/jobs
 
-**Local alternative** (only if the machine has the hardware — most recipes need a CUDA GPU):
-`uv run <url> INPUT OUTPUT`. Inspect without running: `uv run <url> --help`.
+**Or run locally** — the same file works with `uv run <url> INPUT OUTPUT` when your machine has the hardware it needs (usually a CUDA GPU). Inspect without running: `uv run <url> --help`.
 
 ## Discover recipes (no fixed list — read it live)
 
@@ -73,7 +72,7 @@ To spend review effort well (active learning), order the queue by informativenes
 
 ## Rules that keep jobs working
 
-- Jobs disk is ephemeral — recipes write to the **Hub** (`push_to_hub`) or a **bucket** (`-v hf://…`), never local paths.
+- Jobs disk is ephemeral — write to the Hub, never local paths. The default pattern is **a dataset in, a dataset out** (`push_to_hub`). For data you rewrite often (mutable, incremental writes, checkpoints, one file per item), use a [storage bucket](https://huggingface.co/docs/hub/storage-buckets) instead — mount one with `-v hf://buckets/<user>/<bucket>:/mnt`, or read/write `hf://buckets/…` paths via fsspec. See [buckets.md](buckets.md).
 - GPU recipes check `torch.cuda.is_available()` and exit clearly if missing — match `--flavor` to the recipe.
 - Test on `--max-samples 10` first.
 
@@ -89,6 +88,6 @@ Most failures are environment or usage, not recipe bugs — triage before report
 - **Transient build failure on a nightly wheel** → wait and retry.
 - **Check the docs** — the recipe's `--help` / header and the [Jobs docs](https://huggingface.co/docs/hub/jobs) for the exact invocation and known constraints.
 
-If it still fails, reproduce minimally: re-run with `--max-samples 10` on the public sample `davanstrien/ufo-ColPali` to confirm it's the recipe, not your data.
+If it still fails, reproduce minimally: re-run with `--max-samples 10` on a **small public dataset appropriate to the task** (e.g. `davanstrien/ufo-ColPali` for image/OCR recipes; a public audio set for transcription, a public text set for NER) to confirm it's the recipe, not your data.
 
-**Only if that is a genuine, reproducible defect in the recipe itself**, open an issue at https://github.com/davanstrien/uv-scripts-for-ai/issues — but first **search existing issues** (one per distinct failure) and **confirm with the user**. The report must give a **full reproducer the maintainer can run as-is: a public input dataset** (e.g. `davanstrien/ufo-ColPali`) and the exact command — never the user's private data. **Redact every token/secret** from the command and logs. Include the recipe URL, flavor + image, the error tail, the job ID/URL, and what you already tried. Do **not** open issues for usage errors, flavor/OOM, gated models, or transient infra.
+**Only if that is a genuine, reproducible defect in the recipe itself**, open an issue at https://github.com/davanstrien/uv-scripts-for-ai/issues — but first **search existing issues** (one per distinct failure) and **confirm with the user**. The report must give a **full reproducer the maintainer can run as-is: a public input dataset** (one appropriate to the task) and the exact command — never the user's private data. **Redact every token/secret** from the command and logs. Include the recipe URL, flavor + image, the error tail, the job ID/URL, and what you already tried. Do **not** open issues for usage errors, flavor/OOM, gated models, or transient infra.

@@ -54,7 +54,7 @@ body:
   - type: dropdown
     id: repro
     attributes:
-      label: Reproduces on the public sample davanstrien/ufo-ColPali with --max-samples 10?
+      label: Reproduces on a small public dataset (maintainer-runnable) with --max-samples 10?
       options:
         - "Yes"
         - "No (only my data)"
