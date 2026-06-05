@@ -1,0 +1,13 @@
+name: Sync vllm → HF
+on:
+  push:
+    branches: [main]
+    paths: ['vllm/**', '.github/workflows/sync-vllm.yml']
+
+jobs:
+  sync:
+    uses: ./.github/workflows/_sync-folder.yml
+    with:
+      folder: vllm
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
