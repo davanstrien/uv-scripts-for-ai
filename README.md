@@ -56,7 +56,7 @@ A self-contained, pinned script is easy to run and reuse, for a few reasons:
 - **Composable** — recipes hand off through the Hub (usually a dataset in, a dataset or model out), so you can chain them into a pipeline.
 - **Portable** — one self-contained file; run it with `uv run` where you have the hardware (most recipes need a GPU), or `hf jobs uv run` it on a managed GPU.
 
-**Built for agents, too.** Every recipe takes its arguments in the same `input output` order and runs from a URL, so an AI agent can pick a tool from its header and run it with no setup. On Jobs the agent runs in a sandbox: a throwaway disk, access limited to what the token's repo permissions allow, and a cost cap per job — not arbitrary code on your machine. (Hugging Face also ships an [`hf` CLI skill for agents](https://huggingface.co/docs/hub/agents-cli) for driving Jobs from an editor.)
+**Built for agents, too.** Every recipe takes its arguments in the same `input output` order and runs from a URL, so an AI agent can pick a tool from its header and run it with no setup. On Jobs the agent runs in a sandbox: a throwaway disk, access limited to what the token's repo permissions allow, and a cost cap per job — not arbitrary code on your machine. (Hugging Face also ships an [`hf` CLI skill for agents](https://huggingface.co/docs/hub/agents-cli) for driving Jobs from an editor.) This repo also ships a ready-to-use **[`uv-recipes` agent skill](skills/uv-recipes/)** — point your agent at it to discover, run, and adapt recipes.
 
 ## Recipes
 
@@ -73,7 +73,7 @@ A self-contained, pinned script is easy to run and reuse, for a few reasons:
 | **entity extraction** | NER / structured extraction over text | [`gliner`](https://huggingface.co/datasets/uv-scripts/gliner) |
 | ***…and more*** | *Training, evaluation, RAG indexing — migrating as they mature* | [`training`](https://huggingface.co/datasets/uv-scripts/training) · [`transformers-training`](https://huggingface.co/datasets/uv-scripts/transformers-training) |
 
-Only **[ocr/](ocr/)** lives in this repo so far — the others link to the [`uv-scripts`](https://huggingface.co/uv-scripts) Hugging Face org where they run today, and migrate here over time. (GitHub is the source of truth; each folder mirrors to its Hub dataset.)
+So far **[ocr/](ocr/)**, **[sam3/](sam3/)**, **[transcription/](transcription/)**, **[build-atlas/](build-atlas/)**, and **[vlm-object-detection/](vlm-object-detection/)** live in this repo; the rest link to the [`uv-scripts`](https://huggingface.co/uv-scripts) Hugging Face org where they run today, and migrate here over time. (GitHub is the source of truth; each folder mirrors to its Hub dataset.)
 
 **What fits here:** any self-contained UV script for data or ML work on the Hub. OCR and dataset work are the current focus, but inference, evaluation, RAG indexing, and **training** (fine-tuning with TRL / `transformers`, producing a model) are all in scope. If it's one pinned script that reads from or writes to the Hub, it belongs.
 
