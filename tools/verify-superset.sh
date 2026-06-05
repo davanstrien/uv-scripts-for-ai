@@ -13,9 +13,19 @@ repo="${2:?usage: verify-superset.sh <folder> <hf_repo_id> [repo_type]}"
 rtype="${3:-dataset}"   # dataset | space | model — selects the /api/<type>s tree endpoint
 tok="${HF_TOKEN:-$(hf auth token 2>/dev/null)}"
 
-code=$(curl -s -o /tmp/tree.json -w '%{http_code}' \
-  -H "Authorization: Bearer $tok" \
-  "https://huggingface.co/api/${rtype}s/$repo/tree/main?recursive=true")
+# Fetch the Hub tree, retrying transient failures (429 rate-limit, 5xx) with short
+# backoff so a momentary rate-limit doesn't hard-block a legitimate sync. 200/404 are
+# terminal; a still-transient code after the last try falls through to "fail closed".
+code=000
+for attempt in 1 2 3; do
+  code=$(curl -s -o /tmp/tree.json -w '%{http_code}' \
+    -H "Authorization: Bearer $tok" \
+    "https://huggingface.co/api/${rtype}s/$repo/tree/main?recursive=true")
+  case "$code" in
+    429|5??) echo "… Hub API returned HTTP $code for $repo; retry $attempt/3 after ${attempt}s…" >&2; sleep "$attempt" ;;
+    *)       break ;;
+  esac
+done
 
 case "$code" in
   404) echo "✅ OK — $repo doesn't exist yet (brand-new repo); nothing on the Hub to preserve."; exit 0 ;;
