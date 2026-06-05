@@ -1,13 +1,13 @@
 ---
 viewer: false
-tags: [uv-script, ocr, vision-language-model, document-processing, hf-jobs]
+tags: [uv-script, ocr, extraction, vision-language-model, document-processing, hf-jobs]
 ---
 
 # OCR UV Scripts
 
 > Part of [uv-scripts](https://huggingface.co/uv-scripts) — self-contained UV scripts you run on Hugging Face Jobs in one command.
 
-A model zoo of OCR scripts — one per model — that add a `markdown` column to an image dataset. Pick a model from the table below, point it at your dataset, and run it on a GPU with one command. Two companions sit alongside: `pp-doclayout.py` detects layout regions (bboxes for text/title/table/figure/…) instead of text, and `ocr-vllm-judge.py` compares model outputs head-to-head.
+A model zoo of OCR scripts — one per model — that add a `markdown` column to an image dataset. Pick a model from the table below, point it at your dataset, and run it on a GPU with one command. A few recipes do **structured extraction** instead — image *or* text → JSON given a schema (see [Structured extraction](#structured-extraction-image-or-text--json) below). Two more companions sit alongside: `pp-doclayout.py` detects layout regions (bboxes for text/title/table/figure/…) instead of text, and `ocr-vllm-judge.py` compares model outputs head-to-head.
 
 ## Quick Start
 
@@ -68,6 +68,27 @@ _Sorted by model size:_
 | `numarkdown-ocr.py` | [NuMarkdown-8B](https://huggingface.co/numind/NuMarkdown-8B-Thinking) | 8B | vLLM | Reasoning-based OCR |
 
 **Variants & tools** (same models, different I/O): `glm-ocr-v2.py` adds checkpoint/resume for very large jobs · `glm-ocr-bucket.py` and `falcon-ocr-bucket.py` read images/PDFs from a mounted bucket and write one `.md` per page · `ocr-vllm-judge.py` runs pairwise OCR-quality comparisons.
+
+## Structured extraction (image or text → JSON)
+
+Most scripts here output markdown. These take a **schema** and return **structured data** instead — give them the fields you want, they fill them in:
+
+| Script | Model | Size | Input | Output |
+|--------|-------|------|-------|--------|
+| `lfm2-vl-extract.py` | [LFM2.5-VL-1.6B-Extract](https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B-Extract) | 1.6B | image | JSON |
+| `nuextract3.py` | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | image | markdown **or** JSON |
+| `lfm2-extract.py` | [LFM2-1.2B-Extract](https://huggingface.co/LiquidAI/LFM2-1.2B-Extract) | 1.2B | **text** | JSON / XML / YAML |
+
+Pass `--schema` (inline JSON, a URL, or a file path). The LFM models are small and fast; run them on the `vllm/vllm-openai` image so the CUDA toolkit is present (each script's docstring has the exact command). Because `lfm2-extract.py` works on a **text** column, you can **chain it after OCR**: a recipe above turns a page into `markdown`, then `lfm2-extract.py` turns that markdown into fields.
+
+```bash
+# image → JSON directly
+hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
+    --image vllm/vllm-openai --python /usr/bin/python3 \
+    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
+    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/lfm2-vl-extract.py \
+    my-images my-fields --schema '{"title": "the document title", "date": "any date shown"}'
+```
 
 ## Layout detection (not OCR)
 
