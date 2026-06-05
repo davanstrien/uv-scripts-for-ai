@@ -70,6 +70,10 @@ from datasets import load_dataset
 from huggingface_hub import DatasetCard, login
 from PIL import Image
 from toolz import partition_all
+# Disable vLLM's FlashInfer sampler: it JIT-compiles a CUDA kernel needing nvcc, which the
+# default uv-script image lacks (engine init then crashes). Greedy OCR doesn't use it; this
+# lets the plain default-image command work. On the vllm/vllm-openai image it's a harmless no-op.
+os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
 from vllm import LLM, SamplingParams
 
 logging.basicConfig(level=logging.INFO)
