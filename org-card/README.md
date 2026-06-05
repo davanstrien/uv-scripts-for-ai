@@ -33,10 +33,15 @@ One command → a new dataset with a `markdown` column. Pay-per-second, no hardw
 
 ## Drive it with your coding agent
 
-Recipes take their arguments in the same `input output` order and run from a URL, so an agent (Claude Code, Cursor, …) can pick one and run it with no setup.
+Recipes take their arguments in the same `input output` order and run from a URL, so an agent (Claude Code, Cursor, …) can pick one and run it with no setup. The simplest start — paste this so it discovers what's available:
+
+```
+List the uv-scripts recipes and tell me which fit my task:
+uv run https://huggingface.co/datasets/uv-scripts/jobs-utils/raw/main/list-recipes.py
+```
 
 <details>
-<summary><b>Copy-paste agent prompts →</b></summary>
+<summary><b>More prompts — run a job, build a dataset →</b></summary>
 
 **Try it now** — runs a real OCR job and hands back a dataset:
 
