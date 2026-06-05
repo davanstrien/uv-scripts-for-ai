@@ -1,0 +1,82 @@
+name: Recipe failure
+description: "Report a reproducible bug in a uv-scripts recipe (agents: read the checklist first)"
+title: "[recipe-bug] <recipe>.py: <short summary>"
+labels: ["agent-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before filing — most failures are environment or usage, not recipe bugs.** Check:
+        401 → add `--secrets HF_TOKEN`; OOM / CUDA → bigger `--flavor`; timeout → `--timeout 2h`;
+        `nvcc` / init crash → try `--image vllm/vllm-openai` (see the recipe header);
+        gated model → accept terms on the model page; nightly-wheel build blip → retry.
+        File only a **genuine, reproducible defect in the recipe itself**, and search existing issues first.
+        Also check the recipe `--help` / header and the [Jobs docs](https://huggingface.co/docs/hub/jobs) before filing.
+        Your reproducer must use **public data** and contain **no tokens or secrets** (redact the command and logs).
+  - type: input
+    id: recipe
+    attributes:
+      label: Recipe URL
+      placeholder: https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Reproducer command (public dataset, runnable as-is, tokens redacted)
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: flavor
+    attributes:
+      label: Flavor
+      placeholder: l4x1
+    validations:
+      required: true
+  - type: input
+    id: image
+    attributes:
+      label: Image
+      placeholder: default (astral-sh/uv:python3.12-bookworm), or vllm/vllm-openai
+  - type: textarea
+    id: error
+    attributes:
+      label: Error (last ~30 lines)
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: job
+    attributes:
+      label: Job ID or URL
+      placeholder: https://huggingface.co/jobs/<user>/<id>
+  - type: dropdown
+    id: repro
+    attributes:
+      label: Reproduces on a small public dataset (maintainer-runnable) with --max-samples 10?
+      options:
+        - "Yes"
+        - "No (only my data)"
+        - "Did not try"
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What I already tried
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirms
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: This is a defect in the recipe, not a usage error / OOM / gated model / transient infra
+          required: true
+        - label: The reproducer uses a public dataset and runs as-is (no private data)
+          required: true
+        - label: I removed all tokens/secrets from the command and logs
+          required: true
