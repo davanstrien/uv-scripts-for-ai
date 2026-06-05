@@ -1,0 +1,13 @@
+name: Sync gliner → HF
+on:
+  push:
+    branches: [main]
+    paths: ['gliner/**', '.github/workflows/sync-gliner.yml']
+
+jobs:
+  sync:
+    uses: ./.github/workflows/_sync-folder.yml
+    with:
+      folder: gliner
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}

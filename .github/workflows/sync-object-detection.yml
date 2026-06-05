@@ -1,0 +1,13 @@
+name: Sync object-detection → HF
+on:
+  push:
+    branches: [main]
+    paths: ['object-detection/**', '.github/workflows/sync-object-detection.yml']
+
+jobs:
+  sync:
+    uses: ./.github/workflows/_sync-folder.yml
+    with:
+      folder: object-detection
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
