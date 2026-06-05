@@ -60,7 +60,7 @@ _Sorted by model size:_
 | `nanonets-ocr2.py` | [Nanonets-OCR2-3B](https://huggingface.co/nanonets/Nanonets-OCR2-s) | 3B | vLLM | Next-gen, Qwen2.5-VL base |
 | `deepseek-ocr-vllm.py` | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | vLLM | 5 resolution + 5 prompt modes |
 | `deepseek-ocr.py` | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | Transformers | Same model, Transformers backend |
-| `deepseek-ocr2-vllm.py` | [DeepSeek-OCR-2](https://huggingface.co/deepseek-ai/DeepSeek-OCR-2) | 3B | vLLM | Newer, requires nightly vLLM |
+| `deepseek-ocr2-vllm.py` | [DeepSeek-OCR-2](https://huggingface.co/deepseek-ai/DeepSeek-OCR-2) | 3B | vLLM | Newer; needs nightly vLLM **+ the `vllm/vllm-openai` image** ([why](#if-a-vllm-script-crashes-at-startup-the-nvcc--nvrtc-error)) |
 | `nuextract3.py` | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | vLLM | Markdown OCR **+ schema-guided JSON extraction** (template/Pydantic). Needs `vllm/vllm-openai` image |
 | `qianfan-ocr.py` | [Qianfan-OCR](https://huggingface.co/baidu/Qianfan-OCR) | 4.7B | vLLM | #1 OmniDocBench v1.5 (93.12), Layout-as-Thought, 192 languages |
 | `olmocr2-vllm.py` | [olmOCR-2-7B](https://huggingface.co/allenai/olmOCR-2-7B-1025-FP8) | 7B | vLLM | 82.4% olmOCR-Bench |
@@ -105,6 +105,27 @@ hf jobs uv run --flavor l4x1 -s HF_TOKEN \
 ```
 
 Source/sink can be either an HF dataset repo OR an `hf://buckets/...` URL (auto-detected). Bucket output writes incremental zstd parquet shards via the buckets API — resumable across runs (snapshot-backed source listing) and no git/commit overhead. See the script's `--help` for all flags.
+
+## If a vLLM script crashes at startup (the `nvcc` / `nvrtc` error)
+
+The vLLM recipes run on the **default** Jobs image and carry a guard (`VLLM_USE_FLASHINFER_SAMPLER=0`) so they work there with the plain command. But some — especially nightly-vLLM ones — JIT-compile a CUDA kernel at engine init and crash on the default image with one of:
+
+```
+RuntimeError: Could not find nvcc and default cuda_home='/usr/local/cuda' doesn't exist
+nvrtc: error: failed to open libnvrtc-builtins.so...
+```
+
+Run those on the **`vllm/vllm-openai` image**, which ships the full CUDA toolkit. Add these flags to any recipe — they point `import vllm` at the image's CUDA-matched build:
+
+```bash
+hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
+    --image vllm/vllm-openai --python /usr/bin/python3 \
+    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
+    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/<script>.py \
+    INPUT OUTPUT --max-samples 10
+```
+
+This is **required** for a few scripts (e.g. `deepseek-ocr2-vllm.py`, `abot-ocr.py`, `nuextract3.py`) and a safe fallback for any vLLM recipe that crashes at startup. (It's also the more robust way to run any vLLM recipe — full CUDA toolkit, ABI-matched build. It isn't a speed-up: uv still reinstalls the script's deps either way.)
 
 ## Common Options
 
