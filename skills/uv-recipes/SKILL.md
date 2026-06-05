@@ -10,7 +10,7 @@ A recipe is one self-contained Python file (a [PEP 723](https://peps.python.org/
 ## Requires
 
 - **`uv`** — `curl -LsSf https://astral.sh/uv/install.sh | sh`.
-- **The `hf` CLI** — `curl -LsSf https://hf.co/cli/install.sh | bash -s` (or `uv tool install "huggingface_hub[cli]"`). Authenticate with `hf auth login`, or set `HF_TOKEN`. Jobs needs a Pro/Team/Enterprise account.
+- **The `hf` CLI** — `curl -LsSf https://hf.co/cli/install.sh | bash -s` (or `uv tool install "huggingface_hub[cli]"`). Authenticate with `hf auth login`, or set `HF_TOKEN`. Jobs is pay-as-you-go (no subscription needed) — it just needs a Hugging Face account with credit.
 - **Strongly recommended — install the Hugging Face skills:** `hf skills add`. This installs the **`hf-cli`** skill (the full `hf` surface: jobs, auth, repos, datasets, buckets, webhooks) and stays current via `hf skills update`. The two compose: `uv-recipes` picks and runs a recipe, `hf-cli` drives everything else on the Hub.
 
 ## Run a recipe
