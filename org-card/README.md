@@ -39,6 +39,6 @@ Every recipe takes its arguments in the same `input output` order and runs from 
 
 ## Learn more
 
-- **[GitHub: davanstrien/uv-scripts-for-ai](https://github.com/davanstrien/uv-scripts-for-ai)** — the source of truth (these dataset repos mirror from it)
+- **[GitHub: davanstrien/uv-scripts-for-ai](https://github.com/davanstrien/uv-scripts-for-ai)** — the full cookbook and how to contribute
 - [Hugging Face Jobs docs](https://huggingface.co/docs/hub/jobs) — run `hf jobs hardware` for GPUs & pricing
 - [UV scripts guide](https://docs.astral.sh/uv/guides/scripts/)
