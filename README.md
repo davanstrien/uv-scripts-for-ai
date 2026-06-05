@@ -62,7 +62,7 @@ A self-contained, pinned script is easy to run and reuse, for a few reasons:
 
 | Domain | What it does | On the Hub |
 |---|---|---|
-| **[ocr/](ocr/)** ⭐ | OCR / document → text & structured data — GLM, PaddleOCR-VL, Nanonets, olmOCR, dots, … (30+ models) | [`uv-scripts/ocr`](https://huggingface.co/datasets/uv-scripts/ocr) |
+| **ocr** ⭐ | OCR / document → text & structured data — GLM, PaddleOCR-VL, Nanonets, olmOCR, dots, … (30+ models) | [`uv-scripts/ocr`](https://huggingface.co/datasets/uv-scripts/ocr) |
 | **vision** | Zero-shot detection & segmentation over image datasets | [`sam3`](https://huggingface.co/datasets/uv-scripts/sam3) · [`object-detection`](https://huggingface.co/datasets/uv-scripts/object-detection) · [`vlm-object-detection`](https://huggingface.co/datasets/uv-scripts/vlm-object-detection) |
 | **audio** | Transcription & speech translation | [`transcription`](https://huggingface.co/datasets/uv-scripts/transcription) |
 | **embeddings & atlas** | Embed a dataset; build an interactive map | [`build-atlas`](https://huggingface.co/datasets/uv-scripts/build-atlas) |
