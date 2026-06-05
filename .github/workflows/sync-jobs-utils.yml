@@ -1,0 +1,13 @@
+name: Sync jobs-utils → HF
+on:
+  push:
+    branches: [main]
+    paths: ['jobs-utils/**', '.github/workflows/sync-jobs-utils.yml']
+
+jobs:
+  sync:
+    uses: ./.github/workflows/_sync-folder.yml
+    with:
+      folder: jobs-utils
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
