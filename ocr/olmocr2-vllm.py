@@ -55,7 +55,6 @@ from tqdm.auto import tqdm
 # lets the plain default-image command work. On the vllm/vllm-openai image it's a harmless no-op.
 os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
 from vllm import LLM, SamplingParams
-from vllm.sampling_params import GuidedDecodingParams
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -369,13 +368,25 @@ def main(
         "stop": ["<|im_end|>", "<|endoftext|>"],
     }
 
-    # Add guided decoding if requested (enforces YAML front matter structure)
+    # Add guided decoding if requested (enforces YAML front matter structure).
+    # vLLM 0.22.x renamed this API: GuidedDecodingParams (guided_decoding=) →
+    # StructuredOutputsParams (structured_outputs=). Import lazily + shim so the
+    # default path (guided_decoding=False) never touches the moved symbol.
     if guided_decoding:
         logger.info("Enabling guided decoding with YAML front matter regex")
-        guided_params = GuidedDecodingParams(
-            regex=r"---\nprimary_language: (?:[a-z]{2}|null)\nis_rotation_valid: (?:True|False|true|false)\nrotation_correction: (?:0|90|180|270)\nis_table: (?:True|False|true|false)\nis_diagram: (?:True|False|true|false)\n(?:---|---\n[\s\S]+)"
-        )
-        sampling_params_kwargs["guided_decoding"] = guided_params
+        front_matter_regex = r"---\nprimary_language: (?:[a-z]{2}|null)\nis_rotation_valid: (?:True|False|true|false)\nrotation_correction: (?:0|90|180|270)\nis_table: (?:True|False|true|false)\nis_diagram: (?:True|False|true|false)\n(?:---|---\n[\s\S]+)"
+        try:
+            from vllm.sampling_params import StructuredOutputsParams
+
+            sampling_params_kwargs["structured_outputs"] = StructuredOutputsParams(
+                regex=front_matter_regex
+            )
+        except ImportError:
+            from vllm.sampling_params import GuidedDecodingParams
+
+            sampling_params_kwargs["guided_decoding"] = GuidedDecodingParams(
+                regex=front_matter_regex
+            )
 
     sampling_params = SamplingParams(**sampling_params_kwargs)
 
