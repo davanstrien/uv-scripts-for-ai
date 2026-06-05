@@ -31,10 +31,12 @@ hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
 
 One command → a new dataset with a `markdown` column. Pay-per-second, no hardware of your own.
 
-<details>
-<summary><b>Drive it with your coding agent →</b></summary>
+## Drive it with your coding agent
 
-Recipes take their arguments in the same `input output` order and run from a URL, so an agent can pick one and run it with no setup. Paste into Claude Code, Cursor, or similar:
+Recipes take their arguments in the same `input output` order and run from a URL, so an agent (Claude Code, Cursor, …) can pick one and run it with no setup.
+
+<details>
+<summary><b>Copy-paste agent prompts →</b></summary>
 
 **Try it now** — runs a real OCR job and hands back a dataset:
 
