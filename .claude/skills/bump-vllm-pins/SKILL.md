@@ -9,7 +9,7 @@ Pins give stability; this prevents staleness. Internal/dev-only, not shipped.
 
 ## vLLM facts to apply (verified 2026-06)
 - **Structured outputs:** use `StructuredOutputsParams` (`structured_outputs=`), floor `vllm>=0.11.0`. `GuidedDecodingParams` / `guided_decoding=` was **removed in 0.12.0** → ImportError on ≥0.12.0 (incl. 0.22.x). Param kinds carry over: `choice=`, `json=`, `regex=`, `grammar=`.
-- **FlashInfer / nvcc at init:** recent FlashInfer JIT-compiles kernels needing the CUDA toolkit. Prefer running on the **`vllm/vllm-openai` image** (ships the toolkit) over the `VLLM_USE_FLASHINFER_SAMPLER=0` env opt-out.
+- **FlashInfer / nvcc at init:** recent FlashInfer JIT-compiles kernels needing the CUDA toolkit. Prefer running on the **`vllm/vllm-openai` image** (ships the toolkit) over the `VLLM_USE_FLASHINFER_SAMPLER=0` env opt-out. (The official [`vllm-project/vllm-skills`](https://github.com/vllm-project/vllm-skills) docker skill likewise recommends this image.)
 - **Driver / flavor:** CUDA-13 builds need a newer driver. `a100-large`'s driver caps at CUDA 12.9 (`found version 12090`) → CUDA-13 wheels/images fail there; `l4x1` works. Prefer a CUDA-12.x image for broad flavor compat, or test on `l4x1`.
 - **Pinning:** pin the **image tag** (`vllm/vllm-openai:<ver>`, not `:latest`) for the strongest reproducibility (freezes vLLM + toolkit together); also pin `vllm==` in the PEP 723 header for the local path. vLLM releases ~monthly.
 
@@ -28,7 +28,7 @@ Pins give stability; this prevents staleness. Internal/dev-only, not shipped.
      -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
      <script.py> <public-input-dataset> <out> --max-samples 5
    ```
-   Poll `hf jobs inspect <id> --format json`.
+   Poll `hf jobs inspect <id> --format json`. (`--python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages` make uv use the image's preinstalled Python 3.12 + vLLM instead of fetching its own — **required** for the `vllm/vllm-openai` image; verified to run clean on `l4x1`.)
 3. **Green** = runs to completion + writes output. Flag failures by class: `ImportError` (API drift → re-harden to the new API), `nvcc`/FlashInfer (toolkit/image), or "driver too old" (CUDA-13-vs-flavor).
 4. **Propose** bumps (image tag + `vllm==`) as a reviewable diff; maintainer merges.
 
