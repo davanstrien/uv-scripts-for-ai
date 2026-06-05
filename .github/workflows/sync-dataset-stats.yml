@@ -1,0 +1,13 @@
+name: Sync dataset-stats → HF
+on:
+  push:
+    branches: [main]
+    paths: ['dataset-stats/**', '.github/workflows/sync-dataset-stats.yml']
+
+jobs:
+  sync:
+    uses: ./.github/workflows/_sync-folder.yml
+    with:
+      folder: dataset-stats
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}

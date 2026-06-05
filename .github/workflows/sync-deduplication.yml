@@ -1,0 +1,13 @@
+name: Sync deduplication → HF
+on:
+  push:
+    branches: [main]
+    paths: ['deduplication/**', '.github/workflows/sync-deduplication.yml']
+
+jobs:
+  sync:
+    uses: ./.github/workflows/_sync-folder.yml
+    with:
+      folder: deduplication
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
