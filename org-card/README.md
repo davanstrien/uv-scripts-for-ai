@@ -38,6 +38,8 @@ Recipes take their arguments in the same `input output` order and run from a URL
 ```
 List the uv-scripts recipes and tell me which fit my task:
 uv run https://huggingface.co/datasets/uv-scripts/jobs-utils/raw/main/list-recipes.py
+For context on how these work, read the org page https://huggingface.co/uv-scripts
+and the GitHub repo https://github.com/davanstrien/uv-scripts-for-ai.
 ```
 
 <details>
@@ -62,6 +64,7 @@ transcribe, classify, deduplicate, and embed datasets on Hugging Face. List them
 Pick the one that fits, read its script header for the arguments, and run it with:
   hf jobs uv run --flavor l4x1 --secrets HF_TOKEN <script-url> INPUT_DATASET OUTPUT_DATASET
 Each recipe reads a Hub dataset and writes a new one, so chain them as needed.
+Background: https://huggingface.co/uv-scripts and https://github.com/davanstrien/uv-scripts-for-ai
 ```
 
 The cookbook also ships a ready-made **agent skill** for discovering and running recipes — see the [GitHub repo](https://github.com/davanstrien/uv-scripts-for-ai), and Hugging Face's own [`hf` CLI skill for agents](https://huggingface.co/docs/hub/agents-cli). _(We'll refine these prompts over time.)_
