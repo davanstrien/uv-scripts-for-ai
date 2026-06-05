@@ -31,10 +31,19 @@ hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
 
 One command → a new dataset with a `markdown` column. Pay-per-second, no hardware of your own.
 
-<details>
-<summary><b>Drive it with your coding agent →</b></summary>
+## Drive it with your coding agent
 
-Recipes take their arguments in the same `input output` order and run from a URL, so an agent can pick one and run it with no setup. Paste into Claude Code, Cursor, or similar:
+Recipes take their arguments in the same `input output` order and run from a URL, so an agent (Claude Code, Cursor, …) can pick one and run it with no setup. The simplest start — paste this so it discovers what's available:
+
+```
+List the uv-scripts recipes and tell me which fit my task:
+uv run https://huggingface.co/datasets/uv-scripts/jobs-utils/raw/main/list-recipes.py
+For context on how these work, read the org page https://huggingface.co/uv-scripts
+and the GitHub repo https://github.com/davanstrien/uv-scripts-for-ai.
+```
+
+<details>
+<summary><b>More prompts — run a job, build a dataset →</b></summary>
 
 **Try it now** — runs a real OCR job and hands back a dataset:
 
@@ -55,6 +64,7 @@ transcribe, classify, deduplicate, and embed datasets on Hugging Face. List them
 Pick the one that fits, read its script header for the arguments, and run it with:
   hf jobs uv run --flavor l4x1 --secrets HF_TOKEN <script-url> INPUT_DATASET OUTPUT_DATASET
 Each recipe reads a Hub dataset and writes a new one, so chain them as needed.
+Background: https://huggingface.co/uv-scripts and https://github.com/davanstrien/uv-scripts-for-ai
 ```
 
 The cookbook also ships a ready-made **agent skill** for discovering and running recipes — see the [GitHub repo](https://github.com/davanstrien/uv-scripts-for-ai), and Hugging Face's own [`hf` CLI skill for agents](https://huggingface.co/docs/hub/agents-cli). _(We'll refine these prompts over time.)_
