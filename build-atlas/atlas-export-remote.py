@@ -417,8 +417,7 @@ def deploy_space_with_remote_data(
 
 
 def main():
-    # Enable HF Transfer for faster downloads if available
-    os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+
 
     parser = argparse.ArgumentParser(
         description="Deploy Embedding Atlas with remote data loading",

@@ -4,7 +4,7 @@
 #     "semhash",
 #     "datasets",
 #     "huggingface-hub",
-#     "hf-transfer",
+#     
 # ]
 # ///
 
@@ -42,8 +42,7 @@ from datasets import Dataset, load_dataset
 from huggingface_hub import DatasetCard, login
 from semhash import SemHash
 
-# Enable fast transfers
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
 
 
 def parse_args():

@@ -4,7 +4,7 @@
 # dependencies = [
 #     "transformers>=5.4.0",
 #     "datasets",
-#     "huggingface-hub[hf_transfer]",
+#     "huggingface-hub",
 #     "pillow",
 #     "torch",
 #     "torchvision",

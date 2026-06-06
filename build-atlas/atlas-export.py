@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "huggingface-hub[hf_transfer]",
+#     "huggingface-hub",
 #     "torch",  # For GPU detection
 #     "datasets",  # For dataset sampling
 # ]
@@ -130,7 +130,7 @@ def build_atlas_command(args) -> tuple[list, str, Optional[Path]]:
         dataset_input = args.dataset_id
 
     # Use uvx to run embedding-atlas with required dependencies
-    # Include hf-transfer for faster downloads when HF_HUB_ENABLE_HF_TRANSFER is set
+   
     cmd = [
         "uvx",
         "--with",
@@ -302,8 +302,7 @@ def deploy_to_space(
 
 
 def main():
-    # Enable HF Transfer for faster downloads if available
-    os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+   
 
     parser = argparse.ArgumentParser(
         description="Generate and deploy static Embedding Atlas visualizations",

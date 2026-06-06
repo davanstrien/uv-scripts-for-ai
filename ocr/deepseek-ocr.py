@@ -2,7 +2,7 @@
 # requires-python = ">=3.11"
 # dependencies = [
 #     "datasets",
-#     "huggingface-hub[hf_transfer]",
+#     "huggingface-hub",
 #     "pillow",
 #     "torch",
 #     "torchvision",
@@ -252,8 +252,7 @@ def main(
     # Track processing start time
     start_time = datetime.now()
 
-    # Enable HF_TRANSFER for faster downloads
-    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
 
     # Login to HF if token provided
     HF_TOKEN = hf_token or os.environ.get("HF_TOKEN")

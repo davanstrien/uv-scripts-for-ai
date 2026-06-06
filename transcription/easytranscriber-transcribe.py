@@ -14,7 +14,7 @@
 #     "soundfile",
 #     "librosa",
 #     "static-ffmpeg",
-#     "huggingface-hub[hf_transfer]",
+#     "huggingface-hub",
 # ]
 # ///
 
