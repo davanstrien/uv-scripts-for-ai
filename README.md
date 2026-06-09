@@ -9,6 +9,8 @@ Each script carries its own dependencies, so people and agents can run one witho
 
 A **recipe** here is one such script. Most read and write the [Hugging Face Hub](https://huggingface.co/datasets), so one script's output dataset becomes the next one's input.
 
+![Demo: OCR a whole image dataset with one command — no clone, no environment, straight from a Hub URL](ocr/demo.gif)
+
 ## Quickstart
 
 **First, install [uv](https://docs.astral.sh/uv/getting-started/installation/)** — it's the only thing you install; every script brings its own Python dependencies:
