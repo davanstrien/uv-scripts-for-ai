@@ -7,7 +7,7 @@
 # ]
 #
 # [[tool.uv.index]]
-# url = "https://pypi.nvidia.com/simple"
+# url = "https://pypi.nvidia.com"
 # ///
 
 """Build an Embedding Atlas visualization with GPU-accelerated UMAP.
@@ -19,27 +19,27 @@ Examples:
 
     # From a prepped parquet in a bucket
     hf jobs uv run --flavor a100-large \\
-        -v hf://buckets/user/atlas-data:/data \\
+        -v hf://buckets/user/atlas-data:/output \\
         -s HF_TOKEN --timeout 2h \\
-        atlas-build-gpu.py /data/books.parquet \\
+        atlas-build-gpu.py /output/books.parquet \\
         --text title --sample 2000000 --name my-atlas
 
     # From an HF dataset
     hf jobs uv run --flavor a100-large \\
-        -v hf://buckets/user/atlas-data:/data \\
+        -v hf://buckets/user/atlas-data:/output \\
         -s HF_TOKEN --timeout 2h \\
         atlas-build-gpu.py stanfordnlp/imdb \\
         --text text --split train --name imdb-atlas
+
+The bucket is mounted at /output, not /data: Jobs reserves /data for the uploaded
+script artifact when you pass a local script path.
 """
 
 import argparse
 import json
 import os
-import subprocess
 import sys
 import time
-
-os.environ["CUML_ACCEL_ENABLED"] = "1"
 
 
 def main():
@@ -52,7 +52,9 @@ def main():
     parser.add_argument("--sample", type=int, default=None, help="Number of rows to sample")
     parser.add_argument("--batch-size", type=int, default=256, help="Embedding batch size")
     parser.add_argument("--model", default=None, help="Embedding model name")
-    parser.add_argument("--output-dir", default="/data", help="Base output directory")
+    parser.add_argument("--output-dir", default="/output", help="Base output directory")
+    parser.add_argument("--allow-cpu", action="store_true",
+                        help="Run without a GPU (slow: CPU embedding + CPU UMAP)")
     args = parser.parse_args()
 
     atlas_output = os.path.join(args.output_dir, args.name)
@@ -64,45 +66,65 @@ def main():
     print(f"Sample: {args.sample}")
     print(f"Batch size: {args.batch_size}")
 
-    # Report GPU/cuml status
     gpu_info = {}
     try:
-        import cuml
-        print(f"cuML: {cuml.__version__}")
-        gpu_info["cuml_version"] = cuml.__version__
-    except ImportError:
-        print("WARNING: cuml not available, falling back to CPU UMAP")
-
-    try:
         import torch
-        if torch.cuda.is_available():
-            gpu_info["gpu"] = torch.cuda.get_device_name()
-            print(f"GPU: {gpu_info['gpu']}")
+        cuda_available = torch.cuda.is_available()
     except ImportError:
-        pass
+        cuda_available = False
+    if cuda_available:
+        gpu_info["gpu"] = torch.cuda.get_device_name()
+        print(f"GPU: {gpu_info['gpu']}")
+    elif not args.allow_cpu:
+        print("ERROR: no CUDA GPU available. Run on a GPU flavor, or pass --allow-cpu "
+              "to accept a much slower CPU build.")
+        sys.exit(1)
+    else:
+        print("WARNING: no GPU — running embedding and UMAP on CPU (--allow-cpu)")
 
-    start = time.time()
+    # cuml.accel patches umap-learn so embedding-atlas's UMAP runs on GPU. It must be
+    # installed in-process *before* embedding_atlas imports umap — an env var or a plain
+    # subprocess does not engage it.
+    if cuda_available:
+        try:
+            import cuml.accel
 
-    cmd = ["embedding-atlas", args.input, "--text", args.text,
-           "--batch-size", str(args.batch_size),
-           "--export-application", atlas_output]
+            cuml.accel.install()
+            import cuml
+
+            gpu_info["cuml_version"] = cuml.__version__
+            print(f"cuml.accel installed (cuML {cuml.__version__}) — UMAP will run on GPU")
+        except Exception as e:
+            print(f"WARNING: cuml.accel unavailable ({e}) — UMAP falls back to CPU")
+
+    from embedding_atlas.cli import main as atlas_cli
+
+    cli_args = [args.input, "--text", args.text,
+                "--batch-size", str(args.batch_size),
+                "--export-application", atlas_output]
 
     if args.image:
-        cmd.extend(["--image", args.image])
+        cli_args.extend(["--image", args.image])
     if args.model:
-        cmd.extend(["--model", args.model])
+        cli_args.extend(["--model", args.model])
     if args.split:
-        cmd.extend(["--split", args.split])
+        cli_args.extend(["--split", args.split])
     if args.sample:
-        cmd.extend(["--sample", str(args.sample)])
+        cli_args.extend(["--sample", str(args.sample)])
 
-    print(f"\nRunning: {' '.join(cmd)}\n")
-    result = subprocess.run(cmd, env=os.environ)
+    print(f"\nRunning: embedding-atlas {' '.join(cli_args)}\n")
+    start = time.time()
+
+    returncode = 0
+    try:
+        atlas_cli(args=cli_args)
+    except SystemExit as e:
+        returncode = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
     elapsed = time.time() - start
 
-    if result.returncode != 0:
-        print(f"\nFailed with exit code {result.returncode} after {elapsed:.1f}s")
-        sys.exit(result.returncode)
+    if returncode != 0:
+        print(f"\nFailed with exit code {returncode} after {elapsed:.1f}s")
+        sys.exit(returncode)
 
     # Write config sidecar for atlas-deploy.py
     parquet_path = os.path.join(atlas_output, "data", "dataset.parquet")
