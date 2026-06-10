@@ -3,8 +3,15 @@
 # dependencies = [
 #     "embedding-atlas>=0.19.1",
 #     "datasets",
-#     "cuml-cu12",
+#     "cuml-cu12>=25.10",
+#     "accelerate",
+#     "torch>=2.4",
 # ]
+#
+# [tool.uv]
+# # The NVIDIA index also hosts stale torch wheels; best-match keeps torch on PyPI
+# # while cuml still resolves from the NVIDIA index.
+# index-strategy = "unsafe-best-match"
 #
 # [[tool.uv.index]]
 # url = "https://pypi.nvidia.com"
