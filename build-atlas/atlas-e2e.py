@@ -143,11 +143,14 @@ def main():
 
         build_script = resolve_script("atlas-build-gpu.py")
 
+        # The bucket mounts at /output — Jobs reserves /data for the uploaded script
+        # artifact when the build script is passed as a local path.
         script_args = [
             args.input,
             "--name", args.name,
             "--text", args.text,
             "--batch-size", str(args.batch_size),
+            "--output-dir", "/output",
         ]
         if args.split:
             script_args.extend(["--split", args.split])
@@ -164,7 +167,7 @@ def main():
             flavor=args.flavor,
             timeout=args.timeout,
             secrets={"HF_TOKEN": get_token()},
-            volumes=[Volume(type="bucket", source=args.bucket, mount_path="/data")],
+            volumes=[Volume(type="bucket", source=args.bucket, mount_path="/output")],
         )
 
         print(f"Job submitted: {job.id}")
