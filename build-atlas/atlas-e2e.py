@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "huggingface-hub>=1.9.0",
+#     "huggingface-hub>=1.12.0",
 # ]
 # ///
 
@@ -44,16 +44,32 @@ import sys
 import time
 from pathlib import Path
 
-from huggingface_hub import HfApi, create_bucket
+from huggingface_hub import HfApi, Volume, create_bucket, get_token, run_uv_job
+
+# Where the sibling scripts live on the Hub, so this orchestrator also works when run
+# straight from a URL (uv downloads only this one file).
+HUB_RAW = "https://huggingface.co/datasets/uv-scripts/build-atlas/raw/main"
+
+TERMINAL_STAGES = ("COMPLETED", "ERROR", "CANCELED")
+
+
+def resolve_script(name: str) -> str:
+    """Use the sibling script if it exists locally, else its Hub raw URL."""
+    local = Path(__file__).parent / name
+    if local.exists():
+        return str(local)
+    url = f"{HUB_RAW}/{name}"
+    print(f"{name} not found locally — using {url}")
+    return url
 
 
 def wait_for_job(api: HfApi, job_id: str, poll_interval: int = 30) -> str:
-    """Poll a Job until it completes. Returns the final stage."""
+    """Poll a Job until it reaches a terminal stage. Returns the final stage."""
     print(f"\nWaiting for Job {job_id}...")
     while True:
         job = api.inspect_job(job_id=job_id)
         stage = job.status.stage
-        if stage in ("COMPLETED", "ERROR"):
+        if stage in TERMINAL_STAGES:
             msg = job.status.message or ""
             print(f"Job {stage}" + (f": {msg}" if msg else ""))
             return stage
@@ -93,6 +109,9 @@ def main():
 
     args = parser.parse_args()
 
+    if args.build_only and args.deploy_only:
+        parser.error("--build-only and --deploy-only are mutually exclusive")
+
     api = HfApi()
     user = api.whoami()["name"]
 
@@ -122,60 +141,42 @@ def main():
     if not args.deploy_only:
         print(f"\n[2/3] Submitting build Job ({args.flavor})...")
 
-        build_script = Path(__file__).parent / "atlas-build-gpu.py"
-        if not build_script.exists():
-            print(f"ERROR: {build_script} not found")
-            print("atlas-build-gpu.py must be in the same directory as this script")
-            sys.exit(1)
+        build_script = resolve_script("atlas-build-gpu.py")
 
-        # Build the hf jobs command
-        cmd = [
-            "hf", "jobs", "uv", "run",
-            "--flavor", args.flavor,
-            "-v", f"hf://buckets/{args.bucket}:/data",
-            "-s", "HF_TOKEN",
-            "--timeout", args.timeout,
-            str(build_script),
+        # The bucket mounts at /output — Jobs reserves /data for the uploaded script
+        # artifact when the build script is passed as a local path.
+        script_args = [
             args.input,
             "--name", args.name,
             "--text", args.text,
             "--batch-size", str(args.batch_size),
+            "--output-dir", "/output",
         ]
-
         if args.split:
-            cmd.extend(["--split", args.split])
+            script_args.extend(["--split", args.split])
         if args.sample:
-            cmd.extend(["--sample", str(args.sample)])
+            script_args.extend(["--sample", str(args.sample)])
         if args.image:
-            cmd.extend(["--image", args.image])
+            script_args.extend(["--image", args.image])
         if args.model:
-            cmd.extend(["--model", args.model])
+            script_args.extend(["--model", args.model])
 
-        print(f"Command: {' '.join(cmd)}\n")
+        job = run_uv_job(
+            build_script,
+            script_args=script_args,
+            flavor=args.flavor,
+            timeout=args.timeout,
+            secrets={"HF_TOKEN": get_token()},
+            volumes=[Volume(type="bucket", source=args.bucket, mount_path="/output")],
+        )
 
-        # Run and capture job ID from output
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        output = result.stdout + result.stderr
-
-        # Extract job ID
-        job_id = None
-        for line in output.split("\n"):
-            if "Job started with ID:" in line:
-                job_id = line.split("Job started with ID:")[-1].strip()
-                break
-
-        if job_id is None:
-            print("ERROR: Could not extract Job ID from output:")
-            print(output)
-            sys.exit(1)
-
-        print(f"Job submitted: {job_id}")
-        print(f"View: https://huggingface.co/jobs/{user}/{job_id}")
+        print(f"Job submitted: {job.id}")
+        print(f"View: https://huggingface.co/jobs/{user}/{job.id}")
 
         # Wait for completion
-        stage = wait_for_job(api, job_id)
+        stage = wait_for_job(api, job.id)
         if stage != "COMPLETED":
-            print(f"\nJob failed. Check logs: https://huggingface.co/jobs/{user}/{job_id}")
+            print(f"\nJob did not complete ({stage}). Check logs: https://huggingface.co/jobs/{user}/{job.id}")
             sys.exit(1)
 
         print("Build complete!")
@@ -188,14 +189,11 @@ def main():
     # ── Step 3: Deploy Space ──
     print(f"\n[3/3] Deploying Space {args.space_id}...")
 
-    deploy_script = Path(__file__).parent / "atlas-deploy.py"
-    if not deploy_script.exists():
-        print(f"ERROR: {deploy_script} not found")
-        sys.exit(1)
+    deploy_script = resolve_script("atlas-deploy.py")
 
     deploy_cmd = [
         "uv", "run",
-        str(deploy_script),
+        deploy_script,
         "--name", args.name,
         "--bucket", args.bucket,
         "--space-id", args.space_id,

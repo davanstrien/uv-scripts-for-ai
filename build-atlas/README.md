@@ -54,8 +54,9 @@ uv run atlas-e2e.py stanfordnlp/imdb \
 
 ```bash
 # 1. Build atlas on GPU (runs as HF Job)
+# (bucket mounts at /output — Jobs reserves /data for the script artifact)
 hf jobs uv run --flavor a100-large \
-    -v hf://buckets/user/atlas-data:/data \
+    -v hf://buckets/user/atlas-data:/output \
     -s HF_TOKEN --timeout 2h \
     atlas-build-gpu.py my-org/my-dataset \
     --text text --name my-atlas --sample 1000000
@@ -78,9 +79,9 @@ hf jobs uv run --flavor cpu-upgrade \
 
 # Build: embed the prepped data
 hf jobs uv run --flavor a100-large \
-    -v hf://buckets/user/atlas-data:/data \
+    -v hf://buckets/user/atlas-data:/output \
     -s HF_TOKEN --timeout 2h \
-    atlas-build-gpu.py /data/books/books.parquet \
+    atlas-build-gpu.py /output/books/books.parquet \
     --text title --name books-atlas --sample 2000000
 
 # Deploy
