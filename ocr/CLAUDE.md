@@ -339,8 +339,42 @@ import). Checked: no other `surya*` file in the repo.
   bytes into a `Value("binary")` column. Output `davanstrien/surya-smoke-pdf`.
 
 **Still untested (low risk):** `--table-mode simple` (rows/cols/cells). Larger GPUs (l4x1 confirmed
-comfortable for 650M). A **bucket** variant (`surya-ocr-bucket.py`, mount a bucket of real PDF *files* →
-output, like `glm-ocr-bucket.py`) is a natural follow-up — distinct I/O from this dataset-column recipe.
+comfortable for 650M).
+
+### Bucket variant (`surya-ocr-bucket.py`) — issue #55 ✅
+✅ **OCR a bucket of files directly, no dataset round-trip** (added 2026-06-22). Reuses the parent's
+`OfflineVLLMBackend` / predictor dispatch / `serialize_pages` **verbatim**; grafts on the bucket I/O
+from `pp-doclayout.py`. Two input strategies via `--io-mode {auto,mount,copy}`: **mount** reads off a
+FUSE-mounted `/in` (`-v hf://buckets/<id>:/in:ro`); **copy** uses `huggingface_hub`
+`list_bucket_tree` + `download_bucket_files` to batch-fetch each `--batch-size` chunk to temp, OCR, then
+`shutil.rmtree` (peak disk = one batch — sidesteps the FUSE bulk-read stall). Two sinks (≥1, both
+allowed): `--output-bucket` writes per-page `<rel>.md` + `<rel>.json` (`surya_blocks`) to a mounted dir
+or `hf://buckets/...` URL (`batch_bucket_files`), **resume-by-skip keyed on the `.json`** (the parent
+bucket recipes have no resume); `--output-dataset` buffers one row per file and `push_to_hub`. `.jp2` is
+first-class (LoC/Chronicling America) with an `imagecodecs` fallback when the image's Pillow lacks
+OpenJPEG.
+
+**⚠️ Dependency gotcha (cost one job):** must pin **`surya-ocr==0.20.0`** in the PEP 723 header. Adding
+`huggingface-hub>=1.6.0` (for the buckets API) loosened the resolve and uv backtracked to an ancient
+surya without the `surya.inference` engine layout → `ModuleNotFoundError: No module named 'surya.inference'`.
+Fix: pin surya, leave `huggingface-hub` unpinned — at runtime `PYTHONPATH` puts the pinned image's hub
+(buckets API present) ahead of the venv, so there's no version tension.
+
+**Smoke-tested on Jobs (2026-06-22, `davanstrien/chronicling-america-mirror-demo`, 1901 *The Commoner*
+`.jp2`, l4x1):** copy→dataset, mount→mounted-bucket-files, copy→API-bucket-files, and resume re-run
+(skip-all, no model load) all 8/8 OK with clean masthead/body OCR + valid pixel-space `surya_blocks`.
+Mount-vs-copy benchmark (32-page seed-42 slice, l4x1, inference identical ~745s — confirms the I/O
+split): **copy wins decisively** — listing **5.1s vs mount 134.2s** (FUSE `rglob` stats all 38k bucket
+files; ~26×), batch-download I/O **57.6s vs FUSE-read 74.6s**. Mount *also* hit a transient
+`Volume mount failed: init container exhausted retries` on the first attempt (needed a cold retry;
+documented fresh-node CSI flake) — copy never mounts. → `auto` defaulting `hf://buckets/...` inputs to
+**copy** is the right call (already the implemented default); mount stays for when the bucket is already
+mounted or zero ephemeral disk is wanted.
+
+**TODO(alto):** ALTO XML export from `surya_blocks` is its own follow-up issue (block-level
+bbox→`HPOS/VPOS/WIDTH/HEIGHT`, label→`TextBlock`/`Illustration`, reading_order→order; line-level needs
+Surya's `DetectionPredictor`; word-level out of scope). The test bucket ships CA's own ALTO `.xml` next
+to each `.jp2` as a ready-made diff target.
 
 **License:** code Apache-2.0, **weights modified OpenRAIL-M** (research/personal/<$5M, no competitive use
 vs Datalab's API). Surfaced in the docstring, README entry, and output dataset card.
