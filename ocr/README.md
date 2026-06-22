@@ -70,7 +70,7 @@ _Sorted by model size:_
 | `rolm-ocr.py` | [RolmOCR](https://huggingface.co/reducto/RolmOCR) | 7B | vLLM | Qwen2.5-VL based, general-purpose |
 | `numarkdown-ocr.py` | [NuMarkdown-8B](https://huggingface.co/numind/NuMarkdown-8B-Thinking) | 8B | vLLM | Reasoning-based OCR |
 
-**Variants & tools** (same models, different I/O): `glm-ocr-v2.py` adds checkpoint/resume for very large jobs · `glm-ocr-bucket.py` and `falcon-ocr-bucket.py` read images/PDFs from a mounted bucket and write one `.md` per page · `ocr-vllm-judge.py` runs pairwise OCR-quality comparisons.
+**Variants & tools** (same models, different I/O): `glm-ocr-v2.py` adds checkpoint/resume for very large jobs · `glm-ocr-bucket.py` and `falcon-ocr-bucket.py` read images/PDFs from a mounted bucket and write one `.md` per page · `surya-ocr-bucket.py` is the structured bucket recipe — OCR a bucket of files (no dataset round-trip) via either a FUSE mount **or** `huggingface_hub` batch-copy (`--io-mode mount|copy`), writing per-page `.md` + `.json` (`surya_blocks`) back to a bucket (resumable) and/or a pushed dataset · `ocr-vllm-judge.py` runs pairwise OCR-quality comparisons.
 
 `surya-ocr.py` is the structured outlier: besides the flattened text column it writes a `surya_blocks` JSON column (per-block HTML + bounding boxes + reading order), and `--task` switches between OCR, `layout`, and `table`. It runs as **offline vLLM batch** (no server) and must use the **pinned** `vllm/vllm-openai:v0.20.1` image — its `qwen3_5` architecture is recent and version-sensitive, and that image puts vLLM at `/usr/local/lib/python3.12/site-packages` (use `--python /usr/local/bin/python3`; the exact command is in the script's docstring). Weights are **modified OpenRAIL-M**.
 
