@@ -273,6 +273,80 @@ repo (same multi-config pattern as the other OCR scripts).
 
 Requires Python ≥3.12 (lift-pdf constraint) — fine on the standard images.
 
+### Surya OCR 2 (`surya-ocr.py`)
+✅ **OCR + layout + table validated on Jobs** (added 2026-06-22)
+
+Datalab's **Surya OCR 2** (`datalab-to/surya-ocr-2`, 650M, Qwen3.5-style) for **structured** OCR.
+Unlike the flat-markdown scripts, it returns per-block HTML + bounding boxes + reading order. The
+recipe writes **two columns**: `--output-column` (default `markdown`, flattened reading-order text)
+**and** `surya_blocks` (the full structured result as JSON, one entry per page). `--task` switches
+between `ocr` (RecognitionPredictor, full-page), `layout` (LayoutPredictor), and `table`
+(TableRecPredictor; `--table-mode full` → HTML, `simple` → rows/cols/cells).
+
+**Engine — offline vLLM batch, NO server (the whole trick).** Surya normally runs its VLM through a
+**spawned server**: on GPU it `docker run`s `vllm/vllm-openai`, on CPU a `llama-server` subprocess
+(`surya/inference/backends/{vllm,llamacpp}.py`). Docker-in-Docker isn't available inside a Job, so
+the default path can't work. Instead we subclass Surya's `Backend` ABC
+(`surya/inference/backends/base.py`: `start`/`stop`/`generate(batch)->List[BatchOutputItem]`) with an
+in-process `OfflineVLLMBackend` that runs vLLM's offline `LLM().chat()` and inject it via
+`manager.backend = ...` (bypassing `SuryaInferenceManager.__init__`'s autodetect). **Surya still owns
+everything else** — prompts (`PROMPT_MAPPING`), image scaling (`scale_to_fit`), HTML/bbox parsing, the
+repeat-loop fallback, the 0–1000→pixel bbox rescale, and the layout/table predictors — so we only swap
+the transport. We reuse Surya's own `_build_messages`/`scale_to_fit`/`PROMPT_MAPPING` so the offline
+path matches the server byte-for-byte. `mm_processor_kwargs={min_pixels:3136,max_pixels:6291456}`,
+`dtype=bfloat16`, `max_model_len=18000`, sampling `temperature=0.0/top_p=0.1`, `logprobs=1` →
+`mean_token_prob` → Surya's per-block `confidence`. Guided JSON (layout's `LAYOUT_JSON_SCHEMA`) maps to
+`StructuredOutputsParams`/`GuidedDecodingParams` (same shim as `ocr-vllm-judge.py`). **Not mirrored:**
+Surya's per-item repeat-token retry — its recognition layer already detects loops and falls back to
+layout+block OCR, so the backend stays simple (like lift).
+
+**⚠️ Image gotcha — pin `vllm/vllm-openai:v0.20.1` AND use the `site-packages` path.** Surya-2 is the
+recent, **version-sensitive, hybrid (linear-attention) `qwen3_5`** architecture; v0.20.1 is Surya's
+known-good vLLM. Unlike the other vLLM recipes (which use the unversioned image at
+`/usr/bin/python3` + `dist-packages`), the **`:v0.20.1`** image puts python at `/usr/local/bin/python3`
+and vLLM/torch at **`/usr/local/lib/python3.12/site-packages`**. The first smoke run used the old
+`dist-packages` path → `No module named 'vllm'` → 0/5. Correct flags:
+```bash
+hf jobs uv run --flavor l4x1 -s HF_TOKEN \
+    --image vllm/vllm-openai:v0.20.1 --python /usr/local/bin/python3 \
+    -e PYTHONPATH=/usr/local/lib/python3.12/site-packages \
+    ./ocr/surya-ocr.py davanstrien/ufo-ColPali OUTPUT --max-samples 5
+```
+`PYTHONPATH` is prepended ahead of the uv venv, so the **image's** torch 2.11.0+cu130 / transformers /
+vLLM 0.20.1 win at import even though `surya-ocr` pulls its own torch into the venv (harmless, just a
+wasted download). Confirmed via a probe job: vLLM at `…/site-packages/vllm`, python 3.12.13.
+
+**Naming gotcha:** must be `surya-ocr.py`, never `surya.py` (would shadow the `surya` package on
+import). Checked: no other `surya*` file in the repo.
+
+**Smoke-test results (2026-06-22, `davanstrien/ufo-ColPali`, l4x1, `vllm/vllm-openai:v0.20.1`):**
+- **ocr** (5 samples): 5/5 OK, 3.7 min (vLLM engine init ~113s incl. 34s compile + CUDA-graph capture,
+  then inference). `markdown` clean reading-order text; `surya_blocks` valid JSON with **pixel-space**
+  bboxes (e.g. `[21.6,65.5,30.9,343.4]` within `image_bbox=[0,0,618,1007]`), sequential `reading_order`,
+  canonical labels (PageHeader/SectionHeader/Text/…), `confidence` ~0.94 (logprobs path works), per-block
+  HTML (`<h1>`, `<sup>`, `<br/>`). Output `davanstrien/surya-smoke-ocr`. Resolved `vllm==0.20.1,
+  torch==2.11.0+cu130, transformers==5.7.0, surya-ocr==0.20.0`.
+- **layout** (3 samples): 3/3 OK; `surya_blocks` = `LayoutResult` per page (bboxes with `label`/
+  `position`/`count`/`confidence`, guided-JSON enforced). Output `davanstrien/surya-smoke-layout`.
+- **table** `--table-mode full` (3 samples): 3/3 OK; `TableResult` with `html` populated (rows/cols/cells
+  empty in full mode, by design). ufo-ColPali has no real tables, so use a table dataset for meaningful
+  output — the code path is what's validated. Output `davanstrien/surya-smoke-table`.
+
+- **pdf** (`--pdf-column`/`--page-range`, real 14.8MB arXiv PDF, pages 0–2): 1/1 OK. Text
+  concatenates the 3 pages (title/authors/abstract of arXiv:2606.17162 extracted in reading order);
+  `surya_blocks` has **3 page entries** (`image_bbox=[0,0,1632,2112]` at 192 DPI) with sensible labels
+  (PageHeader/SectionHeader/Text/Picture/Diagram/Caption/ListGroup/…). Source built by wrapping the PDF
+  bytes into a `Value("binary")` column. Output `davanstrien/surya-smoke-pdf`.
+
+**Still untested (low risk):** `--table-mode simple` (rows/cols/cells). Larger GPUs (l4x1 confirmed
+comfortable for 650M). A **bucket** variant (`surya-ocr-bucket.py`, mount a bucket of real PDF *files* →
+output, like `glm-ocr-bucket.py`) is a natural follow-up — distinct I/O from this dataset-column recipe.
+
+**License:** code Apache-2.0, **weights modified OpenRAIL-M** (research/personal/<$5M, no competitive use
+vs Datalab's API). Surfaced in the docstring, README entry, and output dataset card.
+
+**Benchmark/compare:** `--config`/`--create-pr` push the same multi-config pattern as the other scripts.
+
 ---
 
 ## Future: OCR Smoke Test Dataset

@@ -47,6 +47,7 @@ _Sorted by model size:_
 |--------|-------|------|---------|-------|
 | `falcon-ocr.py` | [Falcon-OCR](https://huggingface.co/tiiuae/Falcon-OCR) | 0.3B | falcon-perception | Smallest in collection. #1 on multi-column docs and tables (olmOCR), Apache 2.0 |
 | `smoldocling-ocr.py` | [SmolDocling](https://huggingface.co/ds4sd/SmolDocling-256M-preview) | 256M | Transformers | DocTags structured output |
+| `surya-ocr.py` | [Surya OCR 2](https://huggingface.co/datalab-to/surya-ocr-2) | 0.65B | vLLM | **Structured** OCR + `--task layout\|table`: per-block HTML with bboxes & reading order in an extra `surya_blocks` column. 91 langs, top-under-3B on olmOCR-Bench. Modified OpenRAIL-M license. Needs the **pinned** `vllm/vllm-openai:v0.20.1` image |
 | `glm-ocr.py` | [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) | 0.9B | vLLM | 94.62% OmniDocBench V1.5 |
 | `paddleocr-vl.py` | [PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL) | 0.9B | Transformers | 4 task modes (ocr/table/formula/chart) |
 | `paddleocr-vl-1.5.py` | [PaddleOCR-VL-1.5](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.5) | 0.9B | Transformers | 94.5% OmniDocBench, 6 task modes |
@@ -70,6 +71,8 @@ _Sorted by model size:_
 | `numarkdown-ocr.py` | [NuMarkdown-8B](https://huggingface.co/numind/NuMarkdown-8B-Thinking) | 8B | vLLM | Reasoning-based OCR |
 
 **Variants & tools** (same models, different I/O): `glm-ocr-v2.py` adds checkpoint/resume for very large jobs · `glm-ocr-bucket.py` and `falcon-ocr-bucket.py` read images/PDFs from a mounted bucket and write one `.md` per page · `ocr-vllm-judge.py` runs pairwise OCR-quality comparisons.
+
+`surya-ocr.py` is the structured outlier: besides the flattened text column it writes a `surya_blocks` JSON column (per-block HTML + bounding boxes + reading order), and `--task` switches between OCR, `layout`, and `table`. It runs as **offline vLLM batch** (no server) and must use the **pinned** `vllm/vllm-openai:v0.20.1` image — its `qwen3_5` architecture is recent and version-sensitive, and that image puts vLLM at `/usr/local/lib/python3.12/site-packages` (use `--python /usr/local/bin/python3`; the exact command is in the script's docstring). Weights are **modified OpenRAIL-M**.
 
 ## Structured extraction (image or text → JSON)
 
@@ -194,6 +197,7 @@ Beyond the shared flags, some models add their own. Run `--help` on any script f
 
 | Script | Extra options |
 |--------|---------------|
+| `surya-ocr.py` | `--task ocr\|layout\|table`, `--table-mode full\|simple`, `--pdf-column`/`--page-range`, `--blocks-column` |
 | `glm-ocr.py` | `--task ocr\|formula\|table` |
 | `paddleocr-vl.py` | `--task-mode ocr\|table\|formula\|chart` |
 | `paddleocr-vl-1.5.py` | `--task-mode ocr\|table\|formula\|chart\|spotting\|seal` |
