@@ -80,8 +80,19 @@ Most scripts here output markdown. These take a **schema** and return **structur
 | `lfm2-vl-extract.py` | [LFM2.5-VL-1.6B-Extract](https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B-Extract) | 1.6B | image | JSON |
 | `nuextract3.py` | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | image | markdown **or** JSON |
 | `lfm2-extract.py` | [LFM2-1.2B-Extract](https://huggingface.co/LiquidAI/LFM2-1.2B-Extract) | 1.2B | **text** | JSON / XML / YAML |
+| `lift-extract.py` | [lift](https://huggingface.co/datalab-to/lift) | 9B | image **or** PDF | JSON |
 
 Pass `--schema` (inline JSON, a URL, or a file path). The LFM models are small and fast; run them on the `vllm/vllm-openai` image so the CUDA toolkit is present (each script's docstring has the exact command). Because `lfm2-extract.py` works on a **text** column, you can **chain it after OCR**: a recipe above turns a page into `markdown`, then `lfm2-extract.py` turns that markdown into fields.
+
+`lift-extract.py` is the heavyweight of the group: Datalab's 9B model does **schema-constrained** decoding (output is guaranteed valid against your JSON Schema) and is the only recipe here that takes **multi-page PDFs** directly — a whole document (`--pdf-column`, `--page-range`) collapses into one extraction. It runs in-process two ways — `--method hf` (Transformers, default image, best for small jobs) or `--method vllm` (vLLM's offline engine on the `vllm/vllm-openai` image, faster at scale via continuous batching) — both single-command, no server. The vLLM path mirrors lift's own structured-output recipe (schema-constrained JSON decoding); benchmark the two by pushing each to one repo with `--config hf` / `--config vllm`. **License:** the code is Apache-2.0 but the weights are a modified OpenRAIL-M (free for research, personal use, and startups under $5M funding/revenue; no competitive use against Datalab's API) — confirm you're within those terms.
+
+```bash
+# images or multi-page PDFs → schema-constrained JSON (9B, runs on the default image)
+hf jobs uv run --flavor a100-large --secrets HF_TOKEN \
+    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/lift-extract.py \
+    your-input-dataset your-output-dataset \
+    --schema '{"type":"object","properties":{"title":{"type":"string"}}}' --max-samples 5
+```
 
 ```bash
 # image → JSON directly

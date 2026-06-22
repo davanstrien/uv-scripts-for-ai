@@ -202,6 +202,77 @@ hf jobs uv run --flavor l4x1 \
 ### PaddleOCR-VL (`paddleocr-vl.py`)
 ✅ Working
 
+### lift (`lift-extract.py`)
+✅ **Both backends validated on Jobs** (added 2026-06-22)
+
+Datalab's `lift` (9B, Qwen3.5-based) for **schema-constrained** structured extraction:
+image *or* multi-page PDF + JSON Schema → JSON. Sits alongside `nuextract3.py` /
+`lfm2-vl-extract.py` in the structured-extraction group, but it's the only one that
+ingests PDFs directly (one row = one document, multi-page collapsed into one extraction).
+
+**Shared rendering** comes from lift: we reuse `lift.input.load_file` (auto-detects PDF vs
+image by content; `pypdfium2`, DPI/min-dim, `--page-range`) via a temp file per row. Each row
+→ a list of page images → one extraction. Both backends share this.
+
+**Backends (`--method`)** — both **in-process, single command** (no server):
+- `hf` (default): drives the `lift-pdf` package directly — `InferenceManager(method="hf")` →
+  `AutoModelForImageTextToText`, bf16, batches a list of `BatchInputItem` conversations with
+  left padding. **No** constrained decoding (plain `model.generate`); trusts lift's training.
+  Runs on the **default** uv image. Simplest path; best for small jobs.
+- `vllm`: vLLM's **offline `LLM()` engine** + `llm.chat()` with structured outputs — the
+  repo's standard fast-batch pattern. We reproduce lift's *own* vLLM recipe (their `generate_vllm`)
+  rather than calling the package: `PROMPT_MAPPING["direct"]`, `scale_to_fit`,
+  `mm_processor_kwargs={min_pixels:3136,max_pixels:861696}`, and the guided JSON schema
+  (`json_schema_to_pydantic.create_model` → `make_properties_nullable` → `StructuredOutputsParams`,
+  with the version shim from `ocr-vllm-judge.py`). Sampling matches lift exactly: `temperature=0.0,
+  top_p=0.1, max_tokens=12384`. Needs the `vllm/vllm-openai` image (vLLM not in our deps; reused
+  from the image via `PYTHONPATH`, which also wins the torch version → no clash). **Not mirrored:**
+  lift's repeat-token retry loop (re-runs looped items at higher temp) — less critical here since
+  the grammar constraint already prevents runaway repetition.
+
+> **History:** the first `--method vllm` used the package's path, which is an OpenAI *client* →
+> server (lift's `lift_vllm` shells out to `sudo docker run`, unusable in a Job). We built+validated
+> an auto-launched `vllm serve` subprocess for it, then replaced the whole thing with the offline
+> `LLM()` engine — cleaner single command, no HTTP, and the repo's established pattern.
+
+**Model id:** card repo is `datalab-to/lift` (9.65B, license `openrail`, not gated). The
+installed package's internal default was `datalab-to/lift-extract`; we pin `--model
+datalab-to/lift` via the `MODEL_CHECKPOINT` env (set *before* importing lift, since settings
+read env at import). Confirmed in the smoke test: `datalab-to/lift` (commit `3129597…`) loads.
+
+**Naming gotcha:** the script must NOT be named `lift.py` — that shadows the installed `lift`
+package (`import lift` resolves to the script itself → `ImportError: cannot import name
+'resolve_schema'`). Hence `lift-extract.py`. Hit this on the first Jobs run.
+
+**License:** code Apache-2.0, **weights modified OpenRAIL-M** (research/personal/<$5M, no
+competitive use vs Datalab API). Surfaced in the docstring, the README entry, and the output
+dataset card.
+
+**Benchmark both backends:** `--config hf --create-pr` vs `--config vllm --create-pr` into one
+repo (same multi-config pattern as the other OCR scripts).
+
+**Smoke-test results (2026-06-22, `davanstrien/ufo-ColPali`, 3 samples, a100-large):**
+- **HF backend** (default image): 3/3 valid JSON, batched (1 chunk of 3 at `--batch-size 8`, no
+  padding/image-count issues), 1.8 min. Output `davanstrien/lift-smoke-hf`. Resolved
+  `lift-pdf==0.1.1, transformers==5.12.1, torch==2.12.1, datasets==5.0.0`.
+- **vLLM offline backend** (`vllm/vllm-openai` image): `LLM()` engine loaded (weights 18 GiB /
+  59s via Xet high-perf), `llm.chat` batched all 3 prompts in one call (538 tok/s in), 3/3 valid
+  JSON via `StructuredOutputsParams`, clean engine shutdown, 5.2 min (engine init + torch.compile
+  warmup dominates at 3 samples; wins at scale). `vllm==0.23.0`, image's `torch==2.11.0+cu130` (no
+  clash). Output `davanstrien/lift-smoke-vllm-offline`.
+  - (The earlier server-subprocess vLLM also passed — `davanstrien/lift-smoke-vllm`, 5.3 min — but
+    was replaced by the offline engine; see History above.)
+- **All paths produce valid schema-shaped JSON**, e.g.
+  `{"title": "OUT OF THIS WORLD UFO FlyBys in Middle Tennessee", "date": "Oct. 26, 1995"}`;
+  absent fields → `null` (nullable-leaf transform). `parse_error_rate: 0.0`. Outputs agree across
+  backends except minor low-temp content drift (offline-vLLM recovered a Spanish title hf left null).
+
+**Still untested (lower risk — reuses lift's `load_file`, exercised on the image path):**
+- PDF column path (`--pdf-column`, `--page-range`) on a real PDF-bytes dataset.
+- `l4x1` for the hf backend (9B bf16 ≈ 19GB; default `a100-large` confirmed comfortable).
+
+Requires Python ≥3.12 (lift-pdf constraint) — fine on the standard images.
+
 ---
 
 ## Future: OCR Smoke Test Dataset
