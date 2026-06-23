@@ -33,7 +33,7 @@ This will:
 
 ## Serve a model as a live endpoint
 
-Want a live, OpenAI-compatible endpoint instead of a batch run — to poke at a model interactively, point an agent at it, or fan out a quick concurrent batch? [HF Jobs serving](https://huggingface.co/docs/hub/jobs-serving) exposes a port on a GPU Job: a temporary endpoint that bills by the minute and self-destructs on `--timeout`. See **[serving-unlimited-ocr.md](serving-unlimited-ocr.md)** for a one-command worked example (Baidu's [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR), served with SGLang).
+The recipes here run as batch jobs. To call a model interactively, from an agent, or with concurrent ad-hoc requests, you can instead run it as a temporary endpoint: [HF Jobs serving](https://huggingface.co/docs/hub/jobs-serving) exposes a port on a GPU Job, giving an OpenAI-compatible endpoint that runs until the job is cancelled or its `--timeout` is reached. See [serving-unlimited-ocr.md](serving-unlimited-ocr.md) for a worked example serving Baidu's [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) with SGLang.
 
 ## Models at a glance
 

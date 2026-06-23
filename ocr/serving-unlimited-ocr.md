@@ -1,17 +1,17 @@
 # Serve Unlimited-OCR as a live endpoint on HF Jobs
 
-Most recipes here run OCR as a **batch** job (dataset in → dataset out). Sometimes you'd rather
-have a **live endpoint** instead — to poke at a model interactively, point an agent at it, or fan
-out a quick concurrent batch. [HF Jobs serving](https://huggingface.co/docs/hub/jobs-serving) lets
-you do that: expose a port on a GPU Job and you get a temporary, OpenAI-compatible endpoint that
-bills by the minute and disappears when the job stops.
+The OCR recipes in this folder run as batch jobs (dataset in → dataset out). To call a model
+interactively, from an agent, or with ad-hoc concurrent requests, you can instead run it as a
+temporary HTTP endpoint. [HF Jobs serving](https://huggingface.co/docs/hub/jobs-serving) exposes a
+port on a GPU Job, giving an OpenAI-compatible endpoint that runs until the job is cancelled or its
+`--timeout` is reached.
 
-This is a worked example for **[baidu/Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR)**
-(3B, MIT, built on DeepSeek-OCR; one-shot long-horizon multi-page parsing). It ships its own SGLang
-build, so we serve it on the stock `lmsysorg/sglang` image and overlay the 12 MB wheel at startup —
-no custom image to build.
+This is a worked example for [baidu/Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR)
+(3B, MIT, based on DeepSeek-OCR; supports multi-page parsing in a single request). The model ships
+its own SGLang build, so it runs on the stock `lmsysorg/sglang` image with the 12 MB wheel
+installed at startup; no custom image is required.
 
-## 1. Start the server (one command)
+## 1. Start the server
 
 ```bash
 hf jobs run --detach --expose 10000 --flavor h200 -s HF_TOKEN --timeout 30m \
@@ -25,16 +25,16 @@ hf jobs run --detach --expose 10000 --flavor h200 -s HF_TOKEN --timeout 30m \
 ```
 
 Notes:
-- **`--`** before `bash` is required — otherwise the CLI parses `-lc` as its own flags.
-- **`--timeout 30m`** bounds cost: the endpoint (and billing) auto-stops at the deadline.
-  `hf jobs cancel <id>` stops it sooner.
-- **`--flavor h200`** because the model's `fa3` attention backend needs a Hopper GPU. The model is
-  small, so fa3 (not GPU memory) is what dictates the flavor. (`hf jobs hardware` lists the options.)
-- Watch it come up with `hf jobs logs -f <id>`; ready at `Application startup complete` (~3 min).
+- `--` before `bash` is required, or the CLI parses `-lc` as its own flags.
+- `--timeout` stops the endpoint (and billing) at the deadline; `hf jobs cancel <id>` stops it earlier.
+- `fa3` requires a Hopper GPU (e.g. `h200`). The model is small, so the attention backend, not GPU
+  memory, determines the flavor. Run `hf jobs hardware` for available flavors.
+- Follow startup with `hf jobs logs -f <id>`; the server is ready at `Application startup complete`
+  (about 3 minutes from a cold start).
 
-## 2. Call it (any OpenAI client; your HF token is the API key)
+## 2. Call it (OpenAI client; HF token as the API key)
 
-The exposed port is at `https://<job_id>--10000.hf.jobs` (base URL = `…/v1`).
+The exposed port is at `https://<job_id>--10000.hf.jobs`; the OpenAI base URL is that plus `/v1`.
 
 ```python
 import base64, os
@@ -55,13 +55,13 @@ r = client.chat.completions.create(
 print(r.choices[0].message.content)
 ```
 
-Output is **layout-grounded** markdown — each block tagged `<|det|>type [x1,y1,x2,y2]<|/det|> text`
-with coords normalized 0–1000. Strip the tags for plain text
-(`re.sub(r'<\|det\|>.*?<\|/det\|>', '', text)`); keep them for structure.
+Output is layout-grounded markdown: each block is tagged `<|det|>type [x1,y1,x2,y2]<|/det|> text`,
+with coordinates normalized to 0–1000. Remove the tags for plain text
+(`re.sub(r'<\|det\|>.*?<\|/det\|>', '', text)`) or keep them for structure.
 
-## 3. Multi-page / PDF (the "Unlimited" path)
+## 3. Multi-page / PDF
 
-Send several page images in **one** request with `Multi page parsing.` + `image_mode="base"`:
+Send multiple page images in one request with the `Multi page parsing.` prompt and `image_mode="base"`:
 
 ```python
 parts = [{"type": "text", "text": "Multi page parsing."}]
@@ -77,16 +77,15 @@ r = client.chat.completions.create(
 )
 ```
 
-Pages are `<PAGE>`-separated, with tables as HTML, equations as LaTeX, and reading order preserved
-across pages. Context is 32k tokens, so chunk very long documents.
+Pages are separated by `<PAGE>`; tables are returned as HTML and equations as LaTeX, with reading
+order preserved across pages. The context length is 32k tokens, so split longer documents.
 
-## 4. Batch via concurrency (point an agent at it)
+## 4. Concurrency
 
-SGLang batches concurrent requests, so an agent/script can fire many async requests at the running
-endpoint (the upstream [`infer.py`](https://github.com/baidu/Unlimited-OCR/blob/main/infer.py) runs
-a `ThreadPoolExecutor` at `concurrency=8`). For a *very* large corpus, a co-located batch job
-(compute next to the data, resumable, no network egress) is more robust — but endpoint + async is
-great for interactive and agent-driven runs.
+SGLang batches concurrent requests, so a client can send many requests in parallel to one endpoint;
+the upstream [`infer.py`](https://github.com/baidu/Unlimited-OCR/blob/main/infer.py) uses a
+`ThreadPoolExecutor` at `concurrency=8`. For a large corpus, a batch job that runs next to the data
+(resumable, no network transfer) is usually a better fit than a client-to-endpoint loop.
 
 ## 5. Stop it
 
@@ -94,6 +93,5 @@ great for interactive and agent-driven runs.
 hf jobs cancel <job_id>
 ```
 
-> Billing is per-minute on top of the GPU flavor, plus a small flat fee for the exposed port;
-> scheduling time is free. Run `hf jobs hardware` for current flavors and prices. A short session
-> is roughly the cost of a coffee.
+Billing is per-minute for the GPU flavor plus a small flat fee for the exposed port; scheduling time
+is not billed. Run `hf jobs hardware` for current flavors and prices.
