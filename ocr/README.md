@@ -31,6 +31,10 @@ This will:
 - Push the results to a new dataset
 - View results at: `https://huggingface.co/datasets/[your-output-dataset]`
 
+## Serve a model as a live endpoint
+
+The recipes here run as batch jobs. To call a model interactively, from an agent, or with concurrent ad-hoc requests, you can instead run it as a temporary endpoint: [HF Jobs serving](https://huggingface.co/docs/hub/jobs-serving) exposes a port on a GPU Job, giving an OpenAI-compatible endpoint that runs until the job is cancelled or its `--timeout` is reached. See [serving-unlimited-ocr.md](serving-unlimited-ocr.md) for a worked example serving Baidu's [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) with SGLang.
+
 ## Models at a glance
 
 **Start here:** for a quick first run, try **`lighton-ocr2.py`** (1B, very fast) or **`paddleocr-vl-1.6.py`** (0.9B, current OmniDocBench SOTA); for the smallest footprint, **`falcon-ocr.py`** (0.3B, strong on tables). Reach for a 7–8B model only when quality demands it. Several of these models sit on the public [olmOCR-Bench](https://huggingface.co/datasets/allenai/olmOCR-bench) — pull the live ranking from your terminal in one command:
