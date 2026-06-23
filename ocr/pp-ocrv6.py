@@ -69,7 +69,6 @@ import io
 import json
 import logging
 import os
-import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -101,7 +100,7 @@ TIER_PARAMS = {
 }
 
 TIER_LANGUAGES = {
-    "tiny":   "49 languages (en, zh only — no ja)",
+    "tiny":   "49 languages (zh, zh-Hant, en + 46 Latin-script — no Japanese)",
     "small":  "50 languages (zh, zh-Hant, en, ja + 46 Latin-script)",
     "medium": "50 languages (zh, zh-Hant, en, ja + 46 Latin-script)",
 }
@@ -167,7 +166,8 @@ def extract_text(result: Any) -> Tuple[str, List[Dict[str, Any]]]:
     """Pull text and per-line details from a PaddleOCR predict result.
 
     Returns (concatenated_text, per_line_details) where per_line_details is
-    a list of dicts with keys: text, score, bbox (polygon as [x1,y1,x2,y2,...]).
+    a list of dicts with keys: text, score, bbox (4-point detection polygon as
+    [[x1,y1],[x2,y2],[x3,y3],[x4,y4]] in input-image pixel coordinates).
     """
     payload = result.json if hasattr(result, "json") else result
     res = payload.get("res", payload) if isinstance(payload, dict) else {}
@@ -197,7 +197,7 @@ def extract_text(result: Any) -> Tuple[str, List[Dict[str, Any]]]:
 @dataclass
 class SourceItem:
     key: str
-    image: Image.Image
+    image: Optional[Image.Image]
     extras: Dict[str, Any]
 
 
@@ -229,20 +229,24 @@ def iter_dataset_images(
     total = len(ds)
 
     def gen() -> Iterator[SourceItem]:
-        skipped = 0
+        failed = 0
         for i in range(total):
             try:
                 row = ds[i]
                 image = to_pil(row[image_column])
             except (UnidentifiedImageError, OSError) as e:
-                skipped += 1
+                # Still yield a placeholder so the output row stays aligned with
+                # the source row (the dataset sink writes results positionally).
+                failed += 1
                 logger.warning(
-                    f"Skipping unreadable image at row {i}: {type(e).__name__}: {e}"
+                    f"Unreadable image at row {i}: {type(e).__name__}: {e} "
+                    f"— writing empty result"
                 )
+                yield SourceItem(key=f"row-{i:08d}", image=None, extras={"failed": True})
                 continue
             yield SourceItem(key=f"row-{i:08d}", image=image, extras={})
-        if skipped:
-            logger.info(f"Skipped {skipped} unreadable image(s) total")
+        if failed:
+            logger.info(f"{failed} unreadable image(s) written as empty results")
 
     return gen(), total, ds
 
@@ -284,11 +288,24 @@ def iter_bucket_images(
         try:
             with fs.open(snapshot_url, "rb") as f:
                 snapshot = json.load(f)
+            mismatches = []
             if snapshot.get("source_url") != bucket_url:
+                mismatches.append(
+                    f"source_url ({snapshot.get('source_url')!r} vs {bucket_url!r})"
+                )
+            if snapshot.get("shuffle") != shuffle:
+                mismatches.append(f"shuffle ({snapshot.get('shuffle')} vs {shuffle})")
+            if shuffle and snapshot.get("seed") != seed:
+                mismatches.append(f"seed ({snapshot.get('seed')} vs {seed})")
+            if snapshot.get("max_samples") != max_samples:
+                mismatches.append(
+                    f"max_samples ({snapshot.get('max_samples')} vs {max_samples})"
+                )
+            if mismatches:
                 logger.warning(
-                    f"Output prefix already has a snapshot referencing a "
-                    f"different source ({snapshot.get('source_url')!r} vs "
-                    f"{bucket_url!r}). Ignoring and re-listing."
+                    "Existing snapshot params differ from this run ("
+                    + "; ".join(mismatches)
+                    + "); ignoring snapshot and re-listing."
                 )
             else:
                 cached_paths = snapshot["paths"]
@@ -493,6 +510,7 @@ class DatasetRepoSink:
                 num_samples=len(ds),
                 processing_time=args_dict["processing_time"],
                 engine=args_dict.get("engine", "paddle_static"),
+                output_id=self.repo_id,
             )
         )
         card.push_to_hub(self.repo_id, token=self.hf_token)
@@ -680,6 +698,7 @@ def create_dataset_card(
     num_samples: int,
     processing_time: str,
     engine: str,
+    output_id: str,
 ) -> str:
     tier_display = tier.upper() if tier == "tiny" else tier.capitalize()
     if is_bucket_url(source):
@@ -746,7 +765,7 @@ Each row contains the original columns plus:
 import json
 from datasets import load_dataset
 
-ds = load_dataset("{{output_dataset_id}}", split="train")
+ds = load_dataset("{output_id}", split="train")
 print(ds[0]["text"])
 for block in json.loads(ds[0]["pp_ocr_blocks"]):
     print(block["text"], block["score"])
@@ -876,6 +895,13 @@ def main(args: argparse.Namespace) -> None:
     for item in pbar:
         if item.key in completed:
             skipped += 1
+            continue
+        if item.extras.get("failed") or item.image is None:
+            # Unreadable source image — write an empty result in position so the
+            # output stays row-aligned with the source dataset.
+            sink.write(item.key, "", [])
+            errors += 1
+            processed += 1
             continue
         try:
             arr = pil_to_array(item.image)
