@@ -49,7 +49,8 @@ _Sorted by model size:_
 
 | Script | Model | Size | Backend | Notes |
 |--------|-------|------|---------|-------|
-| `falcon-ocr.py` | [Falcon-OCR](https://huggingface.co/tiiuae/Falcon-OCR) | 0.3B | falcon-perception | Smallest in collection. #1 on multi-column docs and tables (olmOCR), Apache 2.0 |
+| `pp-ocrv6.py` | [PP-OCRv6](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) | 1.5–34.5M | PaddleOCR (paddle) | **Smallest by far** — classical det+rec pipeline, not a VLM. Three tiers (`--model-tier tiny\|small\|medium`), plain-text output (not markdown). 50 langs. Runs on `t4-small`. Apache 2.0 |
+| `falcon-ocr.py` | [Falcon-OCR](https://huggingface.co/tiiuae/Falcon-OCR) | 0.3B | falcon-perception | Smallest VLM in collection. #1 on multi-column docs and tables (olmOCR), Apache 2.0 |
 | `smoldocling-ocr.py` | [SmolDocling](https://huggingface.co/ds4sd/SmolDocling-256M-preview) | 256M | Transformers | DocTags structured output |
 | `surya-ocr.py` | [Surya OCR 2](https://huggingface.co/datalab-to/surya-ocr-2) | 0.65B | vLLM | **Structured** OCR + `--task layout\|table`: per-block HTML with bboxes & reading order in an extra `surya_blocks` column. 91 langs, top-under-3B on olmOCR-Bench. Modified OpenRAIL-M license. Needs the **pinned** `vllm/vllm-openai:v0.20.1` image |
 | `glm-ocr.py` | [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) | 0.9B | vLLM | 94.62% OmniDocBench V1.5 |
@@ -202,6 +203,7 @@ Beyond the shared flags, some models add their own. Run `--help` on any script f
 | Script | Extra options |
 |--------|---------------|
 | `surya-ocr.py` | `--task ocr\|layout\|table`, `--table-mode full\|simple`, `--pdf-column`/`--page-range`, `--blocks-column` |
+| `pp-ocrv6.py` | `--model-tier tiny\|small\|medium` (1.5M–34.5M params) |
 | `glm-ocr.py` | `--task ocr\|formula\|table` |
 | `paddleocr-vl.py` | `--task-mode ocr\|table\|formula\|chart` |
 | `paddleocr-vl-1.5.py` | `--task-mode ocr\|table\|formula\|chart\|spotting\|seal` |
