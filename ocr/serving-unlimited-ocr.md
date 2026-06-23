@@ -29,7 +29,7 @@ Notes:
 - **`--timeout 30m`** bounds cost: the endpoint (and billing) auto-stops at the deadline.
   `hf jobs cancel <id>` stops it sooner.
 - **`--flavor h200`** because the model's `fa3` attention backend needs a Hopper GPU. The model is
-  small (≈ a fraction of 141 GB) — fa3, not memory, is the constraint.
+  small, so fa3 (not GPU memory) is what dictates the flavor. (`hf jobs hardware` lists the options.)
 - Watch it come up with `hf jobs logs -f <id>`; ready at `Application startup complete` (~3 min).
 
 ## 2. Call it (any OpenAI client; your HF token is the API key)
@@ -94,5 +94,6 @@ great for interactive and agent-driven runs.
 hf jobs cancel <job_id>
 ```
 
-> Billing: `h200` is $5.00/hr + a flat $0.01/hr for the exposed port, by the minute; scheduling
-> time is free. A short session is ~$1.
+> Billing is per-minute on top of the GPU flavor, plus a small flat fee for the exposed port;
+> scheduling time is free. Run `hf jobs hardware` for current flavors and prices. A short session
+> is roughly the cost of a coffee.
