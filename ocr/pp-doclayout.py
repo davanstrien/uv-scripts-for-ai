@@ -195,7 +195,7 @@ def extract_detections(result: Any) -> List[Dict[str, Any]]:
 @dataclass
 class SourceItem:
     key: str  # stable identifier per image (used for dedup/resume)
-    image: Image.Image
+    image: Optional[Image.Image]  # None for an unreadable row (placeholder)
     extras: Dict[str, Any]  # original row fields (only populated for dataset source)
 
 
@@ -234,16 +234,23 @@ def iter_dataset_images(
     total = len(ds)
 
     def gen() -> Iterator[SourceItem]:
-        skipped = 0
+        failed = 0
         for i in range(total):
             try:
                 row = ds[i]
                 image = to_pil(row[image_column])
             except (UnidentifiedImageError, OSError) as e:
-                skipped += 1
+                # Still yield a placeholder so the output row stays aligned with
+                # the source row (the dataset sink writes layouts positionally).
+                failed += 1
                 logger.warning(
-                    f"Skipping unreadable image at row {i}: "
-                    f"{type(e).__name__}: {e}"
+                    f"Unreadable image at row {i}: "
+                    f"{type(e).__name__}: {e} — writing empty layout"
+                )
+                yield SourceItem(
+                    key=f"row-{i:08d}",
+                    image=None,
+                    extras={"failed": True},
                 )
                 continue
             yield SourceItem(
@@ -251,8 +258,8 @@ def iter_dataset_images(
                 image=image,
                 extras={},  # original schema is preserved by the sink via the dataset ref
             )
-        if skipped:
-            logger.info(f"Skipped {skipped} unreadable image(s) total")
+        if failed:
+            logger.info(f"{failed} unreadable image(s) written as empty layouts")
 
     return gen(), total, ds
 
@@ -952,6 +959,13 @@ def main(args: argparse.Namespace) -> None:
     for item in pbar:
         if item.key in completed:
             skipped += 1
+            continue
+        if item.extras.get("failed") or item.image is None:
+            # Unreadable source image — write an empty layout in position so the
+            # output stays row-aligned with the source dataset.
+            sink.write(item.key, [], {})
+            errors += 1
+            processed += 1
             continue
         try:
             arr = pil_to_array(item.image)
