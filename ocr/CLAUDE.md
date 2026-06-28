@@ -155,6 +155,84 @@ hf jobs uv run --flavor l4x1 \
 
 ## Pending Development
 
+### Unlimited-OCR (`unlimited-ocr-vllm.py`)
+✅ **Production Ready — single-image** (added + validated 2026-06-28)
+
+Baidu's `baidu/Unlimited-OCR` (3.3B, MIT, DeepSeek-OCR / DeepSeek-OCR-2 descendant). Offline vLLM
+batch recipe adapted from `deepseek-ocr-vllm.py` — `llm.generate()` with PIL images +
+`NGramPerReqLogitsProcessor` (imported from `vllm.model_executor.models.unlimited_ocr`), prompt
+`<image>document parsing.`, `SamplingParams(temperature=0, skip_special_tokens=False,
+extra_args=dict(ngram_size=35, window_size=128))`, `limit_mm_per_prompt={"image": 1}`. One image per
+row → one markdown. `--strip-grounding` drops `<|det|>`/`<|ref|>` tags (verified locally on real
+output: removes boxes, keeps inner text + LaTeX).
+
+**⚠️ Dedicated image, not the standard one.** The arch is NOT in any stable vLLM pip wheel — must run
+on Baidu's `vllm/vllm-openai:unlimited-ocr` (CUDA 13.0; `:unlimited-ocr-cu129` on Hopper). So `vllm`
+and `torch` are **omitted from the PEP 723 deps** and come from the image via `PYTHONPATH`. The image
+uses the **standard** layout: `--python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages`
+(vLLM `0.23.1rc1.dev541` lives there; probed 2026-06-28). The `unlimited_ocr` module re-exports
+`deepseek_ocr.NGramPerReqLogitsProcessor`. Recipe: https://recipes.vllm.ai/baidu/Unlimited-OCR
+
+**Smoke tests (2026-06-28):**
+- **ufo-ColPali** (5, l4x1): 5/5 OK, 2.3 min, ~200 tok/s. Clean layout-grounded markdown — accurate
+  text, `<|det|>` bboxes (0–1000), multilingual (Spanish), LaTeX. Output `davanstrien/unlimited-ocr-smoke`.
+- **encyclopaedia-britannica-1771** (8, l4x1, `--strip-grounding`): 6/6 content pages produced clean
+  text matching the dataset's own `ocr_text` length almost exactly (e.g. row 1: md 5811 vs ocr_text
+  5752), period-accurate 1771 OCR (long-ſ, archaic spelling). The 2 "empty" rows are genuinely blank
+  pages (ground-truth `ocr_text` 3–24 chars). Output `davanstrien/unlimited-ocr-britannica-smoke`.
+
+**❌ Multi-page is broken in vLLM entirely (offline AND served) — SGLang only. Thoroughly tested
+2026-06-28:**
+- **Offline** (`LLM().generate()`): single `<image>` placeholder → `AssertionError: Failed to apply
+  prompt replacement for mm_items['image'][1]` (vLLM wants one placeholder per image); `<image>`×N →
+  runs but loops/hallucinates (page→bare `<|det|>image` box, then Chinese disclosure boilerplate +
+  `2017年1月1日` loops). Tested both on `davanstrien/unlimited-ocr-pdf-test`.
+- **Served** (`vllm serve` on the dedicated image, exposed port, OpenAI client): single-image is
+  perfect (ufo[0]=4898 chars, ufo[1]=1671, identical to offline) — but **multi-page garbles even
+  clean modern pages**: 2 pages → `<PAGE>=1`, opens with counting garbage ("SIGILLUM. 17. 96…"),
+  tail is hallucinated content present in *neither* input. Passing `images_config:{image_mode:base}`
+  or `vllm_xargs.image_mode` changes **nothing** (byte-identical) — vLLM silently ignores them;
+  `images_config` is an **SGLang** param.
+- **Upstream check (vllm-project/vllm#46564, "Support Unlimited OCR", merged 2026-06-28):** confirms
+  this. Multi-image IS implemented (crop/gundam auto-disabled → base mode; one `<image>` placeholder
+  per image). R-SWA needs the **FlexAttention** backend (auto on non-FA4 GPUs like L4) or FA4 on
+  H20/H100 — our run correctly used FlexAttention. BUT: the PR's only benchmark is **single-page
+  OmniDocBench** (FA4 92.12 / Flex 92.38); there is **no multi-page test, no `examples/`, no canonical
+  multi-page prompt** in the merged code. PR-author comment: multi-page needs **V1 + NGramPerReq-
+  LogitsProcessor** (V2 lacks custom logits processors), and their "14-page PDF merge" smoke test only
+  confirmed "**R-SWA itself works**" (mechanism runs on long seqs) — *not* OCR quality. So nobody
+  upstream has shown multi-page OCR quality; the tweet's "40+ pages, low edit distance" is ahead of the
+  merged evidence. Our garbled multi-page (page-1 content page → bare `<|det|>image` box) fits that.
+- **Conclusion:** vLLM is **single-image only** in practice (offline batch recipe + Option-A serving).
+  `--pdf-column` was **removed**; multi-page is routed to the model authors' **SGLang** path
+  (`images_config`; serving-unlimited-ocr.md Option B + §3). Image probed: `vllm 0.23.1rc1.dev541`
+  (docs say "0.25.0+" — possible version gap).
+- **SGLang multi-page — ✅ FIXED + validated working (2026-06-28).** Multi-page is the model's headline
+  feature and **SGLang delivers it** (vLLM does not). Two pins were needed:
+  1. **Image `lmsysorg/sglang:v0.5.10.post1`** (not `:latest`). `:latest` drifted to sglang 0.5.14 /
+     torch 2.11 / cu130; the wheel (`dev11416`) needs torch 2.9.1 / cuda-python 12.9 / flashinfer 0.6.7 /
+     xgrammar 0.1.32 / transformers 5.3.0. Found v0.5.10.post1 by bisecting sglang release pyproject
+     pins — the **last** release before the torch-2.11 bump; matches the wheel exactly.
+  2. **`a100-large` + `--attention-backend flashinfer`** (not `h200`/`fa3`). `fa3` needs Hopper, but
+     HF's `h200` nodes **fail GPU init with `CUDA error 802: system not yet initialized`, 3/3** (infra /
+     Fabric-Manager — *all* working jobs this session were l4x1/a100, never h200). The version pin alone
+     did NOT fix 802; the 802 is purely the h200 node. a100+flashinfer dodges it.
+  - **Result:** server up; clean 2-page synthetic doc → **both pages read verbatim, `<PAGE>`-separated**
+    (`Chapter One: The Harbor…` / `Chapter Two: The Market…`); ufo pages → **real content**
+    (`OUT OF THIS WORLD / UFO FlyBys…`), *not* vLLM's hallucinated garbage. Client: OpenAI API,
+    `images_config:{image_mode:base}` + `Multi page parsing.`; no per-request NGram processor (so harder
+    scans show minor page-merge/OCR slips — fa3 + the custom logit processor would tighten quality; the
+    mechanism works). Working command lives in `serving-unlimited-ocr.md` Option B; switch back to
+    `fa3`/`h200` for exact R-SWA once the h200 802 infra issue clears.
+
+**Example usage:**
+```bash
+hf jobs uv run --flavor l4x1 -s HF_TOKEN \
+    --image vllm/vllm-openai:unlimited-ocr --python /usr/bin/python3 \
+    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
+    ./ocr/unlimited-ocr-vllm.py davanstrien/ufo-ColPali output-dataset --max-samples 10 --shuffle
+```
+
 ### DeepSeek-OCR-2 (`deepseek-ocr2-vllm.py`)
 ✅ **Production Ready** (2026-02-12)
 
