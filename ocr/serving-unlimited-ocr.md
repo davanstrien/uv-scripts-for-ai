@@ -15,23 +15,24 @@ options below: **vLLM** on Baidu's official image (the newer official path, Open
 > - **Single-page** OCR (one image → markdown): both engines work. For a whole corpus, the batch
 >   recipe [`unlimited-ocr-vllm.py`](unlimited-ocr-vllm.py) (offline vLLM, resumable, no network) is
 >   the better fit than a client loop; for interactive/agent use, serve with **vLLM (Option A)**.
-> - **Multi-page / long-horizon** parsing (the model's headline feature): use **SGLang (Option B)** —
->   **validated working 2026-06-28** (a clean 2-page doc read back both pages verbatim, `<PAGE>`-separated;
->   it needs the pinned image + a100 setup in Option B). This is the model authors' documented multi-page
->   path (`images_config`). The **vLLM** integration ([PR #46564](https://github.com/vllm-project/vllm/pull/46564))
->   is single-image only — its benchmark is single-page OmniDocBench, the authors' multi-page smoke test
->   only confirmed the R-SWA *mechanism* (not OCR quality), and in our tests vLLM multi-image came back
->   garbled (hallucinated text). So don't use Option A or the batch recipe for multi-page — use Option B.
+> - **Multi-page / long-horizon** parsing (the model's headline feature): **both engines do it**
+>   (validated 2026-06-28 — a clean 2-page doc read back both pages, `<PAGE>`-separated, on *both* vLLM
+>   and SGLang). The difference is **robustness on hard inputs**: on degraded historical scans / newspaper
+>   clippings, vLLM multi-page degraded to hallucination in our tests while **SGLang (Option B)** read
+>   real content — so SGLang is the **more robust** multi-page path (it's also the authors' documented
+>   one, via `images_config`). Use vLLM multi-page for clean docs; reach for SGLang for hard scans.
+>   (vLLM's upstream PR [#46564](https://github.com/vllm-project/vllm/pull/46564) benchmarks single-page only.)
 
 ## 1. Start the server
 
-### Option A — vLLM (official image) · single-image only
+### Option A — vLLM (official image)
 
 vLLM support landed upstream; Baidu ships a dedicated image (the architecture isn't in a stable pip
 wheel yet). Use the default `:unlimited-ocr` tag on L4/A100, or `:unlimited-ocr-cu129` on Hopper.
-**Validated for single-image OCR only** — runs on `l4x1`, no fa3/Hopper requirement. (For
-**multi-page**, use Option B; vLLM multi-image OCR isn't demonstrated upstream and came back garbled
-in our tests.)
+Runs on `l4x1`, no fa3/Hopper requirement. **Single-image is validated**; **multi-page also works on
+clean docs** (both pages, `<PAGE>`-separated) but degraded to hallucination on hard scans in our tests
+— for hard/degraded inputs prefer Option B (SGLang). For multi-page on vLLM, the request takes one
+`<image>` per page in the text and `window_size=1024` in `vllm_xargs` (it has no `images_config`).
 
 ```bash
 hf jobs run --detach --expose 8000 --flavor l4x1 -s HF_TOKEN --timeout 30m \
@@ -60,8 +61,9 @@ r = client.chat.completions.create(
 ### Option B — SGLang (model's own build) · supports multi-page
 
 The model also ships its own SGLang build, installed at startup from a 12 MB wheel. **This is the
-working path for multi-page / long-horizon parsing** (§3) — the model authors' documented route
-(`images_config`). Two pins matter (both learned the hard way, 2026-06-28):
+more robust path for multi-page / long-horizon parsing** (§3) — the model authors' documented route
+(`images_config`), and the one that held up on hard scans where vLLM multi-page hallucinated. Two
+pins matter (both learned the hard way, 2026-06-28):
 - **Pin the image to `lmsysorg/sglang:v0.5.10.post1`** — *not* `:latest`. `:latest` drifted to torch
   2.11 / cu130, incompatible with the wheel (torch 2.9.1 / cuda-python 12.9); v0.5.10.post1 is the last
   release that matches the wheel exactly.
@@ -121,14 +123,15 @@ Output is layout-grounded markdown: each block is tagged `<|det|>type [x1,y1,x2,
 with coordinates normalized to 0–1000. Remove the tags for plain text
 (`re.sub(r'<\|det\|>.*?<\|/det\|>', '', text)`) or keep them for structure.
 
-## 3. Multi-page / PDF — SGLang (Option B) only
+## 3. Multi-page / PDF (SGLang shown; vLLM also works on clean docs)
 
-> ✅ This requires the **SGLang** server (Option B) — **validated working 2026-06-28** (a clean 2-page
-> doc read back both pages verbatim, `<PAGE>`-separated). The `images_config`/`image_mode` param it
-> relies on is an SGLang feature; the **vLLM** integration ignores it and returned garbled (hallucinated)
-> multi-image output in our tests, and vLLM multi-page OCR isn't demonstrated upstream either
-> ([PR #46564](https://github.com/vllm-project/vllm/pull/46564) benchmarks single-page only). This flow
-> follows the model card's multi-page example.
+> ✅ This **SGLang** flow (Option B) is **validated working 2026-06-28** (a clean 2-page doc read back
+> both pages verbatim, `<PAGE>`-separated) and follows the model card's multi-page example. The
+> `images_config`/`image_mode` param is SGLang-specific — **vLLM ignores it**; on vLLM, do multi-page
+> with one `<image>` per page in the text + `window_size=1024` in `vllm_xargs` (no `images_config`).
+> Both engines read clean multi-page docs; **SGLang was the more robust on hard/degraded scans**, where
+> vLLM multi-page hallucinated in our tests. (vLLM's upstream
+> [PR #46564](https://github.com/vllm-project/vllm/pull/46564) benchmarks single-page only.)
 
 Send multiple page images in one request with the `Multi page parsing.` prompt and `image_mode="base"`:
 

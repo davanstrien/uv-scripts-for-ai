@@ -181,18 +181,23 @@ uses the **standard** layout: `--python /usr/bin/python3 -e PYTHONPATH=/usr/loca
   5752), period-accurate 1771 OCR (long-ſ, archaic spelling). The 2 "empty" rows are genuinely blank
   pages (ground-truth `ocr_text` 3–24 chars). Output `davanstrien/unlimited-ocr-britannica-smoke`.
 
-**❌ Multi-page is broken in vLLM entirely (offline AND served) — SGLang only. Thoroughly tested
-2026-06-28:**
-- **Offline** (`LLM().generate()`): single `<image>` placeholder → `AssertionError: Failed to apply
-  prompt replacement for mm_items['image'][1]` (vLLM wants one placeholder per image); `<image>`×N →
-  runs but loops/hallucinates (page→bare `<|det|>image` box, then Chinese disclosure boilerplate +
-  `2017年1月1日` loops). Tested both on `davanstrien/unlimited-ocr-pdf-test`.
-- **Served** (`vllm serve` on the dedicated image, exposed port, OpenAI client): single-image is
-  perfect (ufo[0]=4898 chars, ufo[1]=1671, identical to offline) — but **multi-page garbles even
-  clean modern pages**: 2 pages → `<PAGE>=1`, opens with counting garbage ("SIGILLUM. 17. 96…"),
-  tail is hallucinated content present in *neither* input. Passing `images_config:{image_mode:base}`
-  or `vllm_xargs.image_mode` changes **nothing** (byte-identical) — vLLM silently ignores them;
-  `images_config` is an **SGLang** param.
+**Multi-page: BOTH engines work on clean docs; robustness differs on hard scans. (Corrected
+2026-06-29 — earlier "vLLM multi-page is broken" was an input-difficulty artifact.)**
+- **Control test that overturned the first read:** ran the SAME clean synthetic 2-page doc through the
+  **vLLM server** that SGLang had aced. vLLM returned **`<PAGE>=2`, both pages, real text** (`Chapter
+  One The Harbor` + lines / `Chapter Two The Market` + lines), with minor body-OCR slips ("early oakh",
+  "Guile covered") — i.e. the model *misreading*, not the engine hallucinating. Worked with both 1×
+  and 2× `<image>` prompt forms + `vllm_xargs.window_size=1024`. So **vLLM multi-page works**.
+- **What the earlier garbling actually was:** my first vLLM multi-page tests used **hard** inputs —
+  `unlimited-ocr-pdf-test` (blank + dense 1771 Britannica) and ufo newspaper clippings. On those, vLLM
+  multi-page degraded to hallucination (counting garbage "SIGILLUM. 17. 96…", `2017年1月1日` loops,
+  content in neither input). SGLang read the *same* hard ufo input as real content → **SGLang is more
+  robust on hard/degraded scans**, but neither engine is "broken."
+- **Offline `LLM().generate()`** still needs one `<image>` per image (single placeholder → assertion);
+  offline multi-page was only tested on the hard Britannica PDF (garbled) — not re-tested on clean, so
+  the recipe stays single-image (multi-page belongs to serving).
+- `images_config`/`image_mode` are **SGLang-only** params (vLLM ignores them); on vLLM use one
+  `<image>` per page + `window_size=1024` in `vllm_xargs`.
 - **Upstream check (vllm-project/vllm#46564, "Support Unlimited OCR", merged 2026-06-28):** confirms
   this. Multi-image IS implemented (crop/gundam auto-disabled → base mode; one `<image>` placeholder
   per image). R-SWA needs the **FlexAttention** backend (auto on non-FA4 GPUs like L4) or FA4 on
@@ -202,13 +207,15 @@ uses the **standard** layout: `--python /usr/bin/python3 -e PYTHONPATH=/usr/loca
   LogitsProcessor** (V2 lacks custom logits processors), and their "14-page PDF merge" smoke test only
   confirmed "**R-SWA itself works**" (mechanism runs on long seqs) — *not* OCR quality. So nobody
   upstream has shown multi-page OCR quality; the tweet's "40+ pages, low edit distance" is ahead of the
-  merged evidence. Our garbled multi-page (page-1 content page → bare `<|det|>image` box) fits that.
-- **Conclusion:** vLLM is **single-image only** in practice (offline batch recipe + Option-A serving).
-  `--pdf-column` was **removed**; multi-page is routed to the model authors' **SGLang** path
-  (`images_config`; serving-unlimited-ocr.md Option B + §3). Image probed: `vllm 0.23.1rc1.dev541`
-  (docs say "0.25.0+" — possible version gap).
+  merged evidence. (Our own clean-doc control test later showed vLLM multi-page DOES read correctly —
+  see the corrected block above; the earlier garbling was hard-input degradation, not an engine break.)
+- **Conclusion:** the **batch recipe stays single-image** (offline multi-page is finicky and untested
+  on clean; `--pdf-column` removed). For multi-page, **serve** the model — both engines read clean
+  multi-page docs; route hard/degraded scans to **SGLang** (more robust; authors' `images_config` path;
+  serving-unlimited-ocr.md Option B + §3). Image probed: `vllm 0.23.1rc1.dev541` (docs say "0.25.0+").
 - **SGLang multi-page — ✅ FIXED + validated working (2026-06-28).** Multi-page is the model's headline
-  feature and **SGLang delivers it** (vLLM does not). Two pins were needed:
+  feature and **SGLang delivers it robustly** (vLLM multi-page also works on clean docs but hallucinated
+  on hard scans — see corrected block above). Two pins were needed:
   1. **Image `lmsysorg/sglang:v0.5.10.post1`** (not `:latest`). `:latest` drifted to sglang 0.5.14 /
      torch 2.11 / cu130; the wheel (`dev11416`) needs torch 2.9.1 / cuda-python 12.9 / flashinfer 0.6.7 /
      xgrammar 0.1.32 / transformers 5.3.0. Found v0.5.10.post1 by bisecting sglang release pyproject

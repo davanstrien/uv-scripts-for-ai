@@ -22,11 +22,12 @@ One image per row -> one markdown. Output is layout-grounded markdown: text span
 back as HTML and equations as LaTeX. Pass --strip-grounding to drop the tags and keep clean text;
 add --grounding-column to keep the raw grounded output (with bboxes) in a second column too.
 
-Multi-page / "long-horizon" parsing (the model's headline feature) is single-image only here. The
-vLLM integration (PR vllm-project/vllm#46564) is validated for single-image (single-page OmniDocBench);
-multi-page OCR quality isn't demonstrated upstream and multi-image input came back garbled in our
-tests (2026-06-28, offline and served). The model authors' documented multi-page path is its own
-SGLang build (`images_config`) — see serving-unlimited-ocr.md (Option B + §3) in this folder.
+Multi-page / "long-horizon" parsing (the model's headline feature) is not in this single-image batch
+recipe — for multi-page, serve the model and send all pages in one request (see serving-unlimited-ocr.md).
+Multi-page *does* work via vLLM serving: on a clean 2-page doc it returned both pages, <PAGE>-separated.
+But on hard/degraded scans (dense historical pages, newspaper clippings) vLLM multi-page degraded to
+hallucination in our tests, where the model's own SGLang build held up better — so SGLang is the more
+robust multi-page path. (vLLM's upstream PR, vllm-project/vllm#46564, benchmarks single-page only.)
 
 IMPORTANT: Unlimited-OCR's architecture is not in a stable vLLM pip wheel, so this script MUST run on
 Baidu's dedicated vLLM image (vllm and torch come from the image, not the PEP 723 deps):
