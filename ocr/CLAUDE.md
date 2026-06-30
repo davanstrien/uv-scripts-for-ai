@@ -155,6 +155,47 @@ hf jobs uv run --flavor l4x1 \
 
 ## Pending Development
 
+### DeepSeek-OCR-2 (`deepseek-ocr2-vllm.py`)
+✅ **Production Ready** (2026-02-12)
+
+**Status:** Working with vLLM nightly (requires nightly for `DeepseekOCR2ForCausalLM` support, not yet in stable 0.15.1)
+
+**What was done:**
+- Rewrote the broken draft script (which used base64/llm.chat/resolution modes)
+- Uses the same proven pattern as v1: `llm.generate()` with PIL images + `NGramPerReqLogitsProcessor`
+- Key v2 addition: `limit_mm_per_prompt={"image": 1}` in LLM init
+- Added `addict` and `matplotlib` as dependencies (required by model's HF custom code)
+
+**Test results (2026-02-12):**
+- 10/10 samples processed successfully on L4 GPU
+- Processing time: 6.4 min (includes model download + warmup)
+- Model: 6.33 GiB, ~475 toks/s input, ~246 toks/s output
+- Output dataset: `davanstrien/deepseek-ocr2-nls-test`
+
+**Example usage:**
+```bash
+hf jobs uv run --flavor l4x1 \
+    -s HF_TOKEN \
+    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/deepseek-ocr2-vllm.py \
+    NationalLibraryOfScotland/medical-history-of-british-india output-dataset \
+    --max-samples 10 --shuffle --seed 42
+```
+
+**Important notes:**
+- Requires vLLM **nightly** (stable 0.15.1 does NOT include DeepSeek-OCR-2 support)
+- The nightly index (`https://wheels.vllm.ai/nightly`) occasionally has transient build issues (e.g., only ARM wheels). If this happens, wait and retry.
+- Uses same API pattern as v1: `NGramPerReqLogitsProcessor`, `SamplingParams(temperature=0, skip_special_tokens=False)`, `extra_args` for ngram settings
+
+**Model Information:**
+- Model ID: `deepseek-ai/DeepSeek-OCR-2`
+- Model Card: https://huggingface.co/deepseek-ai/DeepSeek-OCR-2
+- GitHub: https://github.com/deepseek-ai/DeepSeek-OCR-2
+- Parameters: 3B
+- Architecture: Visual Causal Flow
+- Resolution: (0-6)x768x768 + 1x1024x1024 patches
+
+## Other OCR Scripts
+
 ### Unlimited-OCR (`unlimited-ocr-vllm.py`)
 ✅ **Production Ready — single-image** (added + validated 2026-06-28)
 
@@ -240,46 +281,13 @@ hf jobs uv run --flavor l4x1 -s HF_TOKEN \
     ./ocr/unlimited-ocr-vllm.py davanstrien/ufo-ColPali output-dataset --max-samples 10 --shuffle
 ```
 
-### DeepSeek-OCR-2 (`deepseek-ocr2-vllm.py`)
-✅ **Production Ready** (2026-02-12)
-
-**Status:** Working with vLLM nightly (requires nightly for `DeepseekOCR2ForCausalLM` support, not yet in stable 0.15.1)
-
-**What was done:**
-- Rewrote the broken draft script (which used base64/llm.chat/resolution modes)
-- Uses the same proven pattern as v1: `llm.generate()` with PIL images + `NGramPerReqLogitsProcessor`
-- Key v2 addition: `limit_mm_per_prompt={"image": 1}` in LLM init
-- Added `addict` and `matplotlib` as dependencies (required by model's HF custom code)
-
-**Test results (2026-02-12):**
-- 10/10 samples processed successfully on L4 GPU
-- Processing time: 6.4 min (includes model download + warmup)
-- Model: 6.33 GiB, ~475 toks/s input, ~246 toks/s output
-- Output dataset: `davanstrien/deepseek-ocr2-nls-test`
-
-**Example usage:**
-```bash
-hf jobs uv run --flavor l4x1 \
-    -s HF_TOKEN \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/deepseek-ocr2-vllm.py \
-    NationalLibraryOfScotland/medical-history-of-british-india output-dataset \
-    --max-samples 10 --shuffle --seed 42
-```
-
-**Important notes:**
-- Requires vLLM **nightly** (stable 0.15.1 does NOT include DeepSeek-OCR-2 support)
-- The nightly index (`https://wheels.vllm.ai/nightly`) occasionally has transient build issues (e.g., only ARM wheels). If this happens, wait and retry.
-- Uses same API pattern as v1: `NGramPerReqLogitsProcessor`, `SamplingParams(temperature=0, skip_special_tokens=False)`, `extra_args` for ngram settings
-
-**Model Information:**
-- Model ID: `deepseek-ai/DeepSeek-OCR-2`
-- Model Card: https://huggingface.co/deepseek-ai/DeepSeek-OCR-2
-- GitHub: https://github.com/deepseek-ai/DeepSeek-OCR-2
-- Parameters: 3B
-- Architecture: Visual Causal Flow
-- Resolution: (0-6)x768x768 + 1x1024x1024 patches
-
-## Other OCR Scripts
+**Deferred follow-up (captured, not built):** a *multi-page batch* recipe that drives the **SGLang
+server** in-job (server lifecycle + `ThreadPoolExecutor` over multi-page docs, like Baidu's `infer.py`,
+→ Hub) — the only way to get robust multi-page at corpus scale, since SGLang offline-Engine is
+non-viable (server-only, custom-logit-processor/R-SWA are server-side, `fa3` Hopper-only) and vLLM
+offline needs one `<image>` per page and degrades on hard scans. Gate: a real corpus-scale multi-page
+need **+** the h200/`fa3` infra fix (for exact R-SWA quality). Single-image vLLM (this recipe) stays
+the batch default.
 
 ### Nanonets OCR (`nanonets-ocr.py`, `nanonets-ocr2.py`)
 ✅ Both versions working

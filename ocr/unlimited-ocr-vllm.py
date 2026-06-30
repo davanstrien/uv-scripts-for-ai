@@ -51,6 +51,7 @@ import logging
 import os
 import re
 import sys
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
@@ -113,6 +114,7 @@ def to_pil(image: Union[Image.Image, Dict[str, Any], str]) -> Image.Image:
 def create_dataset_card(
     source_dataset: str,
     output_dataset: str,
+    model: str,
     num_samples: int,
     processing_time: str,
     output_column: str,
@@ -143,12 +145,12 @@ tags:
 # Document OCR using Unlimited-OCR
 
 This dataset contains OCR results for [{source_dataset}](https://huggingface.co/datasets/{source_dataset})
-produced by [baidu/Unlimited-OCR](https://huggingface.co/{MODEL}) with vLLM.
+produced by [{model}](https://huggingface.co/{model}) with vLLM.
 
 ## Processing Details
 
 - **Source Dataset**: [{source_dataset}](https://huggingface.co/datasets/{source_dataset})
-- **Model**: [{MODEL}](https://huggingface.co/{MODEL})
+- **Model**: [{model}](https://huggingface.co/{model})
 - **Number of Samples**: {num_samples:,}
 - **Processing Time**: {processing_time}
 - **Processing Date**: {datetime.now().strftime("%Y-%m-%d %H:%M UTC")}
@@ -190,6 +192,7 @@ Generated with [UV Scripts](https://huggingface.co/uv-scripts)
 def main(
     input_dataset: str,
     output_dataset: str,
+    model: str = MODEL,
     image_column: str = "image",
     output_column: str = "markdown",
     grounding_column: Optional[str] = None,
@@ -232,11 +235,11 @@ def main(
         dataset = dataset.select(range(min(max_samples, len(dataset))))
         logger.info(f"Limited to {len(dataset)} samples")
 
-    logger.info(f"Initializing vLLM with model: {MODEL}")
+    logger.info(f"Initializing vLLM with model: {model}")
     logger.info("This may take a few minutes on first run...")
 
     llm = LLM(
-        model=MODEL,
+        model=model,
         trust_remote_code=True,
         max_model_len=max_model_len,
         gpu_memory_utilization=gpu_memory_utilization,
@@ -291,14 +294,20 @@ def main(
     )
 
     logger.info(f"Adding '{output_column}' column to dataset")
+    if output_column in dataset.column_names:
+        logger.warning(f"Column '{output_column}' already exists, replacing it")
+        dataset = dataset.remove_columns([output_column])
     dataset = dataset.add_column(output_column, all_outputs)
     if grounding_column:
         logger.info(f"Adding '{grounding_column}' column (raw grounded output)")
+        if grounding_column in dataset.column_names:
+            logger.warning(f"Column '{grounding_column}' already exists, replacing it")
+            dataset = dataset.remove_columns([grounding_column])
         dataset = dataset.add_column(grounding_column, all_grounded)
 
     # inference_info: append-only log so several models can write into one dataset and be compared.
     inference_entry = {
-        "model_id": MODEL,
+        "model_id": model,
         "model_name": "Unlimited-OCR",
         "column_name": output_column,
         "timestamp": datetime.now().isoformat(),
@@ -334,21 +343,39 @@ def main(
         )
 
     logger.info(f"Pushing to {output_dataset}")
-    dataset.push_to_hub(
-        output_dataset,
-        private=private,
-        token=HF_TOKEN,
-        **({"config_name": config} if config else {}),
-        create_pr=create_pr,
-        commit_message=f"Add {MODEL} OCR results ({len(dataset)} samples)"
-        + (f" [{config}]" if config else ""),
-    )
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attempt > 1:
+                logger.warning("Disabling XET (fallback to HTTP upload)")
+                os.environ["HF_HUB_DISABLE_XET"] = "1"
+            dataset.push_to_hub(
+                output_dataset,
+                private=private,
+                token=HF_TOKEN,
+                max_shard_size="500MB",
+                **({"config_name": config} if config else {}),
+                create_pr=create_pr,
+                commit_message=f"Add {model} OCR results ({len(dataset)} samples)"
+                + (f" [{config}]" if config else ""),
+            )
+            break
+        except Exception as e:
+            logger.error(f"Upload attempt {attempt}/{max_retries} failed: {e}")
+            if attempt < max_retries:
+                delay = 30 * (2 ** (attempt - 1))
+                logger.info(f"Retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                logger.error("All upload attempts failed. OCR results are lost.")
+                sys.exit(1)
 
     logger.info("Creating dataset card...")
     card = DatasetCard(
         create_dataset_card(
             source_dataset=input_dataset,
             output_dataset=output_dataset,
+            model=model,
             num_samples=len(dataset),
             processing_time=processing_time_str,
             output_column=output_column,
@@ -416,6 +443,11 @@ Examples:
     )
     parser.add_argument("input_dataset", help="Input dataset ID from Hugging Face Hub")
     parser.add_argument("output_dataset", help="Output dataset ID for Hugging Face Hub")
+    parser.add_argument(
+        "--model",
+        default=MODEL,
+        help=f"Model to use (default: {MODEL}). Override only for a same-architecture mirror.",
+    )
     parser.add_argument(
         "--image-column", default="image", help="Column with images (default: image)"
     )
@@ -491,6 +523,7 @@ Examples:
     main(
         input_dataset=args.input_dataset,
         output_dataset=args.output_dataset,
+        model=args.model,
         image_column=args.image_column,
         output_column=args.output_column,
         grounding_column=args.grounding_column,
