@@ -33,7 +33,7 @@ This will:
 
 ## Serve a model as a live endpoint
 
-The recipes here run as batch jobs. To call a model interactively, from an agent, or with concurrent ad-hoc requests, you can instead run it as a temporary endpoint: [HF Jobs serving](https://huggingface.co/docs/hub/jobs-serving) exposes a port on a GPU Job, giving an OpenAI-compatible endpoint that runs until the job is cancelled or its `--timeout` is reached. See [serving-unlimited-ocr.md](serving-unlimited-ocr.md) for a worked example serving Baidu's [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) with SGLang.
+The recipes here run as batch jobs. To call a model interactively, from an agent, or with concurrent ad-hoc requests, you can instead run it as a temporary endpoint: [HF Jobs serving](https://huggingface.co/docs/hub/jobs-serving) exposes a port on a GPU Job, giving an OpenAI-compatible endpoint that runs until the job is cancelled or its `--timeout` is reached. See [serving-unlimited-ocr.md](serving-unlimited-ocr.md) for a worked example serving Baidu's [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) — with vLLM (official image) or SGLang. To OCR a whole corpus of single-page images instead, the batch recipe `unlimited-ocr-vllm.py` is the better fit (it's single-image only). **Multi-page** documents need a server: both vLLM and SGLang read clean multi-page docs, but **SGLang is the more robust** — on hard/degraded scans vLLM multi-page hallucinated in our tests while SGLang held up.
 
 ## Models at a glance
 
@@ -69,6 +69,7 @@ _Sorted by model size:_
 | `deepseek-ocr-vllm.py` | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | vLLM | 5 resolution + 5 prompt modes |
 | `deepseek-ocr.py` | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | Transformers | Same model, Transformers backend |
 | `deepseek-ocr2-vllm.py` | [DeepSeek-OCR-2](https://huggingface.co/deepseek-ai/DeepSeek-OCR-2) | 3B | vLLM | Newer; needs nightly vLLM **+ the `vllm/vllm-openai` image** ([why](#if-a-vllm-script-crashes-at-startup-the-nvcc--nvrtc-error)) |
+| `unlimited-ocr-vllm.py` | [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) | 3.3B | vLLM | DeepSeek-OCR-based; layout-grounded markdown (`--strip-grounding` for clean text). Single-image batch — needs Baidu's **dedicated `vllm/vllm-openai:unlimited-ocr` image** (`-cu129` on Hopper). Multi-page "long-horizon" parsing → serve it ([doc](serving-unlimited-ocr.md)); both engines do clean docs, **SGLang more robust** on hard scans. MIT |
 | `nuextract3.py` | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | vLLM | Markdown OCR **+ schema-guided JSON extraction** (template/Pydantic). Needs `vllm/vllm-openai` image |
 | `qianfan-ocr.py` | [Qianfan-OCR](https://huggingface.co/baidu/Qianfan-OCR) | 4.7B | vLLM | #1 OmniDocBench v1.5 (93.12), Layout-as-Thought, 192 languages |
 | `olmocr2-vllm.py` | [olmOCR-2-7B](https://huggingface.co/allenai/olmOCR-2-7B-1025-FP8) | 7B | vLLM | 82.4% olmOCR-Bench |
@@ -213,10 +214,11 @@ Beyond the shared flags, some models add their own. Run `--help` on any script f
 | `dots-ocr.py` | `--prompt-mode ocr\|layout-all\|layout-only` |
 | `dots-mocr.py` | `--prompt-mode` (8: ocr, layout-all, layout-only, web-parsing, scene-spotting, grounding-ocr, svg, general); SVG: `--model rednote-hilab/dots.mocr-svg --prompt-mode svg` |
 | `qianfan-ocr.py` | `--prompt-mode ocr\|table\|formula\|chart\|scene\|kie`, `--think` (Layout-as-Thought); `kie` needs `--custom-prompt` |
+| `unlimited-ocr-vllm.py` | `--strip-grounding` (drop `<\|det\|>`/`<\|ref\|>` grounding tags); needs the **`vllm/vllm-openai:unlimited-ocr`** image |
 | `numarkdown-ocr.py` | `--include-thinking` (store the reasoning trace) |
 | `nuextract3.py` | `--template` / `--schema` / `--enable-thinking` — see the NuExtract3 section above |
 
-**Image-mode models** — `abot-ocr.py` and `nuextract3.py` (Qwen3.5 architecture) need the `vllm/vllm-openai` image because the default uv-script image lacks `nvcc`. Add `--image vllm/vllm-openai:latest --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages` (see the NuExtract3 example above for the full command).
+**Image-mode models** — `abot-ocr.py` and `nuextract3.py` (Qwen3.5 architecture) need the `vllm/vllm-openai` image because the default uv-script image lacks `nvcc`. Add `--image vllm/vllm-openai:latest --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages` (see the NuExtract3 example above for the full command). `unlimited-ocr-vllm.py` is a special case — its architecture isn't in any stable vLLM wheel, so it needs Baidu's **dedicated** `vllm/vllm-openai:unlimited-ocr` image (tag `:unlimited-ocr-cu129` on Hopper), e.g. `--image vllm/vllm-openai:unlimited-ocr --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages` (its docstring has the full command).
 
 ## Output & features
 
