@@ -355,8 +355,12 @@ def main(
             f"Column '{image_column}' not found. Available: {dataset.column_names}"
         )
 
-    # Fail fast if the output column would collide with an existing input column
-    dataset = ensure_output_columns_free(dataset, [output_column], overwrite=overwrite)
+    # Fail fast if an output column would collide with an existing input column.
+    # With --enable-thinking the script also writes "{output_column}_reasoning".
+    out_cols = [output_column]
+    if enable_thinking:
+        out_cols.append(f"{output_column}_reasoning")
+    dataset = ensure_output_columns_free(dataset, out_cols, overwrite=overwrite)
 
     if shuffle:
         logger.info(f"Shuffling dataset with seed {seed}")
