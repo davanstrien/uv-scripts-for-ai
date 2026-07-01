@@ -93,6 +93,28 @@ def check_cuda_availability():
         logger.info(f"CUDA is available. GPU: {torch.cuda.get_device_name(0)}")
 
 
+def ensure_output_columns_free(dataset, columns, overwrite=False):
+    """Fail fast if an output column would collide with an existing input column.
+
+    Adding a column that already exists silently overwrites it (e.g. a ground-truth
+    `text`/`markdown` column) or crashes on push with a duplicate-column error only
+    *after* inference has run. Catch it up front. With overwrite=True, drop the clashing
+    column(s) here instead (logged) so the later add_column is clean.
+    """
+    clash = [c for c in columns if c in dataset.column_names]
+    if not clash:
+        return dataset
+    if overwrite:
+        logger.warning(f"--overwrite: replacing existing column(s) {clash}")
+        return dataset.remove_columns(clash)
+    logger.error(
+        f"Output column(s) {clash} already exist in the input dataset "
+        f"(columns: {dataset.column_names})."
+    )
+    logger.error("Choose a different --output-column, or pass --overwrite to replace them.")
+    sys.exit(1)
+
+
 def make_ocr_message(
     image: Union[Image.Image, Dict[str, Any], str],
     prompt: str = PROMPT_TEMPLATES["ocr"],
@@ -239,7 +261,8 @@ def main(
     image_column: str = "image",
     batch_size: int = 16,
     model: str = "rednote-hilab/dots.ocr",
-    max_model_len: int = 8192,
+    max_model_len: int = 32768,
+    max_pixels: int = None,
     max_tokens: int = 8192,
     gpu_memory_utilization: float = 0.8,
     hf_token: str = None,
@@ -251,6 +274,7 @@ def main(
     prompt_mode: str = "ocr",
     custom_prompt: str = None,
     output_column: str = "markdown",
+    overwrite: bool = False,
     config: str = None,
     create_pr: bool = False,
 ):
@@ -285,6 +309,9 @@ def main(
             f"Column '{image_column}' not found. Available: {dataset.column_names}"
         )
 
+    # Fail fast if the output column would collide with an existing input column
+    dataset = ensure_output_columns_free(dataset, [output_column], overwrite=overwrite)
+
     # Shuffle if requested
     if shuffle:
         logger.info(f"Shuffling dataset with seed {seed}")
@@ -298,13 +325,17 @@ def main(
     # Initialize vLLM model
     logger.info(f"Initializing vLLM with model: {model}")
     logger.info("This may take a few minutes on first run...")
-    llm = LLM(
+    llm_kwargs = dict(
         model=model,
         trust_remote_code=True,
         max_model_len=max_model_len,
         gpu_memory_utilization=gpu_memory_utilization,
         limit_mm_per_prompt={"image": 1},
     )
+    if max_pixels is not None:
+        logger.info(f"Capping input images to max_pixels={max_pixels}")
+        llm_kwargs["mm_processor_kwargs"] = {"max_pixels": max_pixels}
+    llm = LLM(**llm_kwargs)
 
     sampling_params = SamplingParams(
         temperature=0.0,  # Deterministic for OCR
@@ -509,8 +540,23 @@ Examples:
     parser.add_argument(
         "--max-model-len",
         type=int,
-        default=8192,
-        help="Maximum model context length (default: 8192)",
+        default=32768,
+        help=(
+            "Maximum model context length (default: 32768). dots.ocr does NOT resize "
+            "input images, so a full page can reach ~14k image tokens (the model's "
+            "11.29M-px processor cap); the old 8192 default rejected such requests and "
+            "the row was written as '[OCR ERROR]'. Pair with --max-pixels to cap memory."
+        ),
+    )
+    parser.add_argument(
+        "--max-pixels",
+        type=int,
+        default=None,
+        help=(
+            "Optional cap on input image pixels (width*height) passed to vLLM's "
+            "mm_processor. Lower this (e.g. 4000000) to bound image tokens and GPU "
+            "memory on very large scans. Default: model's own cap (~11.29M px)."
+        ),
     )
     parser.add_argument(
         "--max-tokens",
@@ -561,6 +607,12 @@ Examples:
         help="Column name for output text (default: markdown)",
     )
     parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace the output column if it already exists in the input dataset "
+        "(default: error out to avoid clobbering an existing column).",
+    )
+    parser.add_argument(
         "--config",
         help="Config/subset name when pushing to Hub (for benchmarking multiple models in one repo)",
     )
@@ -579,6 +631,7 @@ Examples:
         batch_size=args.batch_size,
         model=args.model,
         max_model_len=args.max_model_len,
+        max_pixels=args.max_pixels,
         max_tokens=args.max_tokens,
         gpu_memory_utilization=args.gpu_memory_utilization,
         hf_token=args.hf_token,
@@ -590,6 +643,7 @@ Examples:
         prompt_mode=args.prompt_mode,
         custom_prompt=args.custom_prompt,
         output_column=args.output_column,
+        overwrite=args.overwrite,
         config=args.config,
         create_pr=args.create_pr,
     )

@@ -104,6 +104,53 @@ def check_cuda_availability() -> None:
     logger.info(f"CUDA is available. GPU: {torch.cuda.get_device_name(0)}")
 
 
+def check_vllm_available() -> None:
+    """Fail fast (before loading 400 rows) if vLLM isn't importable.
+
+    Surya-2 runs its VLM through vLLM's offline engine, but `vllm` is deliberately
+    NOT a PEP723 dependency: the recent hybrid `qwen3_5` architecture is only in the
+    pinned `vllm/vllm-openai:v0.20.1` image, which also provides torch/transformers via
+    PYTHONPATH. Launched on the bare uv image (no `--image`), the import fails per-batch
+    and every row silently gets "[SURYA GENERATE ERROR]". Detect that up front instead.
+    """
+    import importlib.util
+
+    if importlib.util.find_spec("vllm") is None:
+        logger.error("vLLM is not importable — this recipe cannot run on the bare uv image.")
+        logger.error(
+            "Surya-2 needs the pinned vLLM build; re-run with the image + interpreter flags:"
+        )
+        logger.error(
+            "  hf jobs uv run --flavor l4x1 -s HF_TOKEN \\\n"
+            "      --image vllm/vllm-openai:v0.20.1 --python /usr/local/bin/python3 \\\n"
+            "      -e PYTHONPATH=/usr/local/lib/python3.12/site-packages \\\n"
+            "      <script_url> INPUT_DATASET OUTPUT_DATASET ..."
+        )
+        sys.exit(1)
+
+
+def ensure_output_columns_free(dataset, columns, overwrite=False):
+    """Fail fast if an output column would collide with an existing input column.
+
+    Adding a column that already exists silently overwrites it (e.g. a ground-truth
+    `text`/`markdown` column) or crashes on push with a duplicate-column error only
+    *after* inference has run. Catch it up front. With overwrite=True, drop the clashing
+    column(s) here instead (logged) so the later add_column is clean.
+    """
+    clash = [c for c in columns if c in dataset.column_names]
+    if not clash:
+        return dataset
+    if overwrite:
+        logger.warning(f"--overwrite: replacing existing column(s) {clash}")
+        return dataset.remove_columns(clash)
+    logger.error(
+        f"Output column(s) {clash} already exist in the input dataset "
+        f"(columns: {dataset.column_names})."
+    )
+    logger.error("Choose a different --output-column, or pass --overwrite to replace them.")
+    sys.exit(1)
+
+
 def parse_page_range(spec: Optional[str]) -> Optional[List[int]]:
     """Turn '0-3,5' into [0,1,2,3,5]. None/empty -> None (all pages)."""
     if not spec:
@@ -444,6 +491,7 @@ def main(
     image_column: str = "image",
     pdf_column: Optional[str] = None,
     output_column: str = "markdown",
+    overwrite: bool = False,
     blocks_column: str = "surya_blocks",
     page_range: Optional[str] = None,
     split: str = "train",
@@ -469,6 +517,7 @@ def main(
     os.environ["SURYA_INFERENCE_AUTOSTART"] = "False"
 
     check_cuda_availability()
+    check_vllm_available()
     start_time = datetime.now(timezone.utc)
 
     HF_TOKEN = hf_token or os.environ.get("HF_TOKEN")
@@ -495,6 +544,10 @@ def main(
             f"Column '{source_column}' not found. Available: {dataset.column_names}"
         )
         sys.exit(1)
+    # Fail fast if the output column would collide with an existing input column
+    dataset = ensure_output_columns_free(
+        dataset, [output_column, blocks_column], overwrite=overwrite
+    )
     if shuffle:
         dataset = dataset.shuffle(seed=seed)
     if max_samples:
@@ -756,6 +809,12 @@ Run on the vllm/vllm-openai:v0.20.1 image:
         help="Text output column (default: markdown)",
     )
     parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace the output column if it already exists in the input dataset "
+        "(default: error out to avoid clobbering an existing column).",
+    )
+    parser.add_argument(
         "--blocks-column",
         default="surya_blocks",
         help="Structured JSON output column (default: surya_blocks)",
@@ -836,6 +895,7 @@ Run on the vllm/vllm-openai:v0.20.1 image:
         image_column=args.image_column,
         pdf_column=args.pdf_column,
         output_column=args.output_column,
+        overwrite=args.overwrite,
         blocks_column=args.blocks_column,
         page_range=args.page_range,
         split=args.split,
