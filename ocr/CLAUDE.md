@@ -27,6 +27,12 @@ planned **self-review skill** (see [Deferred](#deferred--tracked)) just enforces
   `--image … --python … -e PYTHONPATH=…`; add a preflight that `sys.exit(1)`s naming the exact flags
   (surya-class — see gotchas). Pinned-image scripts: `surya-ocr` (`:v0.20.1`, **site-packages**),
   `nanonets-ocr2` (`:v0.10.2`), `unlimited-ocr` (`:unlimited-ocr`), `deepseek-ocr2`/`glm-ocr` (nightly).
+- **Pins are temporary.** An image/version pin (`:v0.10.2`, `:v0.20.1`, a nightly, `surya-ocr==0.20.0`,
+  …) is a workaround for a *current* ecosystem gap — a decode regression, an arch not yet in a stable
+  wheel, a resolver backtrack. In the recipe, record **why** the pin exists and **what would loosen it**
+  (e.g. "move back to the default image when a newer vLLM ships a Qwen2.5-VL decode fix"; "drop the
+  nightly once the arch lands in a stable release"). Re-test periodically and relax when the gap closes —
+  that's what the `bump-vllm-pins` skill is for; prefer floors over exact pins once you can.
 - **Env guards on the bare image.** Set `VLLM_USE_FLASHINFER_SAMPLER=0` (and `VLLM_USE_DEEP_GEMM=0`
   for nightly vLLM) **before** importing `vllm` — both JIT paths need `nvcc`, which the bare uv image lacks.
 - **Context-length invariant.** `--max-tokens` ≤ `--max-model-len` ≤ the model's real max context
