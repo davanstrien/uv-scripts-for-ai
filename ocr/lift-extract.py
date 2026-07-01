@@ -111,6 +111,28 @@ def check_cuda_availability() -> None:
     logger.info(f"CUDA is available. GPU: {torch.cuda.get_device_name(0)}")
 
 
+def ensure_output_columns_free(dataset, columns, overwrite=False):
+    """Fail fast if an output column would collide with an existing input column.
+
+    Adding a column that already exists silently overwrites it (e.g. a ground-truth
+    `text`/`markdown` column) or crashes on push with a duplicate-column error only
+    *after* inference has run. Catch it up front. With overwrite=True, drop the clashing
+    column(s) here instead (logged) so the later add_column is clean.
+    """
+    clash = [c for c in columns if c in dataset.column_names]
+    if not clash:
+        return dataset
+    if overwrite:
+        logger.warning(f"--overwrite: replacing existing column(s) {clash}")
+        return dataset.remove_columns(clash)
+    logger.error(
+        f"Output column(s) {clash} already exist in the input dataset "
+        f"(columns: {dataset.column_names})."
+    )
+    logger.error("Choose a different --output-column, or pass --overwrite to replace them.")
+    sys.exit(1)
+
+
 def load_schema_arg(value: str) -> Dict[str, Any]:
     """Resolve --schema (inline JSON, a URL, or a file path) into a JSON Schema dict."""
     text = value.strip()
@@ -423,6 +445,7 @@ def main(
     image_column: str = "image",
     pdf_column: Optional[str] = None,
     output_column: str = "extraction",
+    overwrite: bool = False,
     method: str = "hf",
     page_range: Optional[str] = None,
     split: str = "train",
@@ -478,6 +501,10 @@ def main(
             f"Column '{source_column}' not found. Available: {dataset.column_names}"
         )
         sys.exit(1)
+
+    # Fail fast if the output column would collide with an existing input column
+    dataset = ensure_output_columns_free(dataset, [output_column], overwrite=overwrite)
+
     if shuffle:
         dataset = dataset.shuffle(seed=seed)
     if max_samples:
@@ -705,6 +732,12 @@ Input (one document per row):
         help="Output column (default: extraction)",
     )
     parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace the output column if it already exists in the input dataset "
+        "(default: error out to avoid clobbering an existing column).",
+    )
+    parser.add_argument(
         "--method",
         choices=["hf", "vllm"],
         default="hf",
@@ -792,6 +825,7 @@ Input (one document per row):
         image_column=args.image_column,
         pdf_column=args.pdf_column,
         output_column=args.output_column,
+        overwrite=args.overwrite,
         method=args.method,
         page_range=args.page_range,
         split=args.split,

@@ -433,6 +433,7 @@ class DatasetRepoSink:
         create_pr: bool,
         source_id: str,
         original_dataset=None,
+        overwrite: bool = False,
     ):
         self.repo_id = repo_id
         self.hf_token = hf_token
@@ -441,6 +442,7 @@ class DatasetRepoSink:
         self.create_pr = create_pr
         self.source_id = source_id
         self.original_dataset = original_dataset
+        self.overwrite = overwrite
         # Used when original_dataset is None: row-by-row buffer.
         self._rows: List[Dict[str, Any]] = []
         # Used when original_dataset is set: ordered layouts aligned with dataset rows.
@@ -476,7 +478,16 @@ class DatasetRepoSink:
                 # Pad to keep add_column happy.
                 while len(self._layouts) < len(self.original_dataset):
                     self._layouts.append("[]")
-            ds = self.original_dataset.add_column("layout", self._layouts)
+            base = self.original_dataset
+            if "layout" in base.column_names:
+                if not self.overwrite:
+                    raise ValueError(
+                        "Output column 'layout' already exists in the input dataset; "
+                        "pass --overwrite to replace it."
+                    )
+                logger.warning("--overwrite: replacing existing column 'layout'")
+                base = base.remove_columns("layout")
+            ds = base.add_column("layout", self._layouts)
         else:
             if not self._rows:
                 logger.warning("No rows produced; nothing to push.")
@@ -891,6 +902,17 @@ def main(args: argparse.Namespace) -> None:
             seed=args.seed,
             max_samples=args.max_samples,
         )
+        # Fail fast, before minutes of inference, if the 'layout' output column would
+        # collide with an existing input column. --overwrite opts in to replacing it.
+        if original_dataset is not None and "layout" in original_dataset.column_names:
+            if not args.overwrite:
+                logger.error(
+                    "Output column 'layout' already exists in the input dataset "
+                    f"(columns: {original_dataset.column_names})."
+                )
+                logger.error("Pass --overwrite to replace it.")
+                sys.exit(1)
+            logger.warning("--overwrite: will replace existing column 'layout'")
 
     # ---------- sink ----------
     if is_bucket_url(args.output_target):
@@ -911,6 +933,7 @@ def main(args: argparse.Namespace) -> None:
             create_pr=args.create_pr,
             source_id=args.input_source,
             original_dataset=original_dataset,
+            overwrite=args.overwrite,
         )
 
     completed = sink.already_done()
@@ -1162,6 +1185,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--create-pr",
         action="store_true",
         help="Create PR instead of direct push (dataset sink only)",
+    )
+    p.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace the output column if it already exists in the input dataset "
+        "(default: error out to avoid clobbering an existing column).",
     )
     # Bucket-sink-specific
     p.add_argument(

@@ -77,6 +77,28 @@ def check_cuda_availability() -> None:
     logger.info(f"CUDA is available. GPU: {torch.cuda.get_device_name()}")
 
 
+def ensure_output_columns_free(dataset, columns, overwrite=False):
+    """Fail fast if an output column would collide with an existing input column.
+
+    Adding a column that already exists silently overwrites it (e.g. a ground-truth
+    `text`/`markdown` column) or crashes on push with a duplicate-column error only
+    *after* inference has run. Catch it up front. With overwrite=True, drop the clashing
+    column(s) here instead (logged) so the later add_column is clean.
+    """
+    clash = [c for c in columns if c in dataset.column_names]
+    if not clash:
+        return dataset
+    if overwrite:
+        logger.warning(f"--overwrite: replacing existing column(s) {clash}")
+        return dataset.remove_columns(clash)
+    logger.error(
+        f"Output column(s) {clash} already exist in the input dataset "
+        f"(columns: {dataset.column_names})."
+    )
+    logger.error("Choose a different --output-column, or pass --overwrite to replace them.")
+    sys.exit(1)
+
+
 def load_text_arg(value: str) -> str:
     """Resolve --schema (inline text/JSON, URL, or file path) into a string."""
     text = value.strip()
@@ -116,6 +138,7 @@ def main(
     schema: str,
     text_column: str = "text",
     output_column: str = "extraction",
+    overwrite: bool = False,
     output_format: str = "json",
     split: str = "train",
     max_samples: Optional[int] = None,
@@ -142,6 +165,10 @@ def main(
 
     logger.info(f"Loading dataset: {input_dataset} (split={split})")
     dataset = load_dataset(input_dataset, split=split)
+
+    # Fail fast if the output column would collide with an existing input column
+    dataset = ensure_output_columns_free(dataset, [output_column], overwrite=overwrite)
+
     if shuffle:
         dataset = dataset.shuffle(seed=seed)
     if max_samples:
@@ -258,6 +285,12 @@ if __name__ == "__main__":
     parser.add_argument("--text-column", default="text", help="Text column (default: text)")
     parser.add_argument("--output-column", default="extraction", help="Output column (default: extraction)")
     parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace the output column if it already exists in the input dataset "
+        "(default: error out to avoid clobbering an existing column).",
+    )
+    parser.add_argument(
         "--format", dest="output_format", default="json", choices=list(FORMATS),
         help="Output format (default: json)",
     )
@@ -279,6 +312,7 @@ if __name__ == "__main__":
         schema=args.schema,
         text_column=args.text_column,
         output_column=args.output_column,
+        overwrite=args.overwrite,
         output_format=args.output_format,
         split=args.split,
         max_samples=args.max_samples,

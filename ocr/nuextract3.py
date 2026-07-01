@@ -93,6 +93,28 @@ def check_cuda_availability():
         logger.info(f"CUDA is available. GPU: {torch.cuda.get_device_name(0)}")
 
 
+def ensure_output_columns_free(dataset, columns, overwrite=False):
+    """Fail fast if an output column would collide with an existing input column.
+
+    Adding a column that already exists silently overwrites it (e.g. a ground-truth
+    `text`/`markdown` column) or crashes on push with a duplicate-column error only
+    *after* inference has run. Catch it up front. With overwrite=True, drop the clashing
+    column(s) here instead (logged) so the later add_column is clean.
+    """
+    clash = [c for c in columns if c in dataset.column_names]
+    if not clash:
+        return dataset
+    if overwrite:
+        logger.warning(f"--overwrite: replacing existing column(s) {clash}")
+        return dataset.remove_columns(clash)
+    logger.error(
+        f"Output column(s) {clash} already exist in the input dataset "
+        f"(columns: {dataset.column_names})."
+    )
+    logger.error("Choose a different --output-column, or pass --overwrite to replace them.")
+    sys.exit(1)
+
+
 def load_template_arg(value: Optional[str]) -> Optional[Dict[str, Any]]:
     """Load a NuExtract template/JSON Schema from inline JSON, a URL, or a file path."""
     if value is None:
@@ -295,6 +317,7 @@ def main(
     shuffle: bool = False,
     seed: int = 42,
     output_column: Optional[str] = None,
+    overwrite: bool = False,
     verbose: bool = False,
     config: str = None,
     create_pr: bool = False,
@@ -331,6 +354,9 @@ def main(
         raise ValueError(
             f"Column '{image_column}' not found. Available: {dataset.column_names}"
         )
+
+    # Fail fast if the output column would collide with an existing input column
+    dataset = ensure_output_columns_free(dataset, [output_column], overwrite=overwrite)
 
     if shuffle:
         logger.info(f"Shuffling dataset with seed {seed}")
@@ -714,6 +740,12 @@ Examples:
         help="Column name for output (default: 'markdown' in OCR mode, 'extraction' in template mode)",
     )
     parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace the output column if it already exists in the input dataset "
+        "(default: error out to avoid clobbering an existing column).",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Log resolved package versions after processing",
@@ -743,6 +775,7 @@ Examples:
         shuffle=args.shuffle,
         seed=args.seed,
         output_column=args.output_column,
+        overwrite=args.overwrite,
         verbose=args.verbose,
         config=args.config,
         create_pr=args.create_pr,
