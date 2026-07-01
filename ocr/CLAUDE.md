@@ -1,5 +1,101 @@
 # OCR Scripts - Development Notes
 
+## Large full-page scan fixes (2026-07-01)
+
+A batch of scripts run over a **large**-page historical book-scan corpus (WebP, ~2000–4000px /
+7–9 MP) exposed 5 failures. Root-caused + fixed + verified on Jobs (l4x1, `--max-samples 4–16` on
+that corpus). `deepseek-ocr-vllm.py` / `paddleocr-vl-1.6.py` were unaffected.
+
+> ⚠️ **Gotcha for testing on such corpora:** some eval sets already ship `text`, `markdown`,
+> `docling`, `xml` columns, so **every** default `--output-column` collides — pass a distinct one
+> (e.g. `--output-column ocr_md`) on *all* the markdown-default scripts, not just pp-ocrv6.
+
+- **`surya-ocr.py` — silent per-row `[SURYA GENERATE ERROR]`, log `No module named 'vllm'`.**
+  Working as designed (deps omit `vllm`; needs `--image vllm/vllm-openai:v0.20.1` — see its own section
+  below); the batch run just dropped the image flags. **Fix:** added a `check_vllm_available()` preflight
+  that `sys.exit(1)`s with the exact required flags **before** processing, instead of writing 400 silent
+  sentinels. `--max-model-len` was already 18000. Verified: bare-image run now fails fast.
+- **`dots-ocr.py` — `[OCR ERROR]` on large pages (small pages OK).** No image resize; a 7–9 MP page →
+  up to ~14k image tokens (model's 11.29M-px processor cap) > the old `--max-model-len 8192` → vLLM
+  rejects → sentinel. **Fix:** default `--max-model-len` 8192→**32768** + new optional `--max-pixels`
+  (mm_processor cap). Verified 4/4 real OCR (matches GT; v1 works with the auto-detected `openai` chat
+  format — the dots-1.5 `content_format="string"` fix does **not** apply to v1).
+- **`lighton-ocr2.py` — `[OCR ERROR]` on large pages.** Its 1540px resize is correct, but ~6k image
+  tokens **+ `--max-tokens 4096`** > `--max-model-len 8192` at admission. **Fix:** default
+  `--max-model-len` 8192→**16384**. Verified 4/4 real OCR on l4x1.
+- **`glm-ocr.py` — whole JOB ERROR.** The *current* blocker was **not** OOM: glm pinned
+  `pyarrow>=17.0.0,<18.0.0`, but `datasets>=5.0.0` (which understands this dataset's `Json` feature
+  type) needs `pyarrow>=21`, so uv resolved `datasets 4.0.0` and `load_dataset` threw
+  `ValueError: Feature type 'Json' not found` (this is the 3-second startup ERROR seen in job history;
+  dots/lighton don't pin pyarrow, so they loaded fine). **Fix:** dropped the pyarrow pin. Also added
+  `VLLM_USE_DEEP_GEMM=0` (silences the non-fatal deep_gemm assertion on the nvcc-less nightly image) and
+  an **optional** `--max-pixels` cap. Verified: loads + completes 16/16 large pages, and **did NOT OOM
+  at defaults** (batch 16, no cap) — so `--max-pixels` stays an opt-in memory safety-valve, not a
+  default (the original "30-min OOM" didn't reproduce on 16 pages; it likely needed a specific
+  page/batch deep in a 400-row run). glm is chatty on blank pages / can emit degenerate repeats, but
+  that's model quality, not the crash.
+- **`pp-ocrv6.py` — crash on SAVE: duplicated column `['text']`.** Hardcoded output to `text` with **no**
+  `--output-column` flag; the corpus already has a `text` column. **Fix:** added `--output-column`
+  (default `markdown`, matching siblings) threaded through the sink + card + inference_info, plus a
+  **fast-fail startup guard** (`sys.exit(1)` before inference) if the chosen output column — or
+  `pp_ocr_blocks` — already exists in the input, so it never silently overwrites ground truth. Verified:
+  guard fires on the colliding default; `--output-column ocr_md` pushes cleanly.
+
+### Cross-cutting notes
+- **Output-column collision guard (rolled out to ALL ~31 output-writing scripts, 2026-07-01):**
+  generalises the pp-ocrv6 fix. A shared `ensure_output_columns_free(dataset, columns, overwrite=False)`
+  helper (copied into each standalone script — no shared lib in this repo) fails fast at startup if an
+  output column already exists in the input, instead of silently building a duplicate that crashes on
+  push *after* inference (or clobbering a ground-truth column). New `--overwrite` flag opts in to
+  replacing it. surya guards both `output_column` + `blocks_column`; the sink scripts (pp-ocrv6,
+  pp-doclayout) carry the equivalent guard inline. The 5 scripts that hardcoded `"markdown"`
+  (nanonets-ocr/-ocr2, abot-ocr, deepseek-ocr/-ocr-vllm) also gained a configurable `--output-column`.
+  Static-verified (ruff + AST + wiring) on all; the pattern is Jobs-proven via pp-ocrv6.
+- **Error signalling (#6 — documented, NOT implemented this pass):** ~39 sentinel-string sites
+  (`[OCR ERROR]`, `[SURYA GENERATE ERROR]`, …) across ~20 scripts write the sentinel *into* the OCR
+  column, so partial failures are silent and pollute downstream metrics. **Proposed follow-up:** leave
+  the OCR cell null/empty on failure and record the truncated exception in a companion `ocr_error`
+  column, so "model read nothing" is distinguishable from "the run errored." Deferred — would touch all
+  ~20 standalone scripts (no shared lib).
+- **`--max-model-len` policy:** the durable fix is to **bound the input** (image cap) and size context
+  to that bound + output — what the working `paddleocr-vl-1.6.py` (~1M-px smart resize) and `surya-ocr.py`
+  (max_pixels + 18000) already do. The per-script default bumps above are the minimal version. Don't
+  auto-size `max_model_len` from images (it's fixed at engine init, before images are seen).
+- **Context-length invariant (must hold for every vLLM recipe):**
+  `--max-tokens` ≤ `--max-model-len` ≤ the model's real max context. The real max is the language
+  model's `max_position_embeddings` in `config.json` (VLMs: usually under `text_config`/`language_config`,
+  adjusted by any `rope_scaling`). If `max_model_len` > that, vLLM refuses to start (we don't set
+  `VLLM_ALLOW_LONG_MAX_MODEL_LEN`); if `max_tokens` > `max_model_len`, the output alone can't fit.
+  Quick check: `curl -s https://huggingface.co/<model>/raw/main/config.json | python -c "import json,sys;c=json.load(sys.stdin);t=c.get('text_config',c);print(t.get('max_position_embeddings'),t.get('rope_scaling'))"`.
+  Audited 2026-07-01 across all vLLM recipes: none exceed their window (dots-ocr 32768/131072 ✓,
+  lighton-ocr2 16384/16384 = at cap/zero headroom ✓); fixed `nanonets-ocr.py` (had `max_tokens 15000`
+  > `max_model_len 8192` → raised default to 32768).
+
+### Future: "self-review a new/changed OCR recipe" skill (spark, 2026-07-01)
+A **dev-only skill** (sibling to `bump-vllm-pins`) that reviews an OCR recipe (a given script or the
+current diff / `--all`) against the invariants this repo keeps re-learning, so a new recipe or a bumped
+default is caught **before** it ships. Mostly a **static** check (fast, no compute); each maps to a
+concrete failure we've hit:
+
+1. **Context-length** — `--max-tokens` ≤ `--max-model-len` ≤ model `config.json` `max_position_embeddings`
+   (fetch the config; VLMs → `text_config`, mind `rope_scaling`). Catches vLLM-won't-start and
+   output-can't-fit (found `nanonets-ocr.py`).
+2. **Output-column collision guard** — has `ensure_output_columns_free` (or the inline sink guard) +
+   `--overwrite`, and `--output-column` default isn't a bare hardcoded name that clobbers input.
+3. **vLLM image / preflight** — if the arch isn't in a stable wheel, deps omit `vllm`/`torch` AND there's
+   a fail-fast preflight naming the required `--image`/`--python`/`PYTHONPATH` (surya-class).
+4. **Env guards on the bare image** — `VLLM_USE_FLASHINFER_SAMPLER=0` (and `VLLM_USE_DEEP_GEMM=0` for
+   nightly vLLM) set before importing vllm.
+5. **Dep sanity** — no stale caps that drag a transitive lib back (e.g. `pyarrow<18` → old `datasets`
+   lacking the `Json` feature → `load_dataset` crash, the glm-ocr bug).
+6. **Large-image bounding** — full-page recipes cap input pixels / resize, or size `max_model_len` to fit.
+7. **(optional) Jobs smoke** — only after the static checks pass, run on a tiny hard-input set (the
+   smoke-test dataset **+** a large 7–9 MP page) on l4x1, poll to terminal, and classify any failure
+   into the catalogued buckets (missing-vllm/wrong-image, collision, context-overflow `[OCR ERROR]`,
+   encoder OOM, dep-drift) with remedies.
+
+Pairs with the "OCR Smoke Test Dataset" idea below. Build after the current fixes land.
+
 ## Active Scripts
 
 ### DeepSeek-OCR v1 (`deepseek-ocr-vllm.py`)
@@ -290,7 +386,33 @@ need **+** the h200/`fa3` infra fix (for exact R-SWA quality). Single-image vLLM
 the batch default.
 
 ### Nanonets OCR (`nanonets-ocr.py`, `nanonets-ocr2.py`)
-✅ Both versions working
+✅ `nanonets-ocr.py` working.
+
+**`nanonets-ocr2.py` — ⚠️ requires pinned vLLM image `vllm/vllm-openai:v0.10.2` (fixed 2026-06-30).**
+Nanonets-OCR2-3B is a **Qwen2.5-VL** model. On a floating `vllm` pin (resolved to **0.24.0**) it
+decoded **pure `!` on every page** — the documented vLLM **>=0.11 Qwen2.5-VL regression**
+([vllm#27775](https://github.com/vllm-project/vllm/issues/27775),
+[#14126](https://github.com/vllm-project/vllm/issues/14126); 0.9.2/0.10.1/**0.10.2** are the
+known-good builds). Ruled out along the way: it is **not** context length (still `!` at
+`max_model_len=32768`) and **not** torch.compile (still `!` with `enforce_eager=True`). Pip-pinning
+`vllm==0.10.2` alone fails — its old tokenizer API (`Qwen2Tokenizer.all_special_tokens_extended`)
+clashes with modern `transformers` 5.x. **Fix:** run on the **`vllm/vllm-openai:v0.10.2` image**
+(ships a consistent vLLM 0.10.2 + transformers 4.56.1); `vllm` and `torch` are omitted from the PEP
+723 deps and come from the image via `PYTHONPATH`. Also bumped the `--max-model-len` default
+8192→32768 (the script's `--max-tokens` default is 15000 per the model card, which an 8192 context
+can't hold). Standard `/usr/bin/python3` + `dist-packages` image layout (probed). Re-test the pin
+when a newer vLLM ships a Qwen2.5-VL decode fix → it can move back to the default image.
+
+**Smoke test (2026-06-30, `davanstrien/ufo-ColPali`, 5 samples, a10g-small):** 5/5 clean markdown
+(English + Spanish, `<header>`/`<img>` semantic tags), 0 degenerate rows. Output
+`davanstrien/nanonets-ocr2-img0102-test`.
+
+```bash
+hf jobs uv run --flavor a10g-small -s HF_TOKEN \
+    --image vllm/vllm-openai:v0.10.2 --python /usr/bin/python3 \
+    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
+    ./ocr/nanonets-ocr2.py INPUT_DATASET OUTPUT_DATASET --max-samples 10 --shuffle --seed 42
+```
 
 ### PaddleOCR-VL (`paddleocr-vl.py`)
 ✅ Working

@@ -69,6 +69,7 @@ import io
 import json
 import logging
 import os
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -404,6 +405,8 @@ class DatasetRepoSink:
         create_pr: bool,
         source_id: str,
         original_dataset=None,
+        output_column: str = "markdown",
+        overwrite: bool = False,
     ):
         self.repo_id = repo_id
         self.hf_token = hf_token
@@ -412,6 +415,8 @@ class DatasetRepoSink:
         self.create_pr = create_pr
         self.source_id = source_id
         self.original_dataset = original_dataset
+        self.output_column = output_column
+        self.overwrite = overwrite
         self._texts: List[str] = []
         self._blocks: List[str] = []
 
@@ -438,14 +443,25 @@ class DatasetRepoSink:
                 while len(self._texts) < len(self.original_dataset):
                     self._texts.append("")
                     self._blocks.append("[]")
-            ds = self.original_dataset.add_column("text", self._texts)
+            # Guard again at save time in case the input column set changed under us.
+            base = self.original_dataset
+            clash = [c for c in (self.output_column, "pp_ocr_blocks") if c in base.column_names]
+            if clash:
+                if not self.overwrite:
+                    raise ValueError(
+                        f"Output column(s) {clash} already exist in the input dataset; "
+                        f"pass a different --output-column, or --overwrite to replace them."
+                    )
+                logger.warning(f"--overwrite: replacing existing column(s) {clash}")
+                base = base.remove_columns(clash)
+            ds = base.add_column(self.output_column, self._texts)
             ds = ds.add_column("pp_ocr_blocks", self._blocks)
         else:
             if not self._texts:
                 logger.warning("No rows produced; nothing to push.")
                 return
             ds = Dataset.from_list([
-                {"source_path": None, "text": t, "pp_ocr_blocks": b}
+                {"source_path": None, self.output_column: t, "pp_ocr_blocks": b}
                 for t, b in zip(self._texts, self._blocks)
             ])
 
@@ -511,6 +527,7 @@ class DatasetRepoSink:
                 processing_time=args_dict["processing_time"],
                 engine=args_dict.get("engine", "paddle_static"),
                 output_id=self.repo_id,
+                output_column=self.output_column,
             )
         )
         card.push_to_hub(self.repo_id, token=self.hf_token)
@@ -684,7 +701,7 @@ def build_inference_entry(tier: str, det_model: str, rec_model: str, args_dict: 
         "rec_accuracy_pct": TIER_REC.get(tier),
         "languages": TIER_LANGUAGES.get(tier, ""),
         "engine": "paddle_static",
-        "output_column": "text",
+        "output_column": args_dict.get("output_column", "markdown"),
         "blocks_column": "pp_ocr_blocks",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -699,6 +716,7 @@ def create_dataset_card(
     processing_time: str,
     engine: str,
     output_id: str,
+    output_column: str = "markdown",
 ) -> str:
     tier_display = tier.upper() if tier == "tiny" else tier.capitalize()
     if is_bucket_url(source):
@@ -739,7 +757,7 @@ PaddlePaddle's [PP-OCRv6](https://huggingface.co/collections/PaddlePaddle/pp-ocr
 
 Each row contains the original columns plus:
 
-- `text`: Plain text extracted from the image (reading-order concatenation of
+- `{output_column}`: Plain text extracted from the image (reading-order concatenation of
   detected text lines, newline-separated).
 - `pp_ocr_blocks`: JSON list, one dict per detected text line:
   ```json
@@ -766,7 +784,7 @@ import json
 from datasets import load_dataset
 
 ds = load_dataset("{output_id}", split="train")
-print(ds[0]["text"])
+print(ds[0]["{output_column}"])
 for block in json.loads(ds[0]["pp_ocr_blocks"]):
     print(block["text"], block["score"])
 ```
@@ -824,6 +842,27 @@ def main(args: argparse.Namespace) -> None:
             seed=args.seed,
             max_samples=args.max_samples,
         )
+        # Fail fast, before minutes of inference, if the output column would collide
+        # with an existing input column (e.g. a 'text' ground-truth column). Writing
+        # into it would either crash on push or silently overwrite the input data.
+        # --overwrite opts in to replacing the existing column(s) instead of erroring.
+        if original_dataset is not None:
+            clash = [
+                col
+                for col in (args.output_column, "pp_ocr_blocks")
+                if col in original_dataset.column_names
+            ]
+            if clash and not args.overwrite:
+                logger.error(
+                    f"Output column(s) {clash} already exist in the input dataset "
+                    f"(columns: {original_dataset.column_names})."
+                )
+                logger.error(
+                    "Choose a different --output-column, or pass --overwrite to replace them."
+                )
+                sys.exit(1)
+            if clash:
+                logger.warning(f"--overwrite: will replace existing column(s) {clash}")
 
     # ---------- sink ----------
     if is_bucket_url(args.output_target):
@@ -843,6 +882,8 @@ def main(args: argparse.Namespace) -> None:
             create_pr=args.create_pr,
             source_id=args.input_source,
             original_dataset=original_dataset,
+            output_column=args.output_column,
+            overwrite=args.overwrite,
         )
 
     completed = sink.already_done()
@@ -931,6 +972,7 @@ def main(args: argparse.Namespace) -> None:
         "engine": "paddle_static",
         "shard_size": args.shard_size,
         "processing_time": processing_time_str,
+        "output_column": args.output_column,
     }
     sink.finalize(
         tier=tier,
@@ -1014,6 +1056,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--create-pr",
         action="store_true",
         help="Create PR instead of direct push (dataset sink only)",
+    )
+    p.add_argument(
+        "--output-column",
+        default="markdown",
+        help=(
+            "Column name for the recognized text (dataset sink only, default: markdown). "
+            "Must not collide with an existing input column — many corpora already ship a "
+            "'text' ground-truth column, so 'text' would fail on push. Blocks always go to "
+            "'pp_ocr_blocks'."
+        ),
+    )
+    p.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace the output column(s) if they already exist in the input dataset "
+        "(default: error out to avoid clobbering an existing column).",
     )
     # Bucket-sink-specific
     p.add_argument(

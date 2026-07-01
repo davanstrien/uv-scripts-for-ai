@@ -2,7 +2,6 @@
 # requires-python = ">=3.11"
 # dependencies = [
 #     "datasets>=3.1.0",
-#     "pyarrow>=17.0.0,<18.0.0",
 #     "huggingface-hub",
 #     "pillow",
 #     "vllm",
@@ -53,7 +52,7 @@ import os
 import sys
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 import torch
 from datasets import load_dataset
@@ -64,6 +63,10 @@ from toolz import partition_all
 # default uv-script image lacks (engine init then crashes). Greedy OCR doesn't use it; this
 # lets the plain default-image command work. On the vllm/vllm-openai image it's a harmless no-op.
 os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
+# Same story for DeepGEMM (nightly vLLM): its init calls _find_cuda_home, which asserts on the
+# nvcc-less base image (a non-fatal warning that clutters the log and hides the real traceback).
+# Greedy OCR doesn't need the DeepGEMM JIT path, so disable it explicitly.
+os.environ.setdefault("VLLM_USE_DEEP_GEMM", "0")
 from vllm import LLM, SamplingParams
 
 logging.basicConfig(level=logging.INFO)
@@ -89,9 +92,49 @@ def check_cuda_availability():
         logger.info(f"CUDA is available. GPU: {torch.cuda.get_device_name(0)}")
 
 
+def ensure_output_columns_free(dataset, columns, overwrite=False):
+    """Fail fast if an output column would collide with an existing input column.
+
+    Adding a column that already exists silently overwrites it (e.g. a ground-truth
+    `text`/`markdown` column) or crashes on push with a duplicate-column error only
+    *after* inference has run. Catch it up front. With overwrite=True, drop the clashing
+    column(s) here instead (logged) so the later add_column is clean.
+    """
+    clash = [c for c in columns if c in dataset.column_names]
+    if not clash:
+        return dataset
+    if overwrite:
+        logger.warning(f"--overwrite: replacing existing column(s) {clash}")
+        return dataset.remove_columns(clash)
+    logger.error(
+        f"Output column(s) {clash} already exist in the input dataset "
+        f"(columns: {dataset.column_names})."
+    )
+    logger.error("Choose a different --output-column, or pass --overwrite to replace them.")
+    sys.exit(1)
+
+
+def downscale_to_max_pixels(img: Image.Image, max_pixels: Optional[int]) -> Image.Image:
+    """Shrink an image so width*height <= max_pixels, preserving aspect ratio.
+
+    GLM-OCR does no internal resizing and its card gives no resolution guidance. Capping
+    input pixels bounds both image tokens and vision-encoder memory, a safety valve for very
+    large (multi-MP) scans that can pressure GPU memory at high batch sizes. No-op when
+    max_pixels is None or the image is already small enough (never upscales)."""
+    if not max_pixels:
+        return img
+    w, h = img.size
+    if w * h <= max_pixels:
+        return img
+    scale = (max_pixels / (w * h)) ** 0.5
+    new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+    return img.resize(new_size, Image.Resampling.LANCZOS)
+
+
 def make_ocr_message(
     image: Union[Image.Image, Dict[str, Any], str],
     task: str = "ocr",
+    max_pixels: Optional[int] = None,
 ) -> List[Dict]:
     """
     Create chat message for OCR processing.
@@ -111,6 +154,9 @@ def make_ocr_message(
 
     # Convert to RGB
     pil_img = pil_img.convert("RGB")
+
+    # Optionally cap resolution to protect the vision encoder from OOM on huge scans
+    pil_img = downscale_to_max_pixels(pil_img, max_pixels)
 
     # Convert to base64 data URI
     buf = io.BytesIO()
@@ -225,6 +271,7 @@ def main(
     image_column: str = "image",
     batch_size: int = 16,
     max_model_len: int = 8192,
+    max_pixels: Optional[int] = None,
     max_tokens: int = 8192,
     temperature: float = 0.01,
     top_p: float = 0.00001,
@@ -238,6 +285,7 @@ def main(
     shuffle: bool = False,
     seed: int = 42,
     output_column: str = "markdown",
+    overwrite: bool = False,
     verbose: bool = False,
     config: str = None,
     create_pr: bool = False,
@@ -268,6 +316,9 @@ def main(
         raise ValueError(
             f"Column '{image_column}' not found. Available: {dataset.column_names}"
         )
+
+    # Fail fast if the output column would collide with an existing input column
+    dataset = ensure_output_columns_free(dataset, [output_column], overwrite=overwrite)
 
     if shuffle:
         logger.info(f"Shuffling dataset with seed {seed}")
@@ -319,7 +370,10 @@ def main(
         )
 
         try:
-            batch_messages = [make_ocr_message(img, task=task) for img in batch_images]
+            batch_messages = [
+                make_ocr_message(img, task=task, max_pixels=max_pixels)
+                for img in batch_images
+            ]
 
             outputs = llm.chat(batch_messages, sampling_params)
 
@@ -510,6 +564,17 @@ Examples:
         help="Maximum model context length (default: 8192)",
     )
     parser.add_argument(
+        "--max-pixels",
+        type=int,
+        default=None,
+        help=(
+            "Optional cap on input image pixels (width*height); larger scans are "
+            "downscaled (aspect preserved) before OCR. GLM-OCR does no internal resizing, "
+            "so this bounds vision-encoder memory on very large scans — set e.g. 4000000 "
+            "if you hit a GPU OOM at high batch sizes on a big-page corpus. Default: no cap."
+        ),
+    )
+    parser.add_argument(
         "--max-tokens",
         type=int,
         default=8192,
@@ -581,6 +646,12 @@ Examples:
         help="Column name for output text (default: markdown)",
     )
     parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace the output column if it already exists in the input dataset "
+        "(default: error out to avoid clobbering an existing column).",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Log resolved package versions after processing (useful for pinning deps)",
@@ -594,6 +665,7 @@ Examples:
         image_column=args.image_column,
         batch_size=args.batch_size,
         max_model_len=args.max_model_len,
+        max_pixels=args.max_pixels,
         max_tokens=args.max_tokens,
         temperature=args.temperature,
         top_p=args.top_p,
@@ -607,6 +679,7 @@ Examples:
         shuffle=args.shuffle,
         seed=args.seed,
         output_column=args.output_column,
+        overwrite=args.overwrite,
         verbose=args.verbose,
         config=args.config,
         create_pr=args.create_pr,
