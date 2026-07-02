@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "datasets",
+#     "datasets>=4.0.0",
 #     "huggingface-hub",
 #     "pillow",
 #     "vllm",
