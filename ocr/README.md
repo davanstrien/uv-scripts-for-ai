@@ -65,7 +65,7 @@ _Sorted by model size:_
 | `abot-ocr.py` | [ABot-OCR](https://huggingface.co/acvlab/ABot-OCR) | 2B | vLLM | Qwen3-VL based, doc→Markdown (text/LaTeX/HTML tables). Needs `vllm/vllm-openai` image. [paper](https://arxiv.org/abs/2605.27978) |
 | `nanonets-ocr.py` | [Nanonets-OCR-s](https://huggingface.co/nanonets/Nanonets-OCR-s) | 2B | vLLM | LaTeX, tables, forms |
 | `dots-mocr.py` | [dots.mocr](https://huggingface.co/rednote-hilab/dots.mocr) | 3B | vLLM | 8 prompt modes incl. SVG generation, layout + bbox, 100+ languages |
-| `nanonets-ocr2.py` | [Nanonets-OCR2-3B](https://huggingface.co/nanonets/Nanonets-OCR2-s) | 3B | vLLM | Next-gen, Qwen2.5-VL base |
+| `nanonets-ocr2.py` | [Nanonets-OCR2-3B](https://huggingface.co/nanonets/Nanonets-OCR2-3B) | 3B | vLLM | Next-gen, Qwen2.5-VL base. **Pin `--image vllm/vllm-openai:v0.10.2`** (vLLM ≥0.11 breaks Qwen2.5-VL → all `!`) |
 | `deepseek-ocr-vllm.py` | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | vLLM | 5 resolution + 5 prompt modes |
 | `deepseek-ocr.py` | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | Transformers | Same model, Transformers backend |
 | `deepseek-ocr2-vllm.py` | [DeepSeek-OCR-2](https://huggingface.co/deepseek-ai/DeepSeek-OCR-2) | 3B | vLLM | Newer; needs nightly vLLM **+ the `vllm/vllm-openai` image** ([why](#if-a-vllm-script-crashes-at-startup-the-nvcc--nvrtc-error)) |

@@ -4,10 +4,8 @@
 #     "datasets>=4.0.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm>=0.15.1",
 #     "tqdm",
 #     "toolz",
-#     "torch",
 # ]
 #
 # ///
@@ -26,6 +24,20 @@ Features:
 - Signature and watermark detection
 - Checkbox recognition
 - Multilingual support
+
+⚠️ Pinned vLLM image required. Nanonets-OCR2-3B is a Qwen2.5-VL model, and vLLM
+>=0.11 regressed Qwen2.5-VL decoding to a stream of "!" (vllm-project/vllm#27775,
+#14126); 0.10.2 is the last known-good. So `vllm` and `torch` are intentionally
+omitted from the deps above and come from the `vllm/vllm-openai:v0.10.2` image at
+runtime via PYTHONPATH. Run it like:
+
+    hf jobs uv run --flavor a10g-small -s HF_TOKEN \
+        --image vllm/vllm-openai:v0.10.2 --python /usr/bin/python3 \
+        -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
+        nanonets-ocr2.py INPUT_DATASET OUTPUT_DATASET --max-samples 10 --shuffle
+
+Re-test the pin when a newer vLLM ships a Qwen2.5-VL decode fix; it can then move
+back to a plain `vllm>=...` dep on the default image.
 """
 
 import argparse
@@ -62,6 +74,28 @@ def check_cuda_availability():
         sys.exit(1)
     else:
         logger.info(f"CUDA is available. GPU: {torch.cuda.get_device_name(0)}")
+
+
+def ensure_output_columns_free(dataset, columns, overwrite=False):
+    """Fail fast if an output column would collide with an existing input column.
+
+    Adding a column that already exists silently overwrites it (e.g. a ground-truth
+    `text`/`markdown` column) or crashes on push with a duplicate-column error only
+    *after* inference has run. Catch it up front. With overwrite=True, drop the clashing
+    column(s) here instead (logged) so the later add_column is clean.
+    """
+    clash = [c for c in columns if c in dataset.column_names]
+    if not clash:
+        return dataset
+    if overwrite:
+        logger.warning(f"--overwrite: replacing existing column(s) {clash}")
+        return dataset.remove_columns(clash)
+    logger.error(
+        f"Output column(s) {clash} already exist in the input dataset "
+        f"(columns: {dataset.column_names})."
+    )
+    logger.error("Choose a different --output-column, or pass --overwrite to replace them.")
+    sys.exit(1)
 
 
 def make_ocr_message(
@@ -214,7 +248,7 @@ def main(
     image_column: str = "image",
     batch_size: int = 16,
     model: str = "nanonets/Nanonets-OCR2-3B",
-    max_model_len: int = 8192,
+    max_model_len: int = 32768,
     max_tokens: int = 15000,
     gpu_memory_utilization: float = 0.8,
     hf_token: str = None,
@@ -223,6 +257,8 @@ def main(
     private: bool = False,
     shuffle: bool = False,
     seed: int = 42,
+    output_column: str = "markdown",
+    overwrite: bool = False,
     verbose: bool = False,
 ):
     """Process images from HF dataset through Nanonets-OCR2-3B model."""
@@ -250,6 +286,9 @@ def main(
         raise ValueError(
             f"Column '{image_column}' not found. Available: {dataset.column_names}"
         )
+
+    # Fail fast if the output column would collide with an existing input column
+    dataset = ensure_output_columns_free(dataset, [output_column], overwrite=overwrite)
 
     # Shuffle if requested
     if shuffle:
@@ -307,9 +346,9 @@ def main(
             # Add error placeholders for failed batch
             all_markdown.extend(["[OCR FAILED]"] * len(batch_images))
 
-    # Add markdown column to dataset
-    logger.info("Adding markdown column to dataset")
-    dataset = dataset.add_column("markdown", all_markdown)
+    # Add output column to dataset
+    logger.info(f"Adding '{output_column}' column to dataset")
+    dataset = dataset.add_column(output_column, all_markdown)
 
     # Handle inference_info tracking
     logger.info("Updating inference_info...")
@@ -317,7 +356,7 @@ def main(
     inference_entry = {
         "model_id": model,
         "model_name": "Nanonets-OCR2-3B",
-        "column_name": "markdown",
+        "column_name": output_column,
         "timestamp": datetime.now().isoformat(),
         "batch_size": batch_size,
         "max_tokens": max_tokens,
@@ -476,8 +515,8 @@ Examples:
     parser.add_argument(
         "--max-model-len",
         type=int,
-        default=8192,
-        help="Maximum model context length (default: 8192)",
+        default=32768,
+        help="Maximum model context length (default: 32768)",
     )
     parser.add_argument(
         "--max-tokens",
@@ -515,6 +554,17 @@ Examples:
         help="Random seed for shuffling (default: 42)",
     )
     parser.add_argument(
+        "--output-column",
+        default="markdown",
+        help="Column name for the OCR output text (default: markdown)",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace the output column if it already exists in the input dataset "
+        "(default: error out to avoid clobbering an existing column).",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Log resolved package versions after processing (useful for pinning deps)",
@@ -537,5 +587,7 @@ Examples:
         private=args.private,
         shuffle=args.shuffle,
         seed=args.seed,
+        output_column=args.output_column,
+        overwrite=args.overwrite,
         verbose=args.verbose,
     )
