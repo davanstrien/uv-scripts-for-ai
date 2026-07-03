@@ -131,8 +131,6 @@ hits = ds.to_table(nearest={"column": "vector", "q": query_vec, "k": 5})
 > **Query prompts:** embed `query_vec` with the model's *query* prefix (e5 → `"query: "`,
 > nomic → `"search_query: "`; the run prints the right one). Documents and queries use
 > different prefixes on these models — mismatching them silently degrades retrieval.
-```python
-```
 
 End-to-end this is fast and cheap: **all 241,787 Simple-English-Wikipedia articles → a
 searchable Lance vector DB on the Hub in ~4.5 min for ~$0.07 on a single L4** (load → embed →

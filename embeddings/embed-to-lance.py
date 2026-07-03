@@ -5,6 +5,7 @@
 #     "sentence-transformers>=5.0.0",
 #     "torch",
 #     "numpy",
+#     "einops",
 #     "pyarrow",
 #     "pylance",
 #     "huggingface-hub",
