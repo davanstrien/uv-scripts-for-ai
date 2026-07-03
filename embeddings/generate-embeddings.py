@@ -67,9 +67,9 @@ logger = logging.getLogger("generate-embeddings")
 
 def find_batch_size(model, sample, normalize, candidates=(32, 64, 128, 256)):
     """Probe for the fastest batch that fits (used by --batch-size auto). Throughput is NOT
-    monotonic in batch size: with variable-length inputs, larger batches waste compute on padding,
-    so we time a few on a warmup sample and keep the fastest that doesn't OOM. Works for text and
-    images (sentence-transformers .encode handles both)."""
+    monotonic in batch size, so we time a few on a warmup sample and keep the fastest that doesn't
+    OOM. Why bigger isn't better: for text, larger batches pad to the longest member + add overhead;
+    for images, the ViT forward already saturates the GPU by ~batch 32. Works for text and images."""
     import time
     import torch
     warm = sample[: min(1024, len(sample))]
@@ -265,9 +265,12 @@ def main():
     median_tok = sniff_token_lengths(model, items, args.max_seq_len) if args.modality == "text" else None
 
     if str(args.batch_size).lower() == "auto":
-        # Let the sniffed length set the probe range: short texts under-use the GPU at small batch
-        # (probe bigger); long texts pad-waste at big batch (stay modest). The probe still verifies.
-        if median_tok is None or median_tok >= 256:
+        # Pick the probe range from the data shape. Images: the ViT forward saturates the GPU by
+        # ~batch 32, so bigger only adds memory — probe low. Text: short texts under-use the GPU at
+        # small batch (probe bigger); long texts pad-waste at big batch (stay modest). Probe verifies.
+        if args.modality == "image":
+            candidates = (32, 64, 128)
+        elif median_tok is None or median_tok >= 256:
             candidates = (32, 64, 128, 256)
         elif median_tok >= 64:
             candidates = (64, 128, 256, 512)

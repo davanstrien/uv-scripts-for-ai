@@ -104,16 +104,21 @@ corpus; pass `--query-mode` for a query set, or `--prompt '<prefix>'` to overrid
   (40 img/s, dim 768) or SigLIP-2-large (46 img/s, dim 1024) for quality. SigLIP-2 wins at the
   large tier but needs the transformers path (~4× the code); CLIP-via-sentence-transformers is the
   clean one-liner.
-- **Flavor:** A10G is ~1.3–1.8× faster than L4 for images but ~1.9× the cost → L4 is more
-  cost-efficient per image; reach for A10G only when wall-clock matters.
+- **Flavor + cost: L4 is the cost pick for every image model.** clip-ViT-B-32 ≈ **$0.56/1M images**
+  (pre-sized) or ~$1.03/1M (full-res); siglip2-large ≈ $4.84/1M. A10G is ~1.3× faster but 1.875× the
+  rate (~$0.92/1M for B-32) → use it only when wall-clock, not cost, matters.
+- **`--batch-size auto` uses 32/64/128 for images; 64 is a safe manual default** (only ~6% off the
+  bs=32 peak on full-res images, and more robust).
 - **Batch: images favor *small* batches — the opposite of the "fixed-size → batch big" hunch.**
   clip-ViT-B-32 on L4: bs=32 = **395 img/s** (fastest), then flat/slower above (343 / 330 / 333 /
   331 / 329 at bs 64 / 128 / 256 / 512 / 1024). Peak GPU mem stays tiny (0.7–4 GB even at bs=1024),
   so it's not a memory ceiling — it's per-batch pipeline overhead. So "don't crank the batch" holds
   for images too, at an even smaller optimum than text. `--batch-size auto` probes from 32 and lands
   on it — no image-specific tuning needed.
-- Source image resolution barely matters (models resize to a fixed input); decode is negligible
-  vs model compute.
+- **GPU memory = f(batch × model) only** — models resize to a fixed 224px, so source resolution
+  never touches GPU memory (verified: identical peak across a 32px and a full-res dataset). BUT
+  **full-res images run ~1.8× slower** than tiny ones (395 → 215 img/s for B-32) — decode/resize is a
+  real CPU tax, negligible *only* for pre-sized/small images.
 
 ## Storage / dimensions
 
