@@ -50,15 +50,32 @@ import sys
 from typing import Any, Dict, List, Union
 from datetime import datetime
 
+# Preflight: torch/vllm are deliberately NOT PEP 723 deps (see docstring) — they come from
+# the pinned vllm/vllm-openai:v0.10.2 image. On the bare uv image the imports below would
+# die with a raw ModuleNotFoundError; fail fast naming the exact flags instead.
+import importlib.util
+
+if importlib.util.find_spec("vllm") is None or importlib.util.find_spec("torch") is None:
+    sys.stderr.write(
+        "ERROR: vllm/torch not importable — this recipe cannot run on the bare uv image.\n"
+        "Nanonets-OCR2-3B needs vLLM 0.10.2 (>=0.11 regresses Qwen2.5-VL decoding to '!').\n"
+        "Re-run with the pinned image + interpreter flags:\n"
+        "    hf jobs uv run --flavor a10g-small -s HF_TOKEN \\\n"
+        "        --image vllm/vllm-openai:v0.10.2 --python /usr/bin/python3 \\\n"
+        "        -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \\\n"
+        "        nanonets-ocr2.py INPUT_DATASET OUTPUT_DATASET ...\n"
+    )
+    sys.exit(1)
+
 import torch
 from datasets import load_dataset
 from huggingface_hub import DatasetCard, login
 from PIL import Image
 from toolz import partition_all
 from tqdm.auto import tqdm
-# Disable vLLM's FlashInfer sampler: it JIT-compiles a CUDA kernel needing nvcc, which the
-# default uv-script image lacks (engine init then crashes). Greedy OCR doesn't use it; this
-# lets the plain default-image command work. On the vllm/vllm-openai image it's a harmless no-op.
+# Disable vLLM's FlashInfer sampler (JIT-compiles a CUDA kernel; greedy OCR doesn't use it).
+# Harmless no-op on the pinned vllm/vllm-openai image; kept in case the pin is ever relaxed
+# back to an environment without nvcc.
 os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
 from vllm import LLM, SamplingParams
 
