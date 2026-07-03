@@ -24,7 +24,11 @@ Best for share-and-search over a corpus; for high-QPS serving, pull the dataset 
     hf jobs uv run --flavor l4x1 -s HF_TOKEN embed-to-lance.py \\
         stanfordnlp/imdb your-name/imdb-vecdb --column text --model BAAI/bge-base-en-v1.5 --private
 """
-import argparse, logging, os, shutil, time
+import argparse
+import logging
+import os
+import shutil
+import time
 import numpy as np
 import pyarrow as pa
 
@@ -37,6 +41,7 @@ def main():
     ap.add_argument("input_dataset")
     ap.add_argument("output_repo")
     ap.add_argument("--column", default="text")
+    ap.add_argument("--config", default=None, help="dataset config name (e.g. wikipedia needs one)")
     ap.add_argument("--split", default="train")
     ap.add_argument("--model", default="BAAI/bge-base-en-v1.5")
     ap.add_argument("--max-samples", type=int, default=None)
@@ -54,11 +59,15 @@ def main():
     if os.environ.get("HF_TOKEN"):
         login(token=os.environ["HF_TOKEN"])
 
-    ds = load_dataset(args.input_dataset, split=args.split)
+    t_all = time.perf_counter()
+    ds = load_dataset(args.input_dataset, args.config, split=args.split) if args.config \
+        else load_dataset(args.input_dataset, split=args.split)
     if args.max_samples:
         ds = ds.select(range(min(args.max_samples, len(ds))))
     texts = [t if isinstance(t, str) and t.strip() else " " for t in ds[args.column]]
     n = len(texts)
+
+    t_load = time.perf_counter()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = SentenceTransformer(args.model, device=device)
@@ -92,8 +101,16 @@ def main():
     api.create_repo(args.output_repo, repo_type="dataset", private=args.private, exist_ok=True)
     api.upload_folder(folder_path=local, path_in_repo="vecdb.lance",
                       repo_id=args.output_repo, repo_type="dataset")
-    log.info(f"✅ vector DB at hf://datasets/{args.output_repo}/vecdb.lance "
-             f"(search it with lance.dataset(...).to_table(nearest=...))")
+    total_s = time.perf_counter() - t_all
+    import json as _json
+    log.info("ROUNDTRIP " + _json.dumps({
+        "input": args.input_dataset, "n": n, "dim": dim, "model": args.model,
+        "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
+        "batch_size": args.batch_size, "load_s": round(t_load - t_all, 1),
+        "total_roundtrip_s": round(total_s, 1), "rows_per_s_end_to_end": round(n / total_s, 1),
+        "hf_path": f"hf://datasets/{args.output_repo}/vecdb.lance"}))
+    log.info(f"✅ {n} rows → searchable vector DB in {total_s/60:.1f} min "
+             f"(load→embed→index→push). hf://datasets/{args.output_repo}/vecdb.lance")
 
 
 if __name__ == "__main__":

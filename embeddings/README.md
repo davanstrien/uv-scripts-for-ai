@@ -51,6 +51,44 @@ Any [sentence-transformers](https://huggingface.co/models?library=sentence-trans
 
 Images: `clip-ViT-B-32` (fast) or `clip-ViT-L-14` (higher quality).
 
+## Prompts (retrieval correctness — read this if you're building search)
+
+Many retrieval models need a **different prefix for documents vs queries**, and getting it
+wrong silently degrades results. Worse, you can't trust `model.prompts`: current
+sentence-transformers injects a placeholder `{"query": "", "document": ""}` even for models
+that register **nothing**, so e5 / nomic / bge look "prompt-less" via that attribute while
+their real prefixes live only in the model card.
+
+`generate-embeddings.py` handles this. It embeds a **document corpus** by default and picks the
+document convention in this order: (1) the model's **registered** prompt if it ships a real one
+(e.g. Qwen3-Embedding), else (2) a small **built-in family table**, else (3) no prefix. The
+chosen prefix is logged and written into the output dataset card.
+
+| Family | Query prefix | Document prefix |
+|---|---|---|
+| e5 (`intfloat/e5-*`, `multilingual-e5-*`, non-instruct) | `query: ` | `passage: ` |
+| nomic (`nomic-embed-text-*`) | `search_query: ` | `search_document: ` |
+| bge English (`bge-*-en-*`) | `Represent this sentence for searching relevant passages: ` | (none) |
+| bge-m3 | (none) | (none) |
+| Qwen3-Embedding | registered by the model | (none) |
+| anything else | — | — (pass `--prompt` if it needs one) |
+
+Override the auto-pick:
+
+- `--query-mode` — embed inputs as **queries**, not documents (flips the convention)
+- `--prompt 'passage: '` — force a raw prefix (highest precedence; `--prompt ''` forces none)
+- `--prompt-name query` — use a prompt the model registered, by name
+- `--no-auto-prompt` — turn off the family table (still honours registered prompts)
+
+Instruct-style models (`e5-*-instruct`, `gte-Qwen…`) are deliberately left to their registered
+prompt or your explicit `--prompt`, since the instruction is task-specific.
+
+## Batch size (auto by default)
+
+`--batch-size auto` (the default) times a few batch sizes on a warmup sample and keeps the
+fastest that fits — bigger isn't always faster, because variable-length text wastes compute on
+padding. Pass `--batch-size 128` to pin it.
+
 ## Which GPU? (measured, 20k rows, seq-cap 512)
 
 Throughput (rows/s) and cost per 1M rows:
@@ -63,7 +101,10 @@ Throughput (rows/s) and cost per 1M rows:
 
 **Default to `l4x1`** — cheapest per 1M rows for encoder models. For **decoder** embedders
 (Qwen3-Embedding) the A100 is both faster *and* cheaper per 1M (they use the extra compute),
-and the vLLM variant roughly doubles throughput again.
+and the vLLM variant roughly doubles throughput again (Qwen3-Embedding-0.6B: ~121 rows/s on an
+L4 via `generate-embeddings-vllm.py`, ~2× the sentence-transformers path).
+
+Images embed much faster than text: `clip-ViT-B-32` runs ~337 img/s on an L4 (~455 on an A10G).
 
 ## The vector-DB path (`embed-to-lance.py`)
 
@@ -76,5 +117,9 @@ import lance
 ds = lance.dataset("hf://datasets/your-name/my-vecdb/vecdb.lance")   # opens in ~1s, no download
 hits = ds.to_table(nearest={"column": "vector", "q": query_vec, "k": 5})
 ```
+
+End-to-end this is fast and cheap: **all 241,787 Simple-English-Wikipedia articles → a
+searchable Lance vector DB on the Hub in ~4.5 min for ~$0.07 on a single L4** (load → embed →
+index → push, with `all-MiniLM-L6-v2`; pass `--model` to trade speed for quality).
 
 Best for share-and-search over a corpus; for high-QPS serving, pull the dataset local first.

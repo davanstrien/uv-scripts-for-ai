@@ -6,6 +6,7 @@
 #     "torch",
 #     "numpy",
 #     "pillow",
+#     "einops",
 #     "huggingface-hub",
 # ]
 # ///
@@ -18,16 +19,34 @@ or any GPU flavor. For maximum throughput on large *decoder* embedding models (e
 Qwen3-Embedding), see the vLLM variant; to get a searchable vector index as a Hub dataset,
 see the Lance variant.
 
+PROMPTS (retrieval correctness — read this):
+    Many embedding models need a DIFFERENT prefix/instruction for documents vs queries, and
+    getting it wrong silently degrades retrieval. This script embeds a *document corpus* by
+    default and picks the right document convention for you:
+      1. the model's REGISTERED prompt if it ships one (e.g. Qwen3-Embedding), else
+      2. a small built-in table of well-known families (e5, nomic, bge), else
+      3. no prefix.
+    Heads-up: current sentence-transformers injects a placeholder prompts dict
+    {"query": "", "document": ""} even for models that register NOTHING — so e5 ("passage: "),
+    nomic ("search_document: ") etc. look prompt-less via `.prompts`; their real prefixes live
+    only in the model card. The built-in table handles that. Override with --prompt '<prefix>'
+    or --prompt-name <registered-name>; embed a query set with --query-mode; force no prefix
+    with --prompt ''. The chosen prompt is logged and recorded in the dataset card.
+
 Benchmarks (20k rows, seq-cap 512): all-MiniLM-L6-v2 ~900 rows/s on an L4 (~$0.24/1M rows);
 bge-base-en-v1.5 ~120 rows/s. L4 is the cheapest flavor for these encoder models.
 
 Examples:
-    # Text (default). Pick a model off the MTEB leaderboard.
+    # Text (default). Document convention auto-picked.
     hf jobs uv run --flavor l4x1 -s HF_TOKEN generate-embeddings.py \\
         stanfordnlp/imdb  your-name/imdb-embeddings \\
         --column text --model sentence-transformers/all-MiniLM-L6-v2
 
-    # Images (CLIP)
+    # e5: docs auto-get "passage: ". (--prompt 'passage: ' would be the explicit form.)
+    hf jobs uv run --flavor l4x1 -s HF_TOKEN generate-embeddings.py \\
+        stanfordnlp/imdb  your-name/imdb-e5 --model intfloat/multilingual-e5-large
+
+    # Images (CLIP) — prompts don't apply.
     hf jobs uv run --flavor l4x1 -s HF_TOKEN generate-embeddings.py \\
         your-name/photos  your-name/photos-embeddings \\
         --modality image --column image --model clip-ViT-B-32
@@ -46,6 +65,110 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("generate-embeddings")
 
 
+def find_batch_size(model, sample, normalize, candidates=(32, 64, 128, 256)):
+    """Probe for the fastest batch that fits (used by --batch-size auto). Throughput is NOT
+    monotonic in batch size: with variable-length inputs, larger batches waste compute on padding,
+    so we time a few on a warmup sample and keep the fastest that doesn't OOM. Works for text and
+    images (sentence-transformers .encode handles both)."""
+    import time
+    import torch
+    warm = sample[: min(1024, len(sample))]
+    try:  # one untimed warmup so cudnn autotune doesn't penalise the first probe
+        model.encode(warm[:32], batch_size=32, show_progress_bar=False,
+                     convert_to_numpy=True, normalize_embeddings=normalize)
+    except Exception:
+        pass
+    best_bs, best_rps = candidates[0], 0.0
+    for bs in candidates:
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            t = time.perf_counter()
+            model.encode(warm, batch_size=bs, show_progress_bar=False,
+                         convert_to_numpy=True, normalize_embeddings=normalize)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            rps = len(warm) / (time.perf_counter() - t)
+            logger.info(f"  auto-batch probe bs={bs}: {rps:.0f} rows/s")
+            if rps > best_rps:
+                best_rps, best_bs = rps, bs
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                logger.info(f"  auto-batch bs={bs} OOM → stopping probe")
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                break
+            raise
+    logger.info(f"auto-batch chose bs={best_bs} ({best_rps:.0f} rows/s on warmup)")
+    return best_bs
+
+
+def known_convention(model_id):
+    """Best-effort (query_prefix, doc_prefix) for common families whose convention is
+    documented in the model card but NOT registered in config_sentence_transformers.json.
+    Returns None if unknown. Overridable with --prompt / --no-auto-prompt.
+
+    Verified 2026-07-03 on HF Jobs: of e5 / nomic / bge-en / bge-m3 / Qwen3-Embedding, only
+    Qwen3-Embedding registers real ST prompts; the rest ship none and rely on manual prefixes.
+    """
+    m = model_id.lower()
+    # Instruction-style embedders (e5-*-instruct, gte-Qwen, ...): prefer the model's REGISTERED
+    # prompt or an explicit --prompt; don't guess a literal prefix.
+    if "instruct" in m:
+        return None
+    if "nomic-embed-text" in m:
+        return ("search_query: ", "search_document: ")
+    if "bge-m3" in m:  # bge-m3 uses no prompts
+        return ("", "")
+    if "e5" in m:  # e5-base/large/small, multilingual-e5-* (non-instruct)
+        return ("query: ", "passage: ")
+    if "bge" in m and "-en" in m:  # English bge retrieval: query instruction, docs raw
+        return ("Represent this sentence for searching relevant passages: ", "")
+    return None
+
+
+def resolve_prompt(model, model_id, is_query, args):
+    """Decide the prefix to prepend for this corpus, log the decision, warn only on real risk."""
+    registered = dict(getattr(model, "prompts", {}) or {})
+    # Current sentence-transformers injects a placeholder {"query":"","document":""} for models
+    # with no config prompts; only non-empty values are real conventions.
+    real = {k: v for k, v in registered.items() if v}
+    logger.info(f"Registered prompts: {registered} · real (non-empty): {real or 'none'} · "
+                f"default_prompt_name={getattr(model, 'default_prompt_name', None)}")
+    side = "query" if is_query else "document"
+
+    if args.prompt is not None:  # includes --prompt '' to force no prefix
+        logger.info(f"Prompt: raw --prompt → {args.prompt!r}")
+        return args.prompt
+    if args.prompt_name:
+        if args.prompt_name not in registered:
+            logger.error(f"--prompt-name {args.prompt_name!r} not registered ({list(registered)}); "
+                         f"use --prompt '<raw prefix>' instead.")
+            sys.exit(1)
+        logger.info(f"Prompt: registered prompt_name={args.prompt_name!r} → {registered[args.prompt_name]!r}")
+        return registered[args.prompt_name]
+    if registered.get(side):  # model ships a real prompt for this side (e.g. Qwen3 query)
+        logger.info(f"Prompt: model-registered {side!r} → {registered[side]!r}")
+        return registered[side]
+
+    kc = known_convention(model_id)
+    if kc is not None:
+        chosen = kc[0] if is_query else kc[1]
+        if args.no_auto_prompt:
+            if chosen:
+                logger.warning(f"--no-auto-prompt set: NOT applying the known {side} prefix {chosen!r} for "
+                               f"{model_id}. Retrieval may degrade unless you pass --prompt.")
+            return ""
+        logger.info(f"Prompt: known-family {side} prefix → {chosen!r} (override with --prompt)"
+                    if chosen else f"Prompt: known-family → no {side} prefix needed")
+        return chosen
+
+    logger.info(f"Prompt: none (no registered prompt or known convention for {model_id}). "
+                f"If it's a retrieval model needing a query/document prefix, pass --prompt.")
+    return ""
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("input_dataset", help="Input dataset ID on the Hugging Face Hub")
@@ -55,9 +178,20 @@ def main():
     p.add_argument("--modality", choices=["text", "image"], default="text")
     p.add_argument("--column", default="text", help="Input column (text string, or image)")
     p.add_argument("--output-column", default="embeddings")
+    p.add_argument("--config", default=None, help="Dataset config name (e.g. wikipedia needs one)")
     p.add_argument("--split", default="train")
     p.add_argument("--max-samples", type=int, default=None, help="Limit rows (for testing)")
-    p.add_argument("--batch-size", type=int, default=64)
+    p.add_argument("--batch-size", default="auto",
+                   help="'auto' probes for the fastest batch that fits, or pass an int")
+    p.add_argument("--prompt", default=None,
+                   help="Raw prefix to prepend to every text (e.g. 'passage: '). Highest precedence. "
+                        "Use --prompt '' to force NO prefix.")
+    p.add_argument("--prompt-name", default=None,
+                   help="Name of a prompt REGISTERED by the model (e.g. 'query'); errors if not registered.")
+    p.add_argument("--query-mode", action="store_true",
+                   help="Embed inputs as QUERIES, not documents (flips the auto-picked convention).")
+    p.add_argument("--no-auto-prompt", action="store_true",
+                   help="Disable the built-in known-family prefix table (still honours registered prompts).")
     p.add_argument("--max-seq-len", type=int, default=512,
                    help="Truncate text to this many tokens (predictable cost; RAG-typical)")
     p.add_argument("--normalize", action="store_true", default=True)
@@ -77,7 +211,8 @@ def main():
         logger.warning("No CUDA — running on CPU (much slower). Prefer a GPU flavor, e.g. --flavor l4x1.")
 
     logger.info(f"Loading {args.input_dataset} [{args.split}]")
-    ds = load_dataset(args.input_dataset, split=args.split)
+    ds = (load_dataset(args.input_dataset, args.config, split=args.split) if args.config
+          else load_dataset(args.input_dataset, split=args.split))
     if args.column not in ds.column_names:
         logger.error(f"Column {args.column!r} not found. Available: {ds.column_names}")
         sys.exit(1)
@@ -89,31 +224,45 @@ def main():
     logger.info(f"{len(ds)} rows; modality={args.modality}")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = SentenceTransformer(args.model, device=device)
+    model = SentenceTransformer(args.model, device=device, trust_remote_code=True)
     if args.modality == "text" and getattr(model, "max_seq_length", None):
         model.max_seq_length = min(model.max_seq_length, args.max_seq_len)
     dim = model.get_sentence_embedding_dimension()
     logger.info(f"Model {args.model} on {device}; dim={dim}")
 
+    # Prompt handling — many retrieval models need a query vs document/passage prefix (text only).
+    prompt_str = ""
     if args.modality == "text":
+        prompt_str = resolve_prompt(model, args.model, is_query=args.query_mode, args=args)
         items = [t if isinstance(t, str) and t.strip() else " " for t in ds[args.column]]
     else:
+        if args.prompt or args.prompt_name:
+            logger.warning("--prompt/--prompt-name ignored for image modality.")
         items = [im.convert("RGB") if hasattr(im, "convert") else im for im in ds[args.column]]
 
+    if str(args.batch_size).lower() == "auto":
+        logger.info("Finding batch size (--batch-size auto)...")
+        batch_size = find_batch_size(model, items, args.normalize)
+    else:
+        batch_size = int(args.batch_size)
+
     t0 = time.perf_counter()
-    emb = model.encode(items, batch_size=args.batch_size, show_progress_bar=True,
-                       convert_to_numpy=True, normalize_embeddings=args.normalize)
+    emb = model.encode(items, batch_size=batch_size, show_progress_bar=True,
+                       prompt=(prompt_str or None), convert_to_numpy=True,
+                       normalize_embeddings=args.normalize)
     secs = time.perf_counter() - t0
     logger.info(f"Embedded {len(items)} in {secs:.1f}s ({len(items)/secs:.0f} rows/s), dim={dim}")
 
     ds = ds.add_column(args.output_column, [e.tolist() for e in emb])
 
+    prompt_line = f"`{prompt_str}`" if prompt_str else "(none)"
     card = DatasetCard(
         f"# {args.output_dataset}\n\n"
         f"Embeddings of [`{args.input_dataset}`](https://huggingface.co/datasets/{args.input_dataset}) "
         f"column `{args.column}`.\n\n"
         f"- Model: [`{args.model}`](https://huggingface.co/{args.model}) (dim {dim})\n"
-        f"- Column: `{args.output_column}`  ·  normalized: {args.normalize}\n\n"
+        f"- Column: `{args.output_column}`  ·  normalized: {args.normalize}\n"
+        f"- Prompt prepended ({'query' if args.query_mode else 'document'} side): {prompt_line}\n\n"
         f"Produced on Hugging Face Jobs with `uv-scripts/embeddings/generate-embeddings.py`.\n"
     )
     logger.info(f"Pushing to {args.output_dataset} (private={args.private})")

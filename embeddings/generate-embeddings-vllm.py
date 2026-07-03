@@ -20,7 +20,10 @@ Runs on the BARE uv image (vLLM ships the CUDA toolkit + flashinfer as wheels).
     hf jobs uv run --flavor l4x1 -s HF_TOKEN generate-embeddings-vllm.py \\
         stanfordnlp/imdb your-name/imdb-embeddings --column text --model Qwen/Qwen3-Embedding-0.6B --private
 """
-import argparse, logging, os, time
+import argparse
+import logging
+import os
+import time
 os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
 os.environ.setdefault("VLLM_USE_DEEP_GEMM", "0")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
