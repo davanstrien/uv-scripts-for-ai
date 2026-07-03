@@ -132,7 +132,8 @@ def smart_resize(h, w, factor=28, min_pixels=3136, max_pixels=11289600):
     return h_bar, w_bar
 # orig_x = bbox_x * (orig_w / w_bar);  orig_y = bbox_y * (orig_h / h_bar)
 ```
-(Same `smart_resize`/`max_pixels=11.29M` applies to `dots-ocr.py` v1's processor cap.)
+(Same `smart_resize`/`max_pixels=11.29M` applies to `dots-ocr.py` v1's processor cap — but the
+`content_format="string"` fix does **not**: v1 works with the auto-detected `openai` chat format.)
 
 ### `unlimited-ocr-vllm.py` — dedicated image, single-image batch
 Baidu `baidu/Unlimited-OCR` (3.3B, DeepSeek-OCR descendant); arch is in **no stable vLLM wheel**, so it
@@ -154,11 +155,16 @@ reproduces lift's own recipe: `mm_processor_kwargs={min_pixels:3136,max_pixels:8
 
 ### `deepseek-ocr-vllm.py` / `deepseek-ocr2-vllm.py`
 v1 uses the official offline pattern (`llm.generate()` + `NGramPerReqLogitsProcessor` for repetition).
-**Known vLLM-nightly bug:** some aspect ratios trip `images_crop dim[2] expected 1024, got 640` (gundam-mode
+**Known bug** (hit on vLLM *nightly*, 2026-02-12; unverified on the stable wheels v1 now resolves):
+some aspect ratios trip `images_crop dim[2] expected 1024, got 640` (gundam-mode
 default vs a validator expecting 1024²) — hit 2/10 on `ufo-ColPali`, aspect-ratio dependent, no upstream
 issue filed ([vllm#28160](https://github.com/vllm-project/vllm/issues/28160) is the related request). v2
 needs **nightly** vLLM (`DeepseekOCR2ForCausalLM` not in stable) + `addict`/`matplotlib` (its HF custom
 code), plus `limit_mm_per_prompt={"image":1}`.
+
+### `glm-ocr.py`
+Chatty on blank pages / can emit degenerate repeats — that's **model quality, not a crash**; don't
+re-debug it as a recipe bug. (The actual historical crash was the `pyarrow<18` cap — see Conventions.)
 
 ### `lighton-ocr2.py`
 The original breakage was **not** vLLM — it was a dead `HF_HUB_ENABLE_HF_TRANSFER=1` (the `hf_transfer`
@@ -231,6 +237,8 @@ LightOnOCR-2's commentary style).
 - **Leaderboard Space** — public ELO/pointwise view fed by the benchmark datasets. Idea only.
 
 **Watch:** `deepseek-ocr2` / `glm-ocr` stay on nightly vLLM until their arch lands in a stable release.
+The nightly index (`https://wheels.vllm.ai/nightly`) occasionally has transient build issues (e.g. only
+ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry before debugging the recipe.
 
 ---
 
