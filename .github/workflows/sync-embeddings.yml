@@ -1,0 +1,12 @@
+name: Sync embeddings → HF
+on:
+  push:
+    branches: [main]
+    paths: ['embeddings/**', '.github/workflows/sync-embeddings.yml']
+jobs:
+  sync:
+    uses: ./.github/workflows/_sync-folder.yml
+    with:
+      folder: embeddings
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
