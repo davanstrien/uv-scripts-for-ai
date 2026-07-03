@@ -40,11 +40,21 @@ Always try `--max-samples 100 --private` first.
 
 ## Which model?
 
-Any [sentence-transformers](https://huggingface.co/models?library=sentence-transformers) model; check the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard).
+**Find the *current* best — don't trust a fixed list** (embedding quality moves fast). Check the
+[MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard), or from the CLI:
+
+```bash
+hf models ls --filter sentence-transformers --sort trending_score --limit 20   # what's hot now
+hf models ls --filter sentence-transformers --sort downloads --limit 20        # proven workhorses
+```
+(Sort by `trending_score`/`downloads`, not `created_at` — the newest list is mostly test repos.)
+
+See **[HEURISTICS.md](./HEURISTICS.md)** for the full "which model / GPU / batch for your data" guide
+(measured). The table below is examples benchmarked 2026-07, not a permanent answer:
 
 | Model | Params | Dim | Note |
 |---|---|---|---|
-| `sentence-transformers/all-MiniLM-L6-v2` | 22M | 384 | Fastest; great default |
+| `sentence-transformers/all-MiniLM-L6-v2` | 22M | 384 | Fastest; safe default |
 | `BAAI/bge-base-en-v1.5` | 109M | 768 | Strong English quality/speed balance |
 | `BAAI/bge-m3` | 568M | 1024 | Multilingual + long context (slower) |
 | `Qwen/Qwen3-Embedding-0.6B` | 596M | 1024 | Top open MTEB; decoder → use the vLLM variant / A100 |
