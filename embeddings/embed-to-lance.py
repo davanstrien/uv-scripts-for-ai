@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "datasets",
-#     "sentence-transformers>=3.0.0",
+#     "sentence-transformers>=5.0.0",
 #     "torch",
 #     "numpy",
 #     "pyarrow",
@@ -102,16 +102,22 @@ def main():
         model.max_seq_length = min(model.max_seq_length, args.max_seq_len)
     dim = model.get_sentence_embedding_dimension()
 
-    # Document-side prompt: explicit --prompt wins (incl. '' for none), else the known-family table.
+    # Document-side prompt: explicit --prompt wins (incl. '' for none), else the known-family
+    # table; else None → encode_document() natively selects any REGISTERED document prompt
+    # (and routes Router models by task).
+    registered = {k: v for k, v in (getattr(model, "prompts", {}) or {}).items() if v}
     kc = known_convention(args.model)
-    doc_prompt = args.prompt if args.prompt is not None else (kc[1] if kc else "")
-    query_prompt = kc[0] if kc else ""
-    log.info(f"document prompt: {doc_prompt!r}" if doc_prompt else "document prompt: (none)")
+    doc_prompt = args.prompt if args.prompt is not None else (kc[1] if kc else None)
+    query_prompt = kc[0] if kc else registered.get("query", "")
+    log.info(f"document prompt: {doc_prompt!r}" if doc_prompt
+             else ("document prompt: native (registered)" if registered.get("document")
+                   else "document prompt: (none)"))
 
     t0 = time.perf_counter()
-    emb = model.encode(texts, batch_size=args.batch_size, show_progress_bar=True,
-                       prompt=(doc_prompt or None), convert_to_numpy=True,
-                       normalize_embeddings=True).astype(np.float32)
+    encode_kwargs = {"prompt": doc_prompt} if doc_prompt is not None else {}
+    emb = model.encode_document(texts, batch_size=args.batch_size, show_progress_bar=True,
+                                convert_to_numpy=True, normalize_embeddings=True,
+                                **encode_kwargs).astype(np.float32)
     log.info(f"embedded {n} rows in {time.perf_counter()-t0:.1f}s, dim={dim}")
 
     tbl = pa.table({
@@ -163,9 +169,10 @@ def main():
         "hf_path": f"hf://datasets/{args.output_repo}/vecdb.lance"}))
     log.info(f"✅ {n} rows → searchable vector DB in {total_s/60:.1f} min "
              f"(load→embed→index→push). hf://datasets/{args.output_repo}/vecdb.lance")
-    if query_prompt:
-        log.info(f"⚠️ At search time, embed queries with the QUERY prefix: "
-                 f"model.encode([{query_prompt!r} + your_query]) — mismatched prompts degrade retrieval.")
+    if query_prompt or registered.get("query"):
+        log.info("⚠️ At search time, embed queries with the QUERY convention — mismatched prompts "
+                 "degrade retrieval. Easiest: model.encode_query([your_query])"
+                 + (f", or explicitly: model.encode([{query_prompt!r} + your_query])" if query_prompt else "."))
 
 
 if __name__ == "__main__":

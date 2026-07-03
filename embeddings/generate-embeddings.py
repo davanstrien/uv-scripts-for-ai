@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "datasets",
-#     "sentence-transformers>=3.0.0",
+#     "sentence-transformers>=5.0.0",
 #     "torch",
 #     "numpy",
 #     "pillow",
@@ -22,8 +22,10 @@ see the Lance variant.
 PROMPTS (retrieval correctness — read this):
     Many embedding models need a DIFFERENT prefix/instruction for documents vs queries, and
     getting it wrong silently degrades retrieval. This script embeds a *document corpus* by
-    default and picks the right document convention for you:
-      1. the model's REGISTERED prompt if it ships one (e.g. Qwen3-Embedding), else
+    default, via sentence-transformers' native encode_document()/encode_query() (which also
+    route Router models by task), picking the right document convention for you:
+      1. the model's REGISTERED prompt if it ships one (e.g. Qwen3-Embedding) — selected
+         natively by encode_document/encode_query, else
       2. a small built-in table of well-known families (e5, nomic, bge), else
       3. no prefix.
     Heads-up: current sentence-transformers injects a placeholder prompts dict
@@ -132,7 +134,12 @@ def known_convention(model_id):
 
 
 def resolve_prompt(model, model_id, is_query, args):
-    """Decide the prefix to prepend for this corpus, log the decision, warn only on real risk."""
+    """Decide the EXPLICIT prefix to pass to encode_query()/encode_document(), or None to let the
+    native method choose. sentence-transformers' encode_query/encode_document already select the
+    model's REGISTERED query/document prompt and set the Router task — we lean on that, and only
+    supply a prefix ourselves for (a) explicit --prompt/--prompt-name, (b) the known-family table
+    covering models that register nothing (e5, nomic, bge-en — their prefixes live only in the
+    model card, so the native fallback would silently apply NO prefix)."""
     registered = dict(getattr(model, "prompts", {}) or {})
     # Current sentence-transformers injects a placeholder {"query":"","document":""} for models
     # with no config prompts; only non-empty values are real conventions.
@@ -151,9 +158,12 @@ def resolve_prompt(model, model_id, is_query, args):
             sys.exit(1)
         logger.info(f"Prompt: registered prompt_name={args.prompt_name!r} → {registered[args.prompt_name]!r}")
         return registered[args.prompt_name]
-    if registered.get(side):  # model ships a real prompt for this side (e.g. Qwen3 query)
-        logger.info(f"Prompt: model-registered {side!r} → {registered[side]!r}")
-        return registered[side]
+    native_keys = ("query",) if is_query else ("document", "passage", "corpus")
+    if any(real.get(k) for k in native_keys):
+        # Model ships a real prompt for this side (e.g. Qwen3 query) → encode_query/encode_document
+        # selects it natively (and routes Router models by task).
+        logger.info(f"Prompt: model-registered — selected natively by encode_{side}()")
+        return None
 
     kc = known_convention(model_id)
     if kc is not None:
@@ -167,9 +177,9 @@ def resolve_prompt(model, model_id, is_query, args):
                     if chosen else f"Prompt: known-family → no {side} prefix needed")
         return chosen
 
-    logger.info(f"Prompt: none (no registered prompt or known convention for {model_id}). "
+    logger.info(f"Prompt: none registered or known for {model_id} — encode_{side}() applies no prefix. "
                 f"If it's a retrieval model needing a query/document prefix, pass --prompt.")
-    return ""
+    return None
 
 
 def sniff_token_lengths(model, texts, max_seq_len, sample=512):
@@ -256,7 +266,7 @@ def main():
     logger.info(f"Model {args.model} on {device}; dim={dim}")
 
     # Prompt handling — many retrieval models need a query vs document/passage prefix (text only).
-    prompt_str = ""
+    prompt_str = None  # None = let encode_query/encode_document choose natively
     if args.modality == "text":
         prompt_str = resolve_prompt(model, args.model, is_query=args.query_mode, args=args)
         items = [t if isinstance(t, str) and t.strip() else " " for t in ds[args.column]]
@@ -284,16 +294,27 @@ def main():
     else:
         batch_size = int(args.batch_size)
 
+    # Text goes through encode_query/encode_document (native registered-prompt selection + Router
+    # task routing); our resolved prefix, when not None, overrides via prompt=. Images use encode().
+    if args.modality == "text":
+        encode_fn = model.encode_query if args.query_mode else model.encode_document
+        encode_kwargs = {"prompt": prompt_str} if prompt_str is not None else {}
+    else:
+        encode_fn = model.encode
+        encode_kwargs = {}
     t0 = time.perf_counter()
-    emb = model.encode(items, batch_size=batch_size, show_progress_bar=True,
-                       prompt=(prompt_str or None), convert_to_numpy=True,
-                       normalize_embeddings=args.normalize)
+    emb = encode_fn(items, batch_size=batch_size, show_progress_bar=True,
+                    convert_to_numpy=True, normalize_embeddings=args.normalize, **encode_kwargs)
     secs = time.perf_counter() - t0
     logger.info(f"Embedded {len(items)} in {secs:.1f}s ({len(items)/secs:.0f} rows/s), dim={dim}")
 
     ds = ds.add_column(args.output_column, [e.tolist() for e in emb])
 
-    prompt_line = f"`{prompt_str}`" if prompt_str else "(none)"
+    # For the card: record the effective prefix (explicit, else the model's registered one).
+    side_keys = ("query",) if args.query_mode else ("document", "passage", "corpus")
+    effective = prompt_str if prompt_str is not None else next(
+        (v for k in side_keys if (v := (getattr(model, "prompts", {}) or {}).get(k))), "")
+    prompt_line = f"`{effective}`" if effective else "(none)"
     card = DatasetCard(
         f"# {args.output_dataset}\n\n"
         f"Embeddings of [`{args.input_dataset}`](https://huggingface.co/datasets/{args.input_dataset}) "
