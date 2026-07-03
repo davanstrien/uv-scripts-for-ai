@@ -169,6 +169,28 @@ def resolve_prompt(model, model_id, is_query, args):
     return ""
 
 
+def sniff_token_lengths(model, texts, max_seq_len, sample=512):
+    """Tokenize a sample to report the token-length distribution + how much --max-seq-len truncates,
+    and return the median length (used to pick the auto-batch candidate range: short texts under-use
+    the GPU at small batch, long texts waste compute on padding). Text only; returns None on failure."""
+    try:
+        tok = model.tokenizer
+    except Exception:
+        return None
+    s = texts[: min(sample, len(texts))]
+    lens = sorted(len(tok.encode(t, add_special_tokens=True)) for t in s)
+    n = len(lens)
+    if not n:
+        return None
+    median, p90, mx = lens[n // 2], lens[min(n - 1, int(n * 0.9))], lens[-1]
+    pct_over = 100 * sum(1 for L in lens if L > max_seq_len) / n
+    note = (f" → {pct_over:.0f}% exceed --max-seq-len {max_seq_len} and are truncated "
+            f"(raise it to keep more, at higher cost/slower)" if pct_over >= 5
+            else f" (all within --max-seq-len {max_seq_len})")
+    logger.info(f"Token lengths (sample {n}): median {median}, p90 {p90}, max {mx}{note}")
+    return median
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("input_dataset", help="Input dataset ID on the Hugging Face Hub")
@@ -240,9 +262,19 @@ def main():
             logger.warning("--prompt/--prompt-name ignored for image modality.")
         items = [im.convert("RGB") if hasattr(im, "convert") else im for im in ds[args.column]]
 
+    median_tok = sniff_token_lengths(model, items, args.max_seq_len) if args.modality == "text" else None
+
     if str(args.batch_size).lower() == "auto":
-        logger.info("Finding batch size (--batch-size auto)...")
-        batch_size = find_batch_size(model, items, args.normalize)
+        # Let the sniffed length set the probe range: short texts under-use the GPU at small batch
+        # (probe bigger); long texts pad-waste at big batch (stay modest). The probe still verifies.
+        if median_tok is None or median_tok >= 256:
+            candidates = (32, 64, 128, 256)
+        elif median_tok >= 64:
+            candidates = (64, 128, 256, 512)
+        else:
+            candidates = (128, 256, 512, 1024)
+        logger.info(f"Finding batch size (--batch-size auto; candidates {candidates})...")
+        batch_size = find_batch_size(model, items, args.normalize, candidates=candidates)
     else:
         batch_size = int(args.batch_size)
 
