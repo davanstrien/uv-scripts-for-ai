@@ -36,7 +36,7 @@ voyage-4-nano, and LiquidAI's ColBERT that postdate parts of this guide.)
 | Multilingual / long-context | `BAAI/bge-m3` | `l4x1`/`a10g-large` | slower (dim 1024); use only if you need it |
 | Top open quality (decoder) | `Qwen/Qwen3-Embedding-0.6B` | `a100-large` + **vLLM variant** | A100 is 4× the L4 here AND cheaper/1M |
 | Max quality, cost no object | `Qwen/Qwen3-Embedding-8B` (4B benched) | `a100-large` + vLLM | ~$7/1M, dim 2560 |
-| Images, fast | `clip-ViT-B-32` | `l4x1` | 337 img/s, dim 512 |
+| Images, fast | `clip-ViT-B-32` | `l4x1` | ~395 img/s (bs=32), dim 512 |
 | Images, higher quality | `clip-ViT-L-14` or SigLIP-2-large | `l4x1`/`a10g-large` | slower, larger dim |
 
 **One-line scale proof:** 241,787 Wikipedia articles → a searchable Lance vector DB on the Hub
@@ -100,7 +100,7 @@ corpus; pass `--query-mode` for a query set, or `--prompt '<prefix>'` to overrid
 
 ## Images: heuristics
 
-- **Model choice:** `clip-ViT-B-32` (337 img/s L4, dim 512) is the fast default; `clip-ViT-L-14`
+- **Model choice:** `clip-ViT-B-32` (~395 img/s on L4 at bs=32, dim 512) is the fast default; `clip-ViT-L-14`
   (40 img/s, dim 768) or SigLIP-2-large (46 img/s, dim 1024) for quality. SigLIP-2 wins at the
   large tier but needs the transformers path (~4× the code); CLIP-via-sentence-transformers is the
   clean one-liner.
@@ -133,5 +133,5 @@ Text and images are what these recipes cover. **Audio** (CLAP / speech-encoder e
 Note it and route users there rather than forcing them through the image/text path.
 
 ## The evidence (measured on HF Jobs, 2026-07)
-Full numbers + job IDs in the benchmark writeup. Text: 20k rows, batch 64, seq-cap 512 unless
+Measured on HF Jobs (2026-07) with the scripts in this folder. Text: 20k rows, batch 64, seq-cap 512 unless
 noted. All datasets used were public; all test outputs were private.

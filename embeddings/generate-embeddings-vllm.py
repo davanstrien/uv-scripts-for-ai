@@ -53,18 +53,24 @@ def main():
     ap.add_argument("--output-column", default="embeddings")
     ap.add_argument("--split", default="train")
     ap.add_argument("--max-samples", type=int, default=None)
+    ap.add_argument("--config", default=None, help="dataset config name (e.g. wikipedia needs one)")
     ap.add_argument("--max-model-len", type=int, default=512)
     ap.add_argument("--gpu-mem-util", type=float, default=0.85)
     ap.add_argument("--private", action="store_true")
     args = ap.parse_args()
 
+    import torch
     from datasets import load_dataset
     from huggingface_hub import DatasetCard, login
     from vllm import LLM
+    if not torch.cuda.is_available():
+        raise SystemExit("No CUDA GPU available — vLLM needs one. Run with a GPU flavor, e.g. "
+                         "`hf jobs uv run --flavor l4x1 ...` (or use generate-embeddings.py on CPU).")
     if os.environ.get("HF_TOKEN"):
         login(token=os.environ["HF_TOKEN"])
 
-    ds = load_dataset(args.input_dataset, split=args.split)
+    ds = (load_dataset(args.input_dataset, args.config, split=args.split) if args.config
+          else load_dataset(args.input_dataset, split=args.split))
     if args.output_column in ds.column_names:
         raise SystemExit(f"Output column {args.output_column!r} already exists — pick another.")
     if args.max_samples:
@@ -76,9 +82,13 @@ def main():
     embed_fn = getattr(llm, "embed", None) or getattr(llm, "encode")
 
     # vLLM raises on inputs > max_model_len (no silent truncation) — pre-truncate at the tokenizer.
+    # Tokenize each text once (not twice) — this pass is CPU-bound on large datasets.
     tk = llm.get_tokenizer()
     cap = max(8, args.max_model_len - 16)
-    texts = [tk.decode(tk.encode(t)[:cap]) if len(tk.encode(t)) > cap else t for t in texts]
+    def _truncate(t):
+        ids = tk.encode(t)
+        return tk.decode(ids[:cap]) if len(ids) > cap else t
+    texts = [_truncate(t) for t in texts]
 
     t0 = time.perf_counter()
     outs = embed_fn(texts)
@@ -95,7 +105,24 @@ def main():
         f"# {args.output_dataset}\n\nEmbeddings of `{args.input_dataset}` column `{args.column}` "
         f"with [`{args.model}`](https://huggingface.co/{args.model}) (dim {dim}, vLLM pooling).\n\n"
         f"Produced on Hugging Face Jobs with `uv-scripts/embeddings/generate-embeddings-vllm.py`.\n")
-    ds.push_to_hub(args.output_dataset, private=args.private)
+    # Retry the push with an XET-disable fallback — a transient failure would lose the paid run.
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attempt > 1:
+                log.warning("Disabling XET (fallback to HTTP upload)")
+                os.environ["HF_HUB_DISABLE_XET"] = "1"
+            ds.push_to_hub(args.output_dataset, private=args.private)
+            break
+        except Exception as e:
+            log.error(f"Upload attempt {attempt}/{max_retries} failed: {e}")
+            if attempt < max_retries:
+                delay = 30 * (2 ** (attempt - 1))
+                log.info(f"Retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                log.error("All upload attempts failed. Results are lost.")
+                raise SystemExit(1)
     try:
         card.push_to_hub(args.output_dataset, repo_type="dataset")
     except Exception as e:

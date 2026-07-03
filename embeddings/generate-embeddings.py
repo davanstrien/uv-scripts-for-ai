@@ -58,6 +58,7 @@ Examples:
 import argparse
 import logging
 import os
+import re
 import sys
 import time
 
@@ -121,7 +122,9 @@ def known_convention(model_id):
         return ("search_query: ", "search_document: ")
     if "bge-m3" in m:  # bge-m3 uses no prompts
         return ("", "")
-    if "e5" in m:  # e5-base/large/small, multilingual-e5-* (non-instruct)
+    # e5 family (e5-base/large/small, multilingual-e5-*), boundaried so e.g. "table5" or a
+    # model with "e5" mid-word can't silently pick up "query:/passage:" prefixes.
+    if re.search(r"(^|[/_-])e5([_-]|$)", m):
         return ("query: ", "passage: ")
     if "bge" in m and "-en" in m:  # English bge retrieval: query instruction, docs raw
         return ("Represent this sentence for searching relevant passages: ", "")
@@ -300,8 +303,26 @@ def main():
         f"- Prompt prepended ({'query' if args.query_mode else 'document'} side): {prompt_line}\n\n"
         f"Produced on Hugging Face Jobs with `uv-scripts/embeddings/generate-embeddings.py`.\n"
     )
+    # Retry the push with an XET-disable fallback: a transient upload failure here would
+    # otherwise lose the whole (paid) embedding run.
     logger.info(f"Pushing to {args.output_dataset} (private={args.private})")
-    ds.push_to_hub(args.output_dataset, private=args.private)
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attempt > 1:
+                logger.warning("Disabling XET (fallback to HTTP upload)")
+                os.environ["HF_HUB_DISABLE_XET"] = "1"
+            ds.push_to_hub(args.output_dataset, private=args.private)
+            break
+        except Exception as e:
+            logger.error(f"Upload attempt {attempt}/{max_retries} failed: {e}")
+            if attempt < max_retries:
+                delay = 30 * (2 ** (attempt - 1))
+                logger.info(f"Retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                logger.error("All upload attempts failed. Results are lost.")
+                sys.exit(1)
     try:
         card.push_to_hub(args.output_dataset, repo_type="dataset")
     except Exception as e:

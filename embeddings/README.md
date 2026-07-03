@@ -114,7 +114,7 @@ Throughput (rows/s) and cost per 1M rows:
 and the vLLM variant roughly doubles throughput again (Qwen3-Embedding-0.6B: ~121 rows/s on an
 L4 via `generate-embeddings-vllm.py`, ~2× the sentence-transformers path).
 
-Images embed much faster than text: `clip-ViT-B-32` runs ~337 img/s on an L4 (~455 on an A10G).
+Images embed much faster than text: `clip-ViT-B-32` runs ~395 img/s on an L4 at the auto-picked batch (bs=32; ~455 on an A10G). Full-resolution photos land nearer ~215 img/s — decode/resize is a real CPU tax on fast models.
 
 ## The vector-DB path (`embed-to-lance.py`)
 
@@ -126,6 +126,12 @@ pushes it as a Hub dataset. You (or anyone you share it with) can then search it
 import lance
 ds = lance.dataset("hf://datasets/your-name/my-vecdb/vecdb.lance")   # opens in ~1s, no download
 hits = ds.to_table(nearest={"column": "vector", "q": query_vec, "k": 5})
+```
+
+> **Query prompts:** embed `query_vec` with the model's *query* prefix (e5 → `"query: "`,
+> nomic → `"search_query: "`; the run prints the right one). Documents and queries use
+> different prefixes on these models — mismatching them silently degrades retrieval.
+```python
 ```
 
 End-to-end this is fast and cheap: **all 241,787 Simple-English-Wikipedia articles → a

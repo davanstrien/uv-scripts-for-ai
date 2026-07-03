@@ -18,8 +18,10 @@ absent from its GitHub folder is permanently deleted.** Therefore:
   git-lfs installed `git add` would turn binaries into pointers that the workflow (no `lfs: true` checkout)
   uploads as text — **corrupting the Hub asset**. The action excludes `.gitattributes` anyway, so removing
   it is lossless.
-- **Never `hf download` (or otherwise add) the private `embeddings` repo into the tree** — it must never
-  appear in the public monorepo.
+- The formerly-private `embeddings` repo was **adopted as a public recipe family** (2026-07, PR #73):
+  `embeddings/` in the tree maps to `uv-scripts/embeddings` like any other folder. Its pre-adoption
+  content was one stale script, overwritten by the seed sync. (The old rule — never pull that private
+  repo's content into the tree — is moot now; nothing was ever imported from it.)
 - Edits to an existing repo's folder are **additive** — add files freely; do not remove anything that's on
   the Hub. (Retiring a Hub file is a separate, deliberate, confirmed action — never a seeding side effect.)
 - The superset gate runs **both locally** (`tools/verify-superset.sh <folder> uv-scripts/<repo>` — respect a
@@ -30,7 +32,7 @@ absent from its GitHub folder is permanently deleted.** Therefore:
 
 `ocr/ → uv-scripts/ocr`, `sam3/ → uv-scripts/sam3`, … `subdirectory == folder == repo name`, so the mapping
 can't be mis-typed. Domain grouping for readers lives in the root `README.md`, not in folder nesting. Don't
-mirror the org's *demo* Spaces; don't add a folder for the private `embeddings` repo. (One Space *is*
+mirror the org's *demo* Spaces. (One Space *is*
 mirrored — the org profile card: `org-card/` → `uv-scripts/README`, a static Space, via the reusable
 workflow's optional `repo_id` / `repo_type` inputs.)
 

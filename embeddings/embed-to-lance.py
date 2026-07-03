@@ -21,19 +21,43 @@ without downloading it:
 
 Best for share-and-search over a corpus; for high-QPS serving, pull the dataset local first.
 
+PROMPTS: documents are embedded with the model's known DOCUMENT convention (e5 → "passage: ",
+nomic → "search_document: "; bge-en/bge-m3 → none). At SEARCH time, embed your query with the
+matching QUERY prefix (printed at the end of the run) or retrieval quality silently drops.
+Override the document prefix with --prompt '<prefix>' (or --prompt '' for none).
+
     hf jobs uv run --flavor l4x1 -s HF_TOKEN embed-to-lance.py \\
         stanfordnlp/imdb your-name/imdb-vecdb --column text --model BAAI/bge-base-en-v1.5 --private
 """
 import argparse
 import logging
 import os
+import re
 import shutil
+import sys
 import time
 import numpy as np
 import pyarrow as pa
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("embed-to-lance")
+
+
+def known_convention(model_id):
+    """(query_prefix, doc_prefix) for common families (documented in model cards, not registered
+    in sentence-transformers config). Same table as generate-embeddings.py; None = unknown."""
+    m = model_id.lower()
+    if "instruct" in m:
+        return None
+    if "nomic-embed-text" in m:
+        return ("search_query: ", "search_document: ")
+    if "bge-m3" in m:
+        return ("", "")
+    if re.search(r"(^|[/_-])e5([_-]|$)", m):
+        return ("query: ", "passage: ")
+    if "bge" in m and "-en" in m:
+        return ("Represent this sentence for searching relevant passages: ", "")
+    return None
 
 
 def main():
@@ -47,6 +71,9 @@ def main():
     ap.add_argument("--max-samples", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--max-seq-len", type=int, default=512)
+    ap.add_argument("--prompt", default=None,
+                    help="Document prefix to prepend (default: auto from the known-family table; "
+                         "pass '' to force none)")
     ap.add_argument("--private", action="store_true")
     args = ap.parse_args()
 
@@ -70,14 +97,21 @@ def main():
     t_load = time.perf_counter()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = SentenceTransformer(args.model, device=device)
+    model = SentenceTransformer(args.model, device=device, trust_remote_code=True)
     if getattr(model, "max_seq_length", None):
         model.max_seq_length = min(model.max_seq_length, args.max_seq_len)
     dim = model.get_sentence_embedding_dimension()
 
+    # Document-side prompt: explicit --prompt wins (incl. '' for none), else the known-family table.
+    kc = known_convention(args.model)
+    doc_prompt = args.prompt if args.prompt is not None else (kc[1] if kc else "")
+    query_prompt = kc[0] if kc else ""
+    log.info(f"document prompt: {doc_prompt!r}" if doc_prompt else "document prompt: (none)")
+
     t0 = time.perf_counter()
     emb = model.encode(texts, batch_size=args.batch_size, show_progress_bar=True,
-                       convert_to_numpy=True, normalize_embeddings=True).astype(np.float32)
+                       prompt=(doc_prompt or None), convert_to_numpy=True,
+                       normalize_embeddings=True).astype(np.float32)
     log.info(f"embedded {n} rows in {time.perf_counter()-t0:.1f}s, dim={dim}")
 
     tbl = pa.table({
@@ -97,10 +131,28 @@ def main():
     except Exception as e:
         log.warning(f"index build skipped ({repr(e)[:120]}); flat search still works over hf://")
 
+    # Retry the upload with an XET-disable fallback — a transient failure here would lose the
+    # whole (paid) embedding run.
     api = HfApi()
     api.create_repo(args.output_repo, repo_type="dataset", private=args.private, exist_ok=True)
-    api.upload_folder(folder_path=local, path_in_repo="vecdb.lance",
-                      repo_id=args.output_repo, repo_type="dataset")
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attempt > 1:
+                log.warning("Disabling XET (fallback to HTTP upload)")
+                os.environ["HF_HUB_DISABLE_XET"] = "1"
+            api.upload_folder(folder_path=local, path_in_repo="vecdb.lance",
+                              repo_id=args.output_repo, repo_type="dataset")
+            break
+        except Exception as e:
+            log.error(f"Upload attempt {attempt}/{max_retries} failed: {e}")
+            if attempt < max_retries:
+                delay = 30 * (2 ** (attempt - 1))
+                log.info(f"Retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                log.error("All upload attempts failed. Results are lost.")
+                sys.exit(1)
     total_s = time.perf_counter() - t_all
     import json as _json
     log.info("ROUNDTRIP " + _json.dumps({
@@ -111,6 +163,9 @@ def main():
         "hf_path": f"hf://datasets/{args.output_repo}/vecdb.lance"}))
     log.info(f"✅ {n} rows → searchable vector DB in {total_s/60:.1f} min "
              f"(load→embed→index→push). hf://datasets/{args.output_repo}/vecdb.lance")
+    if query_prompt:
+        log.info(f"⚠️ At search time, embed queries with the QUERY prefix: "
+                 f"model.encode([{query_prompt!r} + your_query]) — mismatched prompts degrade retrieval.")
 
 
 if __name__ == "__main__":
