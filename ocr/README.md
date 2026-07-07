@@ -49,7 +49,8 @@ _Sorted by model size:_
 
 | Script | Model | Size | Backend | Notes |
 |--------|-------|------|---------|-------|
-| `pp-ocrv6.py` | [PP-OCRv6](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) | 1.5–34.5M | PaddleOCR (paddle) | **Smallest by far** — classical det+rec pipeline, not a VLM. Three tiers (`--model-tier tiny\|small\|medium`), plain-text output (not markdown). 50 langs. Runs on `t4-small`. Apache 2.0 |
+| `tesseract-ocr.py` | [Tesseract 5](https://github.com/tesseract-ocr/tesseract) | n/a (classical) | pytesseract (CPU) | **The legacy baseline** — no GPU at all, runs on `cpu-upgrade`. Plain-text output, `--lang`/`--psm`/`--oem` exposed, 100+ language packs via apt. Apache 2.0 |
+| `pp-ocrv6.py` | [PP-OCRv6](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) | 1.5–34.5M | PaddleOCR (paddle) | **Smallest neural** — classical det+rec pipeline, not a VLM. Three tiers (`--model-tier tiny\|small\|medium`), plain-text output (not markdown). 50 langs. Runs on `t4-small`. Apache 2.0 |
 | `falcon-ocr.py` | [Falcon-OCR](https://huggingface.co/tiiuae/Falcon-OCR) | 0.3B | falcon-perception | Smallest VLM in collection. #1 on multi-column docs and tables (olmOCR), Apache 2.0 |
 | `smoldocling-ocr.py` | [SmolDocling](https://huggingface.co/ds4sd/SmolDocling-256M-preview) | 256M | Transformers | DocTags structured output |
 | `surya-ocr.py` | [Surya OCR 2](https://huggingface.co/datalab-to/surya-ocr-2) | 0.65B | vLLM | **Structured** OCR + `--task layout\|table`: per-block HTML with bboxes & reading order in an extra `surya_blocks` column. 91 langs, top-under-3B on olmOCR-Bench. Modified OpenRAIL-M license. Needs the **pinned** `vllm/vllm-openai:v0.20.1` image |
