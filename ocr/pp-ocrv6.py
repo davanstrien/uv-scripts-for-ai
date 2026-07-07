@@ -701,6 +701,9 @@ def build_inference_entry(tier: str, det_model: str, rec_model: str, args_dict: 
         "rec_accuracy_pct": TIER_REC.get(tier),
         "languages": TIER_LANGUAGES.get(tier, ""),
         "engine": "paddle_static",
+        # column_name is the key ocr-bench's column discovery reads; keep
+        # output_column too for backward compat with existing outputs.
+        "column_name": args_dict.get("output_column", "markdown"),
         "output_column": args_dict.get("output_column", "markdown"),
         "blocks_column": "pp_ocr_blocks",
         "timestamp": datetime.now(timezone.utc).isoformat(),
