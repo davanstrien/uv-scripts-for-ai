@@ -27,7 +27,17 @@ planned **self-review skill** (see [Deferred](#deferred--tracked)) just enforces
   `--image … --python … -e PYTHONPATH=…`; add a preflight that `sys.exit(1)`s naming the exact flags
   (surya-class — see gotchas). Pinned-image scripts: `surya-ocr` (`:v0.20.1`, **site-packages**),
   `nanonets-ocr2` (`:v0.10.2`), `unlimited-ocr` (`:unlimited-ocr`), `deepseek-ocr2`/`glm-ocr` (nightly).
-- **Pins are temporary.** An image/version pin (`:v0.10.2`, `:v0.20.1`, a nightly, `surya-ocr==0.20.0`,
+- **New-recipe checklist.** Start from the canonical donor — **`glm-ocr.py`** for vLLM recipes
+  (`tesseract-ocr.py` for non-vLLM), not an older script (pre-contract ancestors mislead). Ship with:
+  the recipe itself, a row in *both* README tables (models-at-a-glance + modes-and-flags), a
+  Script-status row here (⏳ until Jobs-smoke-tested), a gotcha section *only if* it has load-bearing
+  quirks, and a change-log line. Smoke-test on Jobs (`--max-samples 5`, l4x1) before flipping ⏳ → ✅.
+- **`inference_info` schema (frozen).** A JSON *string* holding a **list of entries** (append, never
+  replace; never a bare dict). Required keys per entry: `model_id`, `model_name`, `column_name`
+  (never `model` or `output_column` — both drifted into scripts and broke ocr-bench interop).
+  Extra keys are free. One error sentinel only: **`[OCR FAILED]`** in the output cell.
+- **Pins are temporary** (and "pin them" above means *at least a floor*; exact `==` pins only as
+  documented workarounds). An image/version pin (`:v0.10.2`, `:v0.20.1`, a nightly, `surya-ocr==0.20.0`,
   …) is a workaround for a *current* ecosystem gap — a decode regression, an arch not yet in a stable
   wheel, a resolver backtrack. In the recipe, record **why** the pin exists and **what would loosen it**
   (e.g. "move back to the default image when a newer vLLM ships a Qwen2.5-VL decode fix"; "drop the
@@ -57,7 +67,8 @@ planned **self-review skill** (see [Deferred](#deferred--tracked)) just enforces
 
 ## Script status
 
-Legend: ✅ production-ready · ⚠️ works only with a required pinned image · 🧪 experimental/on-hold.
+Legend: ✅ production-ready · ⚠️ works only with a required pinned image · 🧪 experimental/on-hold
+· ⏳ written to contract, not yet Jobs-smoke-tested. "Flavor" = recommended/validated flavor.
 "+image" = needs a `--image vllm/vllm-openai:<tag>` override (not the default uv image).
 
 | Script | | Backend | Flavor | Note |
