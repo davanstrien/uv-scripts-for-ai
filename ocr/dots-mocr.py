@@ -8,6 +8,9 @@
 #     "tqdm",
 #     "toolz",
 #     "torch",
+#     # dots.mocr's remote code (AutoProcessor.register with a string key)
+#     # breaks on transformers v5; vllm pulls transformers unpinned.
+#     "transformers<5",
 # ]
 #
 # ///
