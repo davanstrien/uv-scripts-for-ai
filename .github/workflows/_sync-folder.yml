@@ -46,7 +46,7 @@ jobs:
             exit 1
           fi
 
-      - uses: huggingface/hub-sync@v0.1.0
+      - uses: huggingface/hub-sync@v0.2.0
         with:
           github_repo_id: ${{ github.repository }}
           huggingface_repo_id: ${{ env.REPO_ID }}
