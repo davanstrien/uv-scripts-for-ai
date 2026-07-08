@@ -130,6 +130,15 @@ def create_dataset_card(
     """Create a dataset card documenting the OCR process."""
     model_name = model.split("/")[-1]
 
+    # Canonical provenance stamp (see AGENTS.md): Jobs claim gated on JOB_ID, set by HF Jobs in-container.
+    on_jobs = os.environ.get("JOB_ID") is not None
+    hw = os.environ.get("ACCELERATOR") or ""
+    origin = (
+        "Produced on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs)"
+        + (f" (`{hw}`)" if hw else "")
+    ) if on_jobs else "Generated"
+    jobs_tag = "\n- hf-jobs" if on_jobs else ""
+
     return f"""---
 viewer: false
 tags:
@@ -138,7 +147,7 @@ tags:
 - nanonets
 - markdown
 - uv-script
-- generated
+- generated{jobs_tag}
 ---
 
 # Document OCR using {model_name}
@@ -202,10 +211,10 @@ for info in inference_info:
 
 ## Reproduction
 
-This dataset was generated using the [uv-scripts/ocr](https://huggingface.co/datasets/uv-scripts/ocr) Nanonets OCR script:
+{origin} with the [`nanonets-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nanonets-ocr.py) recipe from [uv-scripts](https://huggingface.co/uv-scripts). Run it yourself:
 
 ```bash
-uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nanonets-ocr.py \\
+hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nanonets-ocr.py \\
     {source_dataset} \\
     <output-dataset> \\
     --image-column {image_column} \\
@@ -219,8 +228,6 @@ uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nanonets-ocr.py \
 
 - **Processing Speed**: ~{num_samples / (float(processing_time.split()[0]) * 60):.1f} images/second
 - **GPU Configuration**: vLLM with {gpu_memory_utilization:.0%} GPU memory utilization
-
-Generated with 🤖 [UV Scripts](https://huggingface.co/uv-scripts)
 """
 
 

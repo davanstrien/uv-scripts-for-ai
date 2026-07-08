@@ -315,14 +315,28 @@ def main():
     effective = prompt_str if prompt_str is not None else next(
         (v for k in side_keys if (v := (getattr(model, "prompts", {}) or {}).get(k))), "")
     prompt_line = f"`{effective}`" if effective else "(none)"
+    # Canonical provenance stamp (see AGENTS.md): Jobs claim gated on JOB_ID, set by HF Jobs in-container.
+    script_url = "https://huggingface.co/datasets/uv-scripts/embeddings/raw/main/generate-embeddings.py"
+    on_jobs = os.environ.get("JOB_ID") is not None
+    hw = os.environ.get("ACCELERATOR") or ""
+    origin = (
+        "Produced on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs)"
+        + (f" (`{hw}`)" if hw else "")
+    ) if on_jobs else "Generated"
+    jobs_tag = "\n- hf-jobs" if on_jobs else ""
     card = DatasetCard(
+        f"---\ntags:\n- embeddings\n- uv-script\n- generated{jobs_tag}\n---\n\n"
         f"# {args.output_dataset}\n\n"
         f"Embeddings of [`{args.input_dataset}`](https://huggingface.co/datasets/{args.input_dataset}) "
         f"column `{args.column}`.\n\n"
         f"- Model: [`{args.model}`](https://huggingface.co/{args.model}) (dim {dim})\n"
         f"- Column: `{args.output_column}`  ·  normalized: {args.normalize}\n"
         f"- Prompt prepended ({'query' if args.query_mode else 'document'} side): {prompt_line}\n\n"
-        f"Produced on Hugging Face Jobs with `uv-scripts/embeddings/generate-embeddings.py`.\n"
+        f"## Reproduction\n\n"
+        f"{origin} with the [`generate-embeddings.py`]({script_url}) recipe "
+        f"from [uv-scripts](https://huggingface.co/uv-scripts). Run it yourself:\n\n"
+        f"```bash\nhf jobs uv run {script_url} \\\n"
+        f"    {args.input_dataset} <output-dataset> --column {args.column} --model {args.model}\n```\n"
     )
     # Retry the push with an XET-disable fallback: a transient upload failure here would
     # otherwise lose the whole (paid) embedding run.
