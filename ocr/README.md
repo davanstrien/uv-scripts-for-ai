@@ -60,7 +60,8 @@ _Sorted by model size:_
 | `paddleocr-vl-1.6.py` | [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) | 0.9B | vLLM | **96.33% OmniDocBench v1.6** (SOTA), drop-in upgrade of 1.5 |
 | `lighton-ocr.py` | [LightOnOCR-1B](https://huggingface.co/lightonai/LightOnOCR-1B-1025) | 1B | vLLM | Fast, 3 vocab sizes |
 | `lighton-ocr2.py` | [LightOnOCR-2-1B](https://huggingface.co/lightonai/LightOnOCR-2-1B) | 1B | vLLM | 7× faster than v1, RLVR trained |
-| `hunyuan-ocr.py` | [HunyuanOCR](https://huggingface.co/tencent/HunyuanOCR) | 1B | vLLM | Lightweight VLM |
+| `hunyuan-ocr.py` | [HunyuanOCR 1.0](https://huggingface.co/tencent/HunyuanOCR/tree/f6af82ee007fe6091b29fb3bb287b491ead41c82) | 1B | vLLM | Lightweight VLM. Pinned to the last 1.0 revision (repo root became 1.5 in-place on 2026-07-06). [Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (excludes EU/UK/KR) |
+| `hunyuan-ocr-1.5.py` | [HunyuanOCR-1.5](https://huggingface.co/tencent/HunyuanOCR) | 1B | vLLM | 128K context, 4K images, 12 task types, ancient scripts. ~4-5× faster/page than dots.ocr & DeepSeek-OCR-2 (tech report). [Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (excludes EU/UK/KR) |
 | `dots-ocr.py` | [DoTS.ocr](https://huggingface.co/Tencent/DoTS.ocr) | 1.7B | vLLM | 100+ languages |
 | `firered-ocr.py` | [FireRed-OCR](https://huggingface.co/FireRedTeam/FireRed-OCR) | 2.1B | vLLM | Qwen3-VL fine-tune, Apache 2.0 |
 | `abot-ocr.py` | [ABot-OCR](https://huggingface.co/acvlab/ABot-OCR) | 2B | vLLM | Qwen3-VL based, doc→Markdown (text/LaTeX/HTML tables). Needs `vllm/vllm-openai` image. [paper](https://arxiv.org/abs/2605.27978) |

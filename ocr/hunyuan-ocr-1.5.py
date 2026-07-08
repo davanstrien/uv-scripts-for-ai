@@ -4,7 +4,7 @@
 #     "datasets>=4.0.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm>=0.15.1",
+#     "vllm>=0.18.1",
 #     "transformers<5.13",  # vLLM ≤0.24.0's HunyuanVL processor breaks on transformers 5.13
 #                           # (string-key AutoImageProcessor.register; fixed in vllm#47872).
 #                           # Drop this cap once that fix ships in a stable vLLM release.
@@ -15,33 +15,55 @@
 # ///
 
 """
-Convert document images to markdown using HunyuanOCR (v1.0) with vLLM.
+Convert document images to markdown using HunyuanOCR-1.5 with vLLM.
 
-HunyuanOCR is a lightweight 1B parameter VLM from Tencent designed for complex
-multilingual document parsing. This script uses vLLM for processing.
-
-⚠️ This recipe targets HunyuanOCR **1.0**. On 2026-07-06 Tencent pushed
-HunyuanOCR-1.5 into the *same* repo (new weights at root, 1.0 archived under
-`v1.0/`, no git tag), so loading `tencent/HunyuanOCR@main` now yields 1.5 —
-different context length, prompts, and transformers/vLLM requirements. We pin
-the last 1.0 commit by revision to keep this script's validated behavior.
-For 1.5, use the sibling `hunyuan-ocr-1.5.py`.
+HunyuanOCR-1.5 is a lightweight ~1B-parameter, end-to-end OCR-specialized VLM
+from Tencent. It keeps the validated 1.0 backbone but extends the max image
+resolution to 4K and the context window to 128K, and adds targeted long-tail
+capabilities (low-resource / ancient-script OCR, multi-image text QA). Per the
+technical report (arXiv:2607.04884) it is faster than dots.ocr / DeepSeek-OCR-2
+and top-tier on OmniDocBench v1.6. This script runs it offline via vLLM.
 
 Features:
-- 📝 Full document parsing to markdown
-- 📊 Table extraction (HTML format)
-- 📐 Formula recognition (LaTeX format)
-- 📍 Text spotting with coordinates
-- 🔍 Information extraction (key-value, fields, subtitles)
-- 🌐 Photo translation
-- 🎯 Compact model (1B parameters)
+- 📝 End-to-end document parsing to markdown (tables → HTML, formulas → LaTeX)
+- 🧩 Structured / layout-aware parsing
+- 📍 Text spotting with coordinates (JSON or Hunyuan format)
+- 📐 Formula (LaTeX) and 📊 table (HTML) recognition
+- 📈 Chart parsing (Mermaid / Markdown)
+- 🌐 Document + general-scene translation (→ zh / → en)
+- 🎯 Compact model (~1B parameters)
 
-Model: tencent/HunyuanOCR (pinned to the last 1.0 revision)
+Model: tencent/HunyuanOCR
+  On 2026-07-06 Tencent replaced the repo root in-place with HunyuanOCR-1.5
+  (1.0 archived under `v1.0/`, no git tag). So the repo *root* — the default
+  here — is now 1.5. The sibling recipe `hunyuan-ocr.py` pins the last 1.0
+  commit by revision to keep the 1.0 behavior; this script deliberately tracks
+  root (1.5).
+
+vLLM: 0.18.1 (release) is the first stable wheel with native
+  `HunYuanVLForConditionalGeneration` support for autoregressive decoding — no
+  nightly or patch needed for batch OCR. The floor stays at 0.18.1; a bare
+  `vllm` resolves to the latest stable (0.24.0 as of 2026-07), which also works
+  once transformers is capped <5.13 (see the deps block for why). The DFlash
+  speculative-decoding draft (a per-request *latency* win that needs a vLLM
+  nightly) is intentionally NOT implemented: it does not change offline batch
+  throughput or output distribution.
+
+trust_remote_code=True per the model card (the processor ships custom code).
 
 License: Tencent Hunyuan Community License (territory excludes EU/UK/South Korea)
 https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE
 
-Note: Due to vLLM V1 engine batching issues with HunyuanOCR, batch_size defaults to 1.
+Note: batch_size defaults to 16 (untested on this arch as of writing — 1.5 on
+vLLM ≥0.18.1 should batch fine, unlike the 1.0 V1 batching issue; will be
+smoke-tested). Lower it if you hit engine errors.
+
+Post-processing note: only the shared tail-repetition cleanup
+(`clean_repeated_substrings`, byte-for-byte from the official toolkit) is
+ported. The upstream doc_parse-only markdown normalization (10 OmniDocBench
+GT-alignment regex passes in `hunyuan_utils.process_one`) is intentionally NOT
+ported — it is benchmark-GT alignment, not general OCR, and would bloat this
+self-contained recipe. For bench-exact output, use Tencent's toolkit directly.
 """
 
 import argparse
@@ -61,6 +83,7 @@ from huggingface_hub import DatasetCard, login
 from PIL import Image
 from toolz import partition_all
 from tqdm.auto import tqdm
+
 # Disable vLLM's FlashInfer sampler: it JIT-compiles a CUDA kernel needing nvcc, which the
 # default uv-script image lacks (engine init then crashes). Greedy OCR doesn't use it; this
 # lets the plain default-image command work. On the vllm/vllm-openai image it's a harmless no-op.
@@ -70,91 +93,96 @@ from vllm import LLM, SamplingParams
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Last commit where the repo root held the 1.0 weights (2026-01-13). Not a temporary
-# workaround pin: upstream replaced root with 1.5 in-place (2026-07-06) and left no
-# 1.0 tag/branch, so this revision IS the 1.0 identity. Never loosen to "main" here —
-# 1.5 lives in hunyuan-ocr-1.5.py. Override with --revision only to reproduce old runs.
-DEFAULT_REVISION = "f6af82ee007fe6091b29fb3bb287b491ead41c82"
-
 
 # ────────────────────────────────────────────────────────────────
-# HunyuanOCR Prompt Templates (from official README)
-# Source: https://huggingface.co/tencent/HunyuanOCR
+# HunyuanOCR-1.5 official task prompts.
+# Reproduced VERBATIM from the shipped client's `hunyuan_tasks.py`:
+#   https://github.com/Tencent-Hunyuan/HunyuanOCR (inference/*/hunyuan_tasks.py)
+# The model card only prints the `doc_parse` prompt; the other 11 live only in
+# the client. Prompts are FIXED per task type — upstream deliberately does NOT
+# expose free-form prompt editing because hand-tweaked instructions were
+# observed to silently degrade quality (users pick a *task*, not a prompt).
+# All prompts are Chinese-language, including for English documents — this is
+# the officially recommended wording; the card provides no English variants.
 # ────────────────────────────────────────────────────────────────
 
-PROMPT_TEMPLATES = {
-    # Parsing prompts
-    "parse-document": {
-        "en": "Extract all information from the main body of the document image and represent it in markdown format, ignoring headers and footers. Tables should be expressed in HTML format, formulas in the document should be represented using LaTeX format, and the parsing should be organized according to the reading order.",
-        "cn": "提取文档图片中正文的所有信息用 markdown 格式表示，其中页眉、页脚部分忽略，表格用 html 格式表达，文档中公式用 latex 格式表示，按照阅读顺序组织进行解析。",
-    },
-    "parse-formula": {
-        "en": "Identify the formula in the image and represent it using LaTeX format.",
-        "cn": "识别图片中的公式，用 LaTeX 格式表示。",
-    },
-    "parse-table": {
-        "en": "Parse the table in the image into HTML.",
-        "cn": "把图中的表格解析为 HTML。",
-    },
-    "parse-chart": {
-        "en": "Parse the chart in the image; use Mermaid format for flowcharts and Markdown for other charts.",
-        "cn": "解析图中的图表，对于流程图使用 Mermaid 格式表示，其他图表使用 Markdown 格式表示。",
-    },
-    # Spotting prompt
-    "spot": {
-        "en": "Detect and recognize text in the image, and output the text coordinates in a formatted manner.",
-        "cn": "检测并识别图片中的文字，将文本坐标格式化输出。",
-    },
-    # Extraction prompts
-    "extract-subtitles": {
-        "en": "Extract the subtitles from the image.",
-        "cn": "提取图片中的字幕。",
-    },
-    # Translation prompt (requires target_language substitution)
-    "translate": {
-        "en": "First extract the text, then translate the text content into {target_language}. If it is a document, ignore the header and footer. Formulas should be represented in LaTeX format, and tables should be represented in HTML format.",
-        "cn": "先提取文字，再将文字内容翻译为{target_language}。若是文档，则其中页眉、页脚忽略。公式用latex格式表示，表格用html格式表示。",
-    },
+TASK_PROMPTS = {
+    # 端到端文档解析
+    "doc_parse": "提取文档图片中正文的所有信息用markdown格式表示，其中页眉、页脚部分忽略，"
+    "表格用html格式表达，文档中公式用latex格式表示，按照阅读顺序组织进行解析。",
+    # 结构化解析（古文、街景等非文档结构化场景）
+    "structured_parse": "提取图中的文字。",
+    # Spotting — JSON 格式
+    "spotting_json": "检测并识别图中所有的文字行，请按从上到下、从左到右的阅读顺序进行识别。 "
+    "输出格式为 JSON 数组，每个元素必须包含："
+    '"box": [xmin, ymin, xmax, ymax]（坐标需归一化到 [0, 1000] 范围内）；'
+    '"text": "识别出的文字内容"。 '
+    "注意：请直接输出 JSON 数组，不要包含任何多余的描述性文字。",
+    # Spotting — Hunyuan 模式
+    "spotting_hunyuan": "检测并识别图片中的文字，将文本坐标格式化输出。",
+    # 版式分析
+    "layout": "按照阅读顺序解析图中的版式信息。",
+    # 版式分析 + 解析
+    "layout_parse": "提取文档图片中所有内容用markdown格式表示，表格用html格式表达，"
+    "文档中公式用latex格式表示，请按照阅读顺序组织进行全文解析，并输出版式分析信息。",
+    # 图表解析
+    "chart_parse": "解析图中的图表，对于流程图使用Mermaid格式表示，其他图表使用Markdown格式表示。",
+    # 公式解析
+    "formula": "识别图片中的公式，用LaTeX格式表示。",
+    # 表格解析
+    "table": "把图中的表格解析为HTML。",
+    # 文档英译中
+    "doc_trans_en2zh": "先解析文档，再将文档内容翻译为中文，其中页眉、页脚忽略，"
+    "公式用latex格式表示，表格用html格式表示。",
+    # 通用场景翻译 other2en
+    "trans_other2en": "按照阅读顺序，提取图中文字，公式用latex格式表示，表格用markdown格式表示，"
+    "再将文字内容翻译为英文。",
+    # 通用场景翻译 other2zh
+    "trans_other2zh": "按照阅读顺序，提取图中文字，公式用latex格式表示，表格用markdown格式表示，"
+    "再将文字内容翻译为中文。",
 }
 
-# Templates that require dynamic substitution
-EXTRACT_KEY_TEMPLATE = {
-    "en": "Output the value of {key}.",
-    "cn": "输出 {key} 的值。",
+# English glosses for --help / the no-args banner (upstream ships Chinese ones).
+TASK_DESCRIPTIONS = {
+    "doc_parse": "End-to-end doc parse (body→markdown, tables→HTML, formulas→LaTeX, headers/footers ignored). Default.",
+    "structured_parse": "Structured parse for non-document scenes (ancient scripts, street signs) — extract all text.",
+    "spotting_json": "Text detect+recognize as a JSON array (box normalized to 0-1000 + text).",
+    "spotting_hunyuan": "Text detect+recognize in Hunyuan coordinate format.",
+    "layout": "Layout analysis in reading order.",
+    "layout_parse": "Layout analysis + full-document parse (markdown/HTML/LaTeX).",
+    "chart_parse": "Chart parsing (flowcharts→Mermaid, other charts→Markdown).",
+    "formula": "Formula recognition → LaTeX.",
+    "table": "Table parsing → HTML.",
+    "doc_trans_en2zh": "Document translation to Chinese (parse then translate; formulas LaTeX, tables HTML).",
+    "trans_other2en": "General-scene extraction + translation to English.",
+    "trans_other2zh": "General-scene extraction + translation to Chinese.",
 }
 
-EXTRACT_FIELDS_TEMPLATE = {
-    "en": "Extract the content of the fields: {fields} from the image and return it in JSON format.",
-    "cn": "提取图片中的: {fields} 的字段内容，并按照 JSON 格式返回。",
-}
+DEFAULT_TASK = "doc_parse"
+
+# Sampling params LOCKED by the model card across all official setups so outputs
+# are comparable: temperature=0.0, top_p=1.0, top_k=-1, repetition_penalty=1.08.
+# Only repetition_penalty is exposed as a flag (the others are fixed for
+# deterministic OCR); repetition_penalty is the model's built-in anti-repeat.
+DEFAULT_REPETITION_PENALTY = 1.08
 
 
-def clean_repeated_substrings(text: str, threshold: int = 10) -> str:
+def clean_repeated_substrings(text: str, min_repeats: int = 10) -> str:
+    """Trim a long repeated suffix as a final safety net against greedy-decoding
+    degeneration. Byte-for-byte from the official `hunyuan_utils.py`.
     """
-    Remove repeated substrings from long outputs.
-
-    HunyuanOCR can sometimes produce repeated patterns in very long outputs.
-    This utility detects and removes substrings that repeat more than threshold times.
-
-    From: https://huggingface.co/tencent/HunyuanOCR
-    """
-    if len(text) <= 8000:
+    n = len(text)
+    if n < 2000:
         return text
-
-    # Check the last portion of the text for repetition
-    check_portion = text[-4000:]
-
-    # Find repeated patterns of various lengths
-    for pattern_len in range(10, 200):
-        pattern = check_portion[-pattern_len:]
-        count = check_portion.count(pattern)
-
-        if count >= threshold:
-            # Find where the repetition starts and truncate
-            first_occurrence = text.find(pattern)
-            if first_occurrence != -1:
-                return text[: first_occurrence + len(pattern)]
-
+    for length in range(2, n // min_repeats + 1):
+        candidate = text[-length:]
+        count = 0
+        i = n - length
+        while i >= 0 and text[i : i + length] == candidate:
+            count += 1
+            i -= length
+        if count >= min_repeats:
+            return text[: n - length * (count - 1)]
     return text
 
 
@@ -186,53 +214,32 @@ def ensure_output_columns_free(dataset, columns, overwrite=False):
         f"Output column(s) {clash} already exist in the input dataset "
         f"(columns: {dataset.column_names})."
     )
-    logger.error("Choose a different --output-column, or pass --overwrite to replace them.")
+    logger.error(
+        "Choose a different --output-column, or pass --overwrite to replace them."
+    )
     sys.exit(1)
 
 
-def get_prompt(
-    prompt_mode: str,
-    use_chinese: bool = False,
-    target_language: str = None,
-    key: str = None,
-    fields: List[str] = None,
-) -> str:
-    """Get the appropriate prompt for the given mode."""
-    lang = "cn" if use_chinese else "en"
-
-    if prompt_mode == "extract-key":
-        if not key:
-            raise ValueError("--key is required for extract-key mode")
-        template = EXTRACT_KEY_TEMPLATE[lang]
-        return template.format(key=key)
-
-    if prompt_mode == "extract-fields":
-        if not fields:
-            raise ValueError("--fields is required for extract-fields mode")
-        template = EXTRACT_FIELDS_TEMPLATE[lang]
-        fields_str = str(fields)
-        return template.format(fields=fields_str)
-
-    if prompt_mode == "translate":
-        if not target_language:
-            raise ValueError("--target-language is required for translate mode")
-        template = PROMPT_TEMPLATES["translate"][lang]
-        return template.format(target_language=target_language)
-
-    if prompt_mode not in PROMPT_TEMPLATES:
+def get_prompt(task_type: str) -> str:
+    """Return the official prompt for a task type."""
+    if task_type not in TASK_PROMPTS:
         raise ValueError(
-            f"Unknown prompt mode: {prompt_mode}. "
-            f"Available: {list(PROMPT_TEMPLATES.keys()) + ['extract-key', 'extract-fields']}"
+            f"Unknown task type: {task_type}. Available: {list(TASK_PROMPTS.keys())}"
         )
-
-    return PROMPT_TEMPLATES[prompt_mode][lang]
+    return TASK_PROMPTS[task_type]
 
 
 def make_ocr_message(
     image: Union[Image.Image, Dict[str, Any], str],
     prompt: str,
 ) -> List[Dict]:
-    """Create chat message for OCR processing."""
+    """Create the chat messages for one image + prompt.
+
+    Mirrors the official client: an empty system message followed by a user turn
+    with the image *before* the text. The empty system content pins "no system
+    prompt" (matching how the model is served) rather than letting the chat
+    template inject a default.
+    """
     # Convert to PIL Image if needed
     if isinstance(image, Image.Image):
         pil_img = image
@@ -251,32 +258,32 @@ def make_ocr_message(
     pil_img.save(buf, format="PNG")
     data_uri = f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
 
-    # HunyuanOCR format: image before text
     return [
+        {"role": "system", "content": ""},
         {
             "role": "user",
             "content": [
                 {"type": "image_url", "image_url": {"url": data_uri}},
                 {"type": "text", "text": prompt},
             ],
-        }
+        },
     ]
 
 
 def create_dataset_card(
     source_dataset: str,
     model: str,
-    revision: str,
     num_samples: int,
     processing_time: str,
     batch_size: int,
     max_model_len: int,
     max_tokens: int,
+    repetition_penalty: float,
     gpu_memory_utilization: float,
     image_column: str = "image",
+    output_column: str = "markdown",
     split: str = "train",
-    prompt_mode: str = "parse-document",
-    use_chinese: bool = False,
+    task_type: str = "doc_parse",
 ) -> str:
     """Create a dataset card documenting the OCR process."""
     model_name = model.split("/")[-1]
@@ -285,16 +292,16 @@ def create_dataset_card(
 tags:
 - ocr
 - document-processing
-- hunyuan-ocr
+- hunyuan-ocr-1.5
 - multilingual
 - markdown
 - uv-script
 - generated
 ---
 
-# Document OCR using {model_name}
+# Document OCR using {model_name} (HunyuanOCR-1.5)
 
-This dataset contains OCR results from images in [{source_dataset}](https://huggingface.co/datasets/{source_dataset}) using HunyuanOCR, a lightweight 1B VLM from Tencent.
+This dataset contains OCR results from images in [{source_dataset}](https://huggingface.co/datasets/{source_dataset}) using HunyuanOCR-1.5, a lightweight ~1B end-to-end OCR VLM from Tencent (128K context, 4K max image resolution).
 
 Model license: [Tencent Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (territory excludes EU/UK/South Korea).
 
@@ -302,7 +309,6 @@ Model license: [Tencent Hunyuan Community License](https://huggingface.co/tencen
 
 - **Source Dataset**: [{source_dataset}](https://huggingface.co/datasets/{source_dataset})
 - **Model**: [{model}](https://huggingface.co/{model})
-- **Model Revision**: `{revision}` (HunyuanOCR 1.0 — the repo root holds 1.5 since 2026-07-06)
 - **Number of Samples**: {num_samples:,}
 - **Processing Time**: {processing_time}
 - **Processing Date**: {datetime.now().strftime("%Y-%m-%d %H:%M UTC")}
@@ -310,42 +316,48 @@ Model license: [Tencent Hunyuan Community License](https://huggingface.co/tencen
 ### Configuration
 
 - **Image Column**: `{image_column}`
-- **Output Column**: `markdown`
+- **Output Column**: `{output_column}`
 - **Dataset Split**: `{split}`
+- **Task Type**: `{task_type}`
 - **Batch Size**: {batch_size}
-- **Prompt Mode**: {prompt_mode}
-- **Prompt Language**: {"Chinese" if use_chinese else "English"}
 - **Max Model Length**: {max_model_len:,} tokens
 - **Max Output Tokens**: {max_tokens:,}
+- **Repetition Penalty**: {repetition_penalty}
 - **GPU Memory Utilization**: {gpu_memory_utilization:.1%}
 
 ## Model Information
 
-HunyuanOCR is a lightweight 1B VLM that excels at:
-- 📝 **Document Parsing** - Full markdown extraction with reading order
+HunyuanOCR-1.5 is a lightweight end-to-end OCR VLM that excels at:
+- 📝 **Document Parsing** - Full markdown extraction in reading order
+- 🧩 **Structured / Layout Parsing** - Layout-aware full-document parse
 - 📊 **Table Extraction** - HTML format tables
 - 📐 **Formula Recognition** - LaTeX format formulas
-- 📈 **Chart Parsing** - Mermaid/Markdown format
-- 📍 **Text Spotting** - Detection with coordinates
-- 🔍 **Information Extraction** - Key-value, fields, subtitles
-- 🌐 **Translation** - Multilingual photo translation
+- 📈 **Chart Parsing** - Mermaid / Markdown format
+- 📍 **Text Spotting** - Detection with coordinates (JSON / Hunyuan)
+- 🌐 **Translation** - Document and general-scene translation (→ zh / → en)
 
-## Prompt Modes Available
+Per the technical report ([arXiv:2607.04884](https://arxiv.org/pdf/2607.04884)),
+1.5 is faster than dots.ocr / DeepSeek-OCR-2 and top-tier on OmniDocBench v1.6.
 
-- `parse-document` - Full document parsing (default)
-- `parse-formula` - LaTeX formula extraction
-- `parse-table` - HTML table extraction
-- `parse-chart` - Chart/flowchart parsing
-- `spot` - Text detection with coordinates
-- `extract-key` - Extract specific key value
-- `extract-fields` - Extract multiple fields as JSON
-- `extract-subtitles` - Subtitle extraction
-- `translate` - Document translation
+## Task Types Available
+
+- `doc_parse` - End-to-end document parsing (default)
+- `structured_parse` - Non-document structured scenes (ancient scripts, street signs)
+- `spotting_json` - Text detection + recognition as JSON array (box 0-1000 + text)
+- `spotting_hunyuan` - Text detection + recognition, Hunyuan coordinate format
+- `layout` - Layout analysis in reading order
+- `layout_parse` - Layout analysis + full-document parse
+- `chart_parse` - Chart parsing (flowcharts → Mermaid, others → Markdown)
+- `formula` - Formula recognition → LaTeX
+- `table` - Table parsing → HTML
+- `doc_trans_en2zh` - Document translation to Chinese
+- `trans_other2en` - General-scene extraction + translation to English
+- `trans_other2zh` - General-scene extraction + translation to Chinese
 
 ## Dataset Structure
 
 The dataset contains all original columns plus:
-- `markdown`: The extracted text in markdown format
+- `{output_column}`: The extracted text (markdown for `doc_parse`, else the task's format)
 - `inference_info`: JSON list tracking all OCR models applied to this dataset
 
 ## Usage
@@ -357,9 +369,9 @@ import json
 # Load the dataset
 dataset = load_dataset("{{output_dataset_id}}", split="{split}")
 
-# Access the markdown text
+# Access the extracted text
 for example in dataset:
-    print(example["markdown"])
+    print(example["{output_column}"])
     break
 
 # View all OCR models applied to this dataset
@@ -370,15 +382,15 @@ for info in inference_info:
 
 ## Reproduction
 
-This dataset was generated using the [uv-scripts/ocr](https://huggingface.co/datasets/uv-scripts/ocr) HunyuanOCR script:
+This dataset was generated using the [uv-scripts/ocr](https://huggingface.co/datasets/uv-scripts/ocr) HunyuanOCR-1.5 script:
 
 ```bash
-uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/hunyuan-ocr.py \\
+uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/hunyuan-ocr-1.5.py \\
     {source_dataset} \\
     <output-dataset> \\
     --image-column {image_column} \\
     --batch-size {batch_size} \\
-    --prompt-mode {prompt_mode} \\
+    --task-type {task_type} \\
     --max-model-len {max_model_len} \\
     --max-tokens {max_tokens} \\
     --gpu-memory-utilization {gpu_memory_utilization}
@@ -392,11 +404,12 @@ def main(
     input_dataset: str,
     output_dataset: str,
     image_column: str = "image",
-    batch_size: int = 1,  # Default to 1 due to vLLM V1 batching issues with HunyuanOCR
+    batch_size: int = 16,
     model: str = "tencent/HunyuanOCR",
     revision: str = None,
-    max_model_len: int = 16384,
-    max_tokens: int = 16384,
+    max_model_len: int = 32768,
+    max_tokens: int = 8192,
+    repetition_penalty: float = DEFAULT_REPETITION_PENALTY,
     gpu_memory_utilization: float = 0.8,
     hf_token: str = None,
     split: str = "train",
@@ -404,11 +417,7 @@ def main(
     private: bool = False,
     shuffle: bool = False,
     seed: int = 42,
-    prompt_mode: str = "parse-document",
-    target_language: str = None,
-    key: str = None,
-    fields: List[str] = None,
-    use_chinese: bool = False,
+    task_type: str = DEFAULT_TASK,
     custom_prompt: str = None,
     output_column: str = "markdown",
     overwrite: bool = False,
@@ -417,10 +426,25 @@ def main(
     create_pr: bool = False,
     verbose: bool = False,
 ):
-    """Process images from HF dataset through HunyuanOCR model."""
+    """Process images from an HF dataset through HunyuanOCR-1.5."""
 
     # Check CUDA availability first
     check_cuda_availability()
+
+    # Context-length invariant (config.json): text max_position_embeddings=131072;
+    # the vision processor caps a single image at img_max_token_num=16384. So the
+    # default budget holds without resizing: 16384 (image) + prompt + 8192 (output)
+    # ≈ 25k ≤ 32768 (default max_model_len). Enforce max_tokens ≤ max_model_len ≤ 131072.
+    if max_model_len > 131072:
+        logger.error(
+            f"--max-model-len {max_model_len} exceeds the model's max context (131072)."
+        )
+        sys.exit(1)
+    if max_tokens > max_model_len:
+        logger.error(
+            f"--max-tokens ({max_tokens}) cannot exceed --max-model-len ({max_model_len})."
+        )
+        sys.exit(1)
 
     # Track processing start time
     start_time = datetime.now()
@@ -433,17 +457,14 @@ def main(
     # Determine prompt to use
     if custom_prompt:
         prompt = custom_prompt
-        logger.info(f"Using custom prompt: {prompt[:50]}...")
-    else:
-        prompt = get_prompt(
-            prompt_mode=prompt_mode,
-            use_chinese=use_chinese,
-            target_language=target_language,
-            key=key,
-            fields=fields,
+        logger.warning(
+            "Using --custom-prompt. Note: upstream deliberately locks prompts per "
+            "task type — hand-tweaked instructions can silently degrade quality."
         )
-        lang_str = "Chinese" if use_chinese else "English"
-        logger.info(f"Using prompt mode: {prompt_mode} ({lang_str})")
+        logger.info(f"Custom prompt: {prompt[:60]}...")
+    else:
+        prompt = get_prompt(task_type)
+        logger.info(f"Using task type: {task_type}")
 
     # Load dataset
     logger.info(f"Loading dataset: {input_dataset}")
@@ -468,18 +489,10 @@ def main(
         dataset = dataset.select(range(min(max_samples, len(dataset))))
         logger.info(f"Limited to {len(dataset)} samples")
 
-    # Pin the 1.0 revision only for the default repo — a user-supplied --model
-    # must not inherit a foreign commit hash.
-    if revision is None and model == "tencent/HunyuanOCR":
-        revision = DEFAULT_REVISION
-        logger.info(f"Pinning tencent/HunyuanOCR to 1.0 revision {revision[:8]}")
-
     # Initialize vLLM model
-    logger.info(f"Initializing vLLM: {model} (revision: {revision or 'main'})")
+    logger.info(f"Initializing vLLM with model: {model}")
     logger.info("This may take a few minutes on first run...")
 
-    # Note: HunyuanOCR has batching issues with vLLM V1 engine when batch_size > 1
-    # Using limit_mm_per_prompt for stability
     llm = LLM(
         model=model,
         revision=revision,
@@ -487,12 +500,17 @@ def main(
         max_model_len=max_model_len,
         gpu_memory_utilization=gpu_memory_utilization,
         limit_mm_per_prompt={"image": 1},
-        enable_prefix_caching=False,
     )
 
+    # Locked sampling per the model card (deterministic OCR); only repetition_penalty
+    # is user-tunable.
     sampling_params = SamplingParams(
-        temperature=0.0,  # Deterministic for OCR
+        temperature=0.0,
+        top_p=1.0,
+        top_k=-1,
+        repetition_penalty=repetition_penalty,
         max_tokens=max_tokens,
+        skip_special_tokens=True,
     )
 
     logger.info(f"Processing {len(dataset)} images in batches of {batch_size}")
@@ -504,7 +522,7 @@ def main(
     for batch_indices in tqdm(
         partition_all(batch_size, range(len(dataset))),
         total=(len(dataset) + batch_size - 1) // batch_size,
-        desc="HunyuanOCR processing",
+        desc="HunyuanOCR-1.5 processing",
     ):
         batch_indices = list(batch_indices)
         batch_images = [dataset[i][image_column] for i in batch_indices]
@@ -540,12 +558,12 @@ def main(
     # Handle inference_info tracking (for multi-model comparisons)
     inference_entry = {
         "model_id": model,
-        "model_name": "HunyuanOCR",
+        "model_name": "HunyuanOCR-1.5",
         "model_revision": revision or "main",
         "column_name": output_column,
         "timestamp": datetime.now().isoformat(),
-        "prompt_mode": prompt_mode if not custom_prompt else "custom",
-        "prompt_language": "cn" if use_chinese else "en",
+        "task_type": task_type if not custom_prompt else "custom",
+        "repetition_penalty": repetition_penalty,
     }
 
     if "inference_info" in dataset.column_names:
@@ -574,7 +592,7 @@ def main(
 
     # Push to hub with retry and XET fallback
     logger.info(f"Pushing to {output_dataset}")
-    commit_msg = f"Add HunyuanOCR OCR results ({len(dataset)} samples)" + (
+    commit_msg = f"Add HunyuanOCR-1.5 OCR results ({len(dataset)} samples)" + (
         f" [{config}]" if config else ""
     )
     max_retries = 3
@@ -609,23 +627,23 @@ def main(
         card_content = create_dataset_card(
             source_dataset=input_dataset,
             model=model,
-            revision=revision or "main",
             num_samples=len(dataset),
             processing_time=processing_time_str,
             batch_size=batch_size,
             max_model_len=max_model_len,
             max_tokens=max_tokens,
+            repetition_penalty=repetition_penalty,
             gpu_memory_utilization=gpu_memory_utilization,
             image_column=image_column,
+            output_column=output_column,
             split=split,
-            prompt_mode=prompt_mode if not custom_prompt else "custom",
-            use_chinese=use_chinese,
+            task_type=task_type if not custom_prompt else "custom",
         )
 
         card = DatasetCard(card_content)
         card.push_to_hub(output_dataset, token=HF_TOKEN)
 
-    logger.info("HunyuanOCR processing complete!")
+    logger.info("HunyuanOCR-1.5 processing complete!")
     logger.info(
         f"Dataset available at: https://huggingface.co/datasets/{output_dataset}"
     )
@@ -654,94 +672,70 @@ if __name__ == "__main__":
     # Show example usage if no arguments
     if len(sys.argv) == 1:
         print("=" * 80)
-        print("HunyuanOCR Document Processing")
+        print("HunyuanOCR-1.5 Document Processing")
         print("=" * 80)
-        print("\nLightweight 1B VLM from Tencent for multilingual document parsing")
+        print(
+            "\nLightweight ~1B end-to-end OCR VLM from Tencent (128K context, 4K images)"
+        )
         print("\nFeatures:")
-        print("- 📝 Full document parsing to markdown")
+        print("- 📝 End-to-end document parsing to markdown")
         print("- 📊 Table extraction (HTML format)")
         print("- 📐 Formula recognition (LaTeX format)")
-        print("- 📍 Text spotting with coordinates")
-        print("- 🔍 Information extraction (key-value, fields)")
-        print("- 🌐 Photo translation")
+        print("- 📍 Text spotting with coordinates (JSON / Hunyuan)")
+        print("- 📈 Chart parsing (Mermaid / Markdown)")
+        print("- 🌐 Document + general-scene translation (→ zh / → en)")
         print("\nExample usage:")
         print("\n1. Basic document parsing:")
-        print("   uv run hunyuan-ocr.py input-dataset output-dataset")
+        print("   uv run hunyuan-ocr-1.5.py input-dataset output-dataset")
         print("\n2. Formula extraction:")
-        print("   uv run hunyuan-ocr.py math-docs formulas --prompt-mode parse-formula")
+        print("   uv run hunyuan-ocr-1.5.py math-docs formulas --task-type formula")
         print("\n3. Table extraction:")
-        print("   uv run hunyuan-ocr.py docs tables --prompt-mode parse-table")
-        print("\n4. Text spotting with coordinates:")
-        print("   uv run hunyuan-ocr.py images spotted --prompt-mode spot")
-        print("\n5. Extract specific field:")
+        print("   uv run hunyuan-ocr-1.5.py docs tables --task-type table")
+        print("\n4. Text spotting as JSON (box + text):")
+        print("   uv run hunyuan-ocr-1.5.py images spotted --task-type spotting_json")
+        print("\n5. Translate a document to Chinese:")
         print(
-            '   uv run hunyuan-ocr.py invoices data --prompt-mode extract-key --key "Total Amount"'
+            "   uv run hunyuan-ocr-1.5.py en-docs zh-docs --task-type doc_trans_en2zh"
         )
-        print("\n6. Extract multiple fields as JSON:")
-        print(
-            '   uv run hunyuan-ocr.py forms data --prompt-mode extract-fields --fields "name,date,amount"'
-        )
-        print("\n7. Translate document to English:")
-        print(
-            "   uv run hunyuan-ocr.py cn-docs en-docs --prompt-mode translate --target-language English"
-        )
-        print("\n8. Use Chinese prompts:")
-        print("   uv run hunyuan-ocr.py docs output --use-chinese-prompts")
-        print("\n9. Running on HF Jobs:")
+        print("\n6. Running on HF Jobs:")
         print("   hf jobs uv run --flavor l4x1 \\")
         print(
             '     -e HF_TOKEN=$(python3 -c "from huggingface_hub import get_token; print(get_token())") \\'
         )
         print(
-            "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/hunyuan-ocr.py \\"
+            "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/hunyuan-ocr-1.5.py \\"
         )
         print("       input-dataset output-dataset")
         print("\n" + "=" * 80)
-        print("\nFor full help, run: uv run hunyuan-ocr.py --help")
+        print("\nFor full help, run: uv run hunyuan-ocr-1.5.py --help")
         sys.exit(0)
 
+    task_help = "\n".join(f"  {k:18s}- {TASK_DESCRIPTIONS[k]}" for k in TASK_PROMPTS)
     parser = argparse.ArgumentParser(
-        description="Document OCR using HunyuanOCR (1B lightweight VLM)",
+        description="Document OCR using HunyuanOCR-1.5 (lightweight ~1B end-to-end OCR VLM)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Prompt Modes (official HunyuanOCR prompts):
-  parse-document   - Full document parsing to markdown (default)
-  parse-formula    - LaTeX formula extraction
-  parse-table      - HTML table extraction
-  parse-chart      - Chart/flowchart parsing (Mermaid/Markdown)
-  spot             - Text detection with coordinates
-  extract-key      - Extract specific key value (requires --key)
-  extract-fields   - Extract multiple fields as JSON (requires --fields)
-  extract-subtitles - Subtitle extraction
-  translate        - Document translation (requires --target-language)
+        epilog=f"""
+Task Types (official HunyuanOCR-1.5 prompts, all Chinese-language):
+{task_help}
 
 Examples:
   # Basic document OCR (default)
-  uv run hunyuan-ocr.py my-docs analyzed-docs
+  uv run hunyuan-ocr-1.5.py my-docs analyzed-docs
 
   # Extract formulas as LaTeX
-  uv run hunyuan-ocr.py math-papers formulas --prompt-mode parse-formula
+  uv run hunyuan-ocr-1.5.py math-papers formulas --task-type formula
 
   # Extract tables as HTML
-  uv run hunyuan-ocr.py reports tables --prompt-mode parse-table
+  uv run hunyuan-ocr-1.5.py reports tables --task-type table
 
-  # Text spotting with coordinates
-  uv run hunyuan-ocr.py images spotted --prompt-mode spot
+  # Text spotting as JSON (box normalized 0-1000 + text)
+  uv run hunyuan-ocr-1.5.py images spotted --task-type spotting_json
 
-  # Extract specific key from forms
-  uv run hunyuan-ocr.py invoices amounts --prompt-mode extract-key --key "Total"
-
-  # Extract multiple fields as JSON
-  uv run hunyuan-ocr.py forms data --prompt-mode extract-fields --fields "name,date,amount"
-
-  # Translate Chinese documents to English
-  uv run hunyuan-ocr.py cn-docs translated --prompt-mode translate --target-language English
-
-  # Use Chinese prompts
-  uv run hunyuan-ocr.py docs output --use-chinese-prompts
+  # Translate documents to Chinese
+  uv run hunyuan-ocr-1.5.py en-docs translated --task-type doc_trans_en2zh
 
   # Random sampling for testing
-  uv run hunyuan-ocr.py large-dataset test --max-samples 50 --shuffle
+  uv run hunyuan-ocr-1.5.py large-dataset test --max-samples 50 --shuffle
         """,
     )
 
@@ -755,32 +749,40 @@ Examples:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=1,
-        help="Batch size for processing (default: 1, higher values may cause vLLM errors)",
+        default=16,
+        help="Batch size for processing (default: 16; lower it if you hit engine errors)",
     )
     parser.add_argument(
         "--model",
         default="tencent/HunyuanOCR",
-        help="Model to use (default: tencent/HunyuanOCR)",
+        help="Model to use (default: tencent/HunyuanOCR — repo root is 1.5)",
     )
     parser.add_argument(
         "--revision",
         default=None,
-        help="Model repo revision. Defaults to the last 1.0 commit when --model is "
-        "tencent/HunyuanOCR (the repo root now holds 1.5 — see hunyuan-ocr-1.5.py); "
-        "defaults to main for any other model.",
+        help="Model repo revision (default: main). Tencent has replaced this repo's "
+        "root in-place before (1.0 → 1.5); pin a commit hash for reproducible runs.",
     )
     parser.add_argument(
         "--max-model-len",
         type=int,
-        default=16384,
-        help="Maximum model context length (default: 16384)",
+        default=32768,
+        help="Maximum model context length (default: 32768; max 131072). A single "
+        "image is capped at ~16384 tokens by the vision processor, so 32768 fits "
+        "image + 8192 output; raise for very long outputs.",
     )
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=16384,
-        help="Maximum tokens to generate (default: 16384)",
+        default=8192,
+        help="Maximum tokens to generate (default: 8192; must be ≤ --max-model-len). "
+        "Dense pages may need more — raise toward 32768.",
+    )
+    parser.add_argument(
+        "--repetition-penalty",
+        type=float,
+        default=DEFAULT_REPETITION_PENALTY,
+        help=f"Repetition penalty (default: {DEFAULT_REPETITION_PENALTY}, the model card's locked value)",
     )
     parser.add_argument(
         "--gpu-memory-utilization",
@@ -810,41 +812,16 @@ Examples:
         help="Random seed for shuffling (default: 42)",
     )
     parser.add_argument(
-        "--prompt-mode",
-        choices=[
-            "parse-document",
-            "parse-formula",
-            "parse-table",
-            "parse-chart",
-            "spot",
-            "extract-key",
-            "extract-fields",
-            "extract-subtitles",
-            "translate",
-        ],
-        default="parse-document",
-        help="Prompt template to use (default: parse-document)",
-    )
-    parser.add_argument(
-        "--target-language",
-        help="Target language for translation mode (e.g., 'English', 'Chinese')",
-    )
-    parser.add_argument(
-        "--key",
-        help="Key to extract for extract-key mode",
-    )
-    parser.add_argument(
-        "--fields",
-        help="Comma-separated list of fields for extract-fields mode",
-    )
-    parser.add_argument(
-        "--use-chinese-prompts",
-        action="store_true",
-        help="Use Chinese versions of prompts",
+        "--task-type",
+        choices=list(TASK_PROMPTS.keys()),
+        default=DEFAULT_TASK,
+        metavar="TASK",
+        help=f"Official task type (default: {DEFAULT_TASK}). See the epilog for all types.",
     )
     parser.add_argument(
         "--custom-prompt",
-        help="Custom prompt text (overrides --prompt-mode)",
+        help="Custom prompt text (overrides --task-type; may degrade quality — upstream "
+        "locks prompts per task)",
     )
     parser.add_argument(
         "--output-column",
@@ -879,11 +856,6 @@ Examples:
 
     args = parser.parse_args()
 
-    # Parse fields if provided
-    fields_list = None
-    if args.fields:
-        fields_list = [f.strip() for f in args.fields.split(",")]
-
     main(
         input_dataset=args.input_dataset,
         output_dataset=args.output_dataset,
@@ -893,6 +865,7 @@ Examples:
         revision=args.revision,
         max_model_len=args.max_model_len,
         max_tokens=args.max_tokens,
+        repetition_penalty=args.repetition_penalty,
         gpu_memory_utilization=args.gpu_memory_utilization,
         hf_token=args.hf_token,
         split=args.split,
@@ -900,11 +873,7 @@ Examples:
         private=args.private,
         shuffle=args.shuffle,
         seed=args.seed,
-        prompt_mode=args.prompt_mode,
-        target_language=args.target_language,
-        key=args.key,
-        fields=fields_list,
-        use_chinese=args.use_chinese_prompts,
+        task_type=args.task_type,
         custom_prompt=args.custom_prompt,
         output_column=args.output_column,
         overwrite=args.overwrite,
