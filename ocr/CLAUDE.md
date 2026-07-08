@@ -79,7 +79,9 @@ Legend: ✅ production-ready · ⚠️ works only with a required pinned image �
 | `surya-ocr-bucket.py` | ✅+image | vLLM `:v0.20.1` | l4x1 | bucket I/O; pin `surya-ocr==0.20.0` |
 | `lift-extract.py` | ✅ | hf / vLLM | a100-large | schema-constrained extraction; naming gotcha |
 | `nuextract3.py`, `lfm2-extract.py`, `lfm2-vl-extract.py` | ✅ | vLLM | l4x1 | structured extraction |
-| `rolm-ocr.py`, `smoldocling-ocr.py`, `numarkdown-ocr.py`, `hunyuan-ocr.py`, `qianfan-ocr.py`, `firered-ocr.py`, `abot-ocr.py`, `falcon-ocr.py`, `olmocr2-vllm.py`, `dots-mocr.py` | ✅ | vLLM | varies | see `README.md` for flags |
+| `hunyuan-ocr.py` | ✅ | vLLM | l4x1 | **1.0, revision-pinned** (root repo became 1.5 in-place); `transformers<5.13` cap — see gotcha |
+| `hunyuan-ocr-1.5.py` | ✅ | vLLM | l4x1 | tracks repo root (=1.5); task-locked prompts; `transformers<5.13` cap — see gotcha |
+| `rolm-ocr.py`, `smoldocling-ocr.py`, `numarkdown-ocr.py`, `qianfan-ocr.py`, `firered-ocr.py`, `abot-ocr.py`, `falcon-ocr.py`, `olmocr2-vllm.py`, `dots-mocr.py` | ✅ | vLLM | varies | see `README.md` for flags |
 | `pp-ocrv6.py`, `pp-doclayout.py` | ✅ | PaddleOCR / PaddleX | l4x1 | classical det+rec; dataset **or** bucket I/O |
 
 **License note:** Surya and `lift` ship code as Apache-2.0 but **weights under a modified OpenRAIL-M**
@@ -161,6 +163,19 @@ default vs a validator expecting 1024²) — hit 2/10 on `ufo-ColPali`, aspect-r
 issue filed ([vllm#28160](https://github.com/vllm-project/vllm/issues/28160) is the related request). v2
 needs **nightly** vLLM (`DeepseekOCR2ForCausalLM` not in stable) + `addict`/`matplotlib` (its HF custom
 code), plus `limit_mm_per_prompt={"image":1}`.
+
+### `hunyuan-ocr.py` / `hunyuan-ocr-1.5.py` — upstream replaced the repo root in-place
+On 2026-07-06 Tencent pushed HunyuanOCR-1.5 **into the same repo** `tencent/HunyuanOCR` (1.5 at root,
+1.0 archived under `v1.0/`, DFlash draft under `dflash/`, **no 1.0 tag or branch**). vLLM can't load a
+repo subfolder, so `hunyuan-ocr.py` pins the last 1.0 commit by `revision` (`f6af82ee…`) — that pin is
+the 1.0 *identity*, never loosen it to `main`; 1.5 is its own recipe (`hunyuan-ocr-1.5.py`, tracks root,
+has `--revision` as insurance against the next in-place swap). Separate breakage, both scripts: stable
+vLLM ≤0.24.0's `hunyuan_vl_image.py` does a string-key `AutoImageProcessor.register(...)` which
+transformers 5.13 rejects (`'str' object has no attribute '__module__'` → "architectures failed to be
+inspected" at engine init) — hence the `transformers<5.13` cap in both; drop it when the vllm#47872 fix
+ships in a stable wheel. 1.5 prompts are task-locked (12 types, Chinese wording, from the official
+client's `hunyuan_tasks.py`) and sampling is card-locked (temp 0.0, rep-penalty 1.08) — don't
+"improve" either; upstream observed hand-tweaked prompts silently degrade quality.
 
 ### `glm-ocr.py`
 Chatty on blank pages / can emit degenerate repeats — that's **model quality, not a crash**; don't
@@ -244,6 +259,9 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
 
 ## Change log
 
+- **2026-07-08** — HunyuanOCR upstream repo swap: pinned `hunyuan-ocr.py` to the last 1.0 revision +
+  added `hunyuan-ocr-1.5.py` (12 task types, locked sampling); `transformers<5.13` cap in both for the
+  stable-vLLM HunyuanVL register breakage (vllm#47872). See the hunyuan gotcha above.
 - **2026-07-01** — large full-page scan fixes ([#65](https://github.com/davanstrien/uv-scripts-for-ai/pull/65)):
   surya vLLM-missing preflight; `dots` 8192→32768 + `--max-pixels`; `lighton-ocr2` 8192→16384; `glm` dropped
   `pyarrow<18` (→ `datasets` `Json` load crash) + `VLLM_USE_DEEP_GEMM=0` + `--max-pixels`; `pp-ocrv6`
