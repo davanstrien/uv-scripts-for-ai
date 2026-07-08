@@ -49,34 +49,34 @@ _Sorted by model size:_
 
 | Script | Model | Size | Backend | Notes |
 |--------|-------|------|---------|-------|
-| `tesseract-ocr.py` | [Tesseract 5](https://github.com/tesseract-ocr/tesseract) | n/a (classical) | pytesseract (CPU) | **The legacy baseline** — no GPU at all, runs on `cpu-upgrade`. Plain-text output, `--lang`/`--psm`/`--oem` exposed, 100+ language packs via apt. Apache 2.0 |
-| `pp-ocrv6.py` | [PP-OCRv6](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) | 1.5–34.5M | PaddleOCR (paddle) | **Smallest neural** — classical det+rec pipeline, not a VLM. Three tiers (`--model-tier tiny\|small\|medium`), plain-text output (not markdown). 50 langs. Runs on `t4-small`. Apache 2.0 |
-| `falcon-ocr.py` | [Falcon-OCR](https://huggingface.co/tiiuae/Falcon-OCR) | 0.3B | falcon-perception | Smallest VLM in collection. #1 on multi-column docs and tables (olmOCR), Apache 2.0 |
-| `smoldocling-ocr.py` | [SmolDocling](https://huggingface.co/ds4sd/SmolDocling-256M-preview) | 256M | Transformers | DocTags structured output |
-| `surya-ocr.py` | [Surya OCR 2](https://huggingface.co/datalab-to/surya-ocr-2) | 0.65B | vLLM | **Structured** OCR + `--task layout\|table`: per-block HTML with bboxes & reading order in an extra `surya_blocks` column. 91 langs, top-under-3B on olmOCR-Bench. Modified OpenRAIL-M license. Needs the **pinned** `vllm/vllm-openai:v0.20.1` image |
-| `glm-ocr.py` | [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) | 0.9B | vLLM | 94.62% OmniDocBench V1.5 |
-| `paddleocr-vl.py` | [PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL) | 0.9B | vLLM | 4 task modes (ocr/table/formula/chart) |
-| `paddleocr-vl-1.5.py` | [PaddleOCR-VL-1.5](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.5) | 0.9B | Transformers | 94.5% OmniDocBench, 6 task modes |
-| `paddleocr-vl-1.6.py` | [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) | 0.9B | vLLM | **96.33% OmniDocBench v1.6** (SOTA), drop-in upgrade of 1.5 |
-| `lighton-ocr.py` | [LightOnOCR-1B](https://huggingface.co/lightonai/LightOnOCR-1B-1025) | 1B | vLLM | Fast, 3 vocab sizes |
-| `lighton-ocr2.py` | [LightOnOCR-2-1B](https://huggingface.co/lightonai/LightOnOCR-2-1B) | 1B | vLLM | 7× faster than v1, RLVR trained |
-| `hunyuan-ocr.py` | [HunyuanOCR 1.0](https://huggingface.co/tencent/HunyuanOCR/tree/f6af82ee007fe6091b29fb3bb287b491ead41c82) | 1B | vLLM | Lightweight VLM. Pinned to the last 1.0 revision (repo root became 1.5 in-place on 2026-07-06). [Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (excludes EU/UK/KR) |
-| `hunyuan-ocr-1.5.py` | [HunyuanOCR-1.5](https://huggingface.co/tencent/HunyuanOCR) | 1B | vLLM | 128K context, 4K images, 12 task types, ancient scripts. ~4-5× faster/page than dots.ocr & DeepSeek-OCR-2 (tech report). [Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (excludes EU/UK/KR) |
-| `dots-ocr.py` | [DoTS.ocr](https://huggingface.co/Tencent/DoTS.ocr) | 1.7B | vLLM | 100+ languages |
-| `firered-ocr.py` | [FireRed-OCR](https://huggingface.co/FireRedTeam/FireRed-OCR) | 2.1B | vLLM | Qwen3-VL fine-tune, Apache 2.0 |
-| `abot-ocr.py` | [ABot-OCR](https://huggingface.co/acvlab/ABot-OCR) | 2B | vLLM | Qwen3-VL based, doc→Markdown (text/LaTeX/HTML tables). Needs `vllm/vllm-openai` image. [paper](https://arxiv.org/abs/2605.27978) |
-| `nanonets-ocr.py` | [Nanonets-OCR-s](https://huggingface.co/nanonets/Nanonets-OCR-s) | 2B | vLLM | LaTeX, tables, forms |
-| `dots-mocr.py` | [dots.mocr](https://huggingface.co/rednote-hilab/dots.mocr) | 3B | vLLM | 8 prompt modes incl. SVG generation, layout + bbox, 100+ languages |
-| `nanonets-ocr2.py` | [Nanonets-OCR2-3B](https://huggingface.co/nanonets/Nanonets-OCR2-3B) | 3B | vLLM | Next-gen, Qwen2.5-VL base. **Pin `--image vllm/vllm-openai:v0.10.2`** (vLLM ≥0.11 breaks Qwen2.5-VL → all `!`) |
-| `deepseek-ocr-vllm.py` | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | vLLM | 5 resolution + 5 prompt modes |
-| `deepseek-ocr.py` | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | Transformers | Same model, Transformers backend |
-| `deepseek-ocr2-vllm.py` | [DeepSeek-OCR-2](https://huggingface.co/deepseek-ai/DeepSeek-OCR-2) | 3B | vLLM | Newer; needs nightly vLLM **+ the `vllm/vllm-openai` image** ([why](#if-a-vllm-script-crashes-at-startup-the-nvcc--nvrtc-error)) |
-| `unlimited-ocr-vllm.py` | [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) | 3.3B | vLLM | DeepSeek-OCR-based; layout-grounded markdown (`--strip-grounding` for clean text). Single-image batch — needs Baidu's **dedicated `vllm/vllm-openai:unlimited-ocr` image** (`-cu129` on Hopper). Multi-page "long-horizon" parsing → serve it ([doc](serving-unlimited-ocr.md)); both engines do clean docs, **SGLang more robust** on hard scans. MIT |
-| `nuextract3.py` | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | vLLM | Markdown OCR **+ schema-guided JSON extraction** (template/Pydantic). Needs `vllm/vllm-openai` image |
-| `qianfan-ocr.py` | [Qianfan-OCR](https://huggingface.co/baidu/Qianfan-OCR) | 4.7B | vLLM | #1 OmniDocBench v1.5 (93.12), Layout-as-Thought, 192 languages |
-| `olmocr2-vllm.py` | [olmOCR-2-7B](https://huggingface.co/allenai/olmOCR-2-7B-1025-FP8) | 7B | vLLM | 82.4% olmOCR-Bench |
-| `rolm-ocr.py` | [RolmOCR](https://huggingface.co/reducto/RolmOCR) | 7B | vLLM | Qwen2.5-VL based, general-purpose |
-| `numarkdown-ocr.py` | [NuMarkdown-8B](https://huggingface.co/numind/NuMarkdown-8B-Thinking) | 8B | vLLM | Reasoning-based OCR |
+| [`tesseract-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/tesseract-ocr.py) | [Tesseract 5](https://github.com/tesseract-ocr/tesseract) | n/a (classical) | pytesseract (CPU) | **The legacy baseline** — no GPU at all, runs on `cpu-upgrade`. Plain-text output, `--lang`/`--psm`/`--oem` exposed, 100+ language packs via apt. Apache 2.0 |
+| [`pp-ocrv6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/pp-ocrv6.py) | [PP-OCRv6](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) | 1.5–34.5M | PaddleOCR (paddle) | **Smallest neural** — classical det+rec pipeline, not a VLM. Three tiers (`--model-tier tiny\|small\|medium`), plain-text output (not markdown). 50 langs. Runs on `t4-small`. Apache 2.0 |
+| [`falcon-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/falcon-ocr.py) | [Falcon-OCR](https://huggingface.co/tiiuae/Falcon-OCR) | 0.3B | falcon-perception | Smallest VLM in collection. #1 on multi-column docs and tables (olmOCR), Apache 2.0 |
+| [`smoldocling-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/smoldocling-ocr.py) | [SmolDocling](https://huggingface.co/ds4sd/SmolDocling-256M-preview) | 256M | Transformers | DocTags structured output |
+| [`surya-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/surya-ocr.py) | [Surya OCR 2](https://huggingface.co/datalab-to/surya-ocr-2) | 0.65B | vLLM | **Structured** OCR + `--task layout\|table`: per-block HTML with bboxes & reading order in an extra `surya_blocks` column. 91 langs, top-under-3B on olmOCR-Bench. Modified OpenRAIL-M license. Needs the **pinned** `vllm/vllm-openai:v0.20.1` image |
+| [`glm-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/glm-ocr.py) | [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) | 0.9B | vLLM | 94.62% OmniDocBench V1.5 |
+| [`paddleocr-vl.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl.py) | [PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL) | 0.9B | vLLM | 4 task modes (ocr/table/formula/chart) |
+| [`paddleocr-vl-1.5.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl-1.5.py) | [PaddleOCR-VL-1.5](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.5) | 0.9B | Transformers | 94.5% OmniDocBench, 6 task modes |
+| [`paddleocr-vl-1.6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl-1.6.py) | [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) | 0.9B | vLLM | **96.33% OmniDocBench v1.6** (SOTA), drop-in upgrade of 1.5 |
+| [`lighton-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr.py) | [LightOnOCR-1B](https://huggingface.co/lightonai/LightOnOCR-1B-1025) | 1B | vLLM | Fast, 3 vocab sizes |
+| [`lighton-ocr2.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr2.py) | [LightOnOCR-2-1B](https://huggingface.co/lightonai/LightOnOCR-2-1B) | 1B | vLLM | 7× faster than v1, RLVR trained |
+| [`hunyuan-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/hunyuan-ocr.py) | [HunyuanOCR 1.0](https://huggingface.co/tencent/HunyuanOCR/tree/f6af82ee007fe6091b29fb3bb287b491ead41c82) | 1B | vLLM | Lightweight VLM. Pinned to the last 1.0 revision (repo root became 1.5 in-place on 2026-07-06). [Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (excludes EU/UK/KR) |
+| [`hunyuan-ocr-1.5.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/hunyuan-ocr-1.5.py) | [HunyuanOCR-1.5](https://huggingface.co/tencent/HunyuanOCR) | 1B | vLLM | 128K context, 4K images, 12 task types, ancient scripts. ~4-5× faster/page than dots.ocr & DeepSeek-OCR-2 (tech report). [Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (excludes EU/UK/KR) |
+| [`dots-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/dots-ocr.py) | [DoTS.ocr](https://huggingface.co/Tencent/DoTS.ocr) | 1.7B | vLLM | 100+ languages |
+| [`firered-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/firered-ocr.py) | [FireRed-OCR](https://huggingface.co/FireRedTeam/FireRed-OCR) | 2.1B | vLLM | Qwen3-VL fine-tune, Apache 2.0 |
+| [`abot-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/abot-ocr.py) | [ABot-OCR](https://huggingface.co/acvlab/ABot-OCR) | 2B | vLLM | Qwen3-VL based, doc→Markdown (text/LaTeX/HTML tables). Needs `vllm/vllm-openai` image. [paper](https://arxiv.org/abs/2605.27978) |
+| [`nanonets-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/nanonets-ocr.py) | [Nanonets-OCR-s](https://huggingface.co/nanonets/Nanonets-OCR-s) | 2B | vLLM | LaTeX, tables, forms |
+| [`dots-mocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/dots-mocr.py) | [dots.mocr](https://huggingface.co/rednote-hilab/dots.mocr) | 3B | vLLM | 8 prompt modes incl. SVG generation, layout + bbox, 100+ languages |
+| [`nanonets-ocr2.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/nanonets-ocr2.py) | [Nanonets-OCR2-3B](https://huggingface.co/nanonets/Nanonets-OCR2-3B) | 3B | vLLM | Next-gen, Qwen2.5-VL base. **Pin `--image vllm/vllm-openai:v0.10.2`** (vLLM ≥0.11 breaks Qwen2.5-VL → all `!`) |
+| [`deepseek-ocr-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/deepseek-ocr-vllm.py) | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | vLLM | 5 resolution + 5 prompt modes |
+| [`deepseek-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/deepseek-ocr.py) | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | Transformers | Same model, Transformers backend |
+| [`deepseek-ocr2-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/deepseek-ocr2-vllm.py) | [DeepSeek-OCR-2](https://huggingface.co/deepseek-ai/DeepSeek-OCR-2) | 3B | vLLM | Newer; needs nightly vLLM **+ the `vllm/vllm-openai` image** ([why](#if-a-vllm-script-crashes-at-startup-the-nvcc--nvrtc-error)) |
+| [`unlimited-ocr-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/unlimited-ocr-vllm.py) | [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) | 3.3B | vLLM | DeepSeek-OCR-based; layout-grounded markdown (`--strip-grounding` for clean text). Single-image batch — needs Baidu's **dedicated `vllm/vllm-openai:unlimited-ocr` image** (`-cu129` on Hopper). Multi-page "long-horizon" parsing → serve it ([doc](serving-unlimited-ocr.md)); both engines do clean docs, **SGLang more robust** on hard scans. MIT |
+| [`nuextract3.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/nuextract3.py) | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | vLLM | Markdown OCR **+ schema-guided JSON extraction** (template/Pydantic). Needs `vllm/vllm-openai` image |
+| [`qianfan-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/qianfan-ocr.py) | [Qianfan-OCR](https://huggingface.co/baidu/Qianfan-OCR) | 4.7B | vLLM | #1 OmniDocBench v1.5 (93.12), Layout-as-Thought, 192 languages |
+| [`olmocr2-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/olmocr2-vllm.py) | [olmOCR-2-7B](https://huggingface.co/allenai/olmOCR-2-7B-1025-FP8) | 7B | vLLM | 82.4% olmOCR-Bench |
+| [`rolm-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/rolm-ocr.py) | [RolmOCR](https://huggingface.co/reducto/RolmOCR) | 7B | vLLM | Qwen2.5-VL based, general-purpose |
+| [`numarkdown-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/numarkdown-ocr.py) | [NuMarkdown-8B](https://huggingface.co/numind/NuMarkdown-8B-Thinking) | 8B | vLLM | Reasoning-based OCR |
 
 **Variants & tools** (same models, different I/O): `glm-ocr-v2.py` adds checkpoint/resume for very large jobs · `glm-ocr-bucket.py` and `falcon-ocr-bucket.py` read images/PDFs from a mounted bucket and write one `.md` per page · `surya-ocr-bucket.py` is the structured bucket recipe — OCR a bucket of files (no dataset round-trip) via either a FUSE mount **or** `huggingface_hub` batch-copy (`--io-mode mount|copy`), writing per-page `.md` + `.json` (`surya_blocks`) back to a bucket (resumable) and/or a pushed dataset · `ocr-vllm-judge.py` runs pairwise OCR-quality comparisons.
 
@@ -88,10 +88,10 @@ Most scripts here output markdown. These take a **schema** and return **structur
 
 | Script | Model | Size | Input | Output |
 |--------|-------|------|-------|--------|
-| `lfm2-vl-extract.py` | [LFM2.5-VL-1.6B-Extract](https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B-Extract) | 1.6B | image | JSON |
-| `nuextract3.py` | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | image | markdown **or** JSON |
-| `lfm2-extract.py` | [LFM2-1.2B-Extract](https://huggingface.co/LiquidAI/LFM2-1.2B-Extract) | 1.2B | **text** | JSON / XML / YAML |
-| `lift-extract.py` | [lift](https://huggingface.co/datalab-to/lift) | 9B | image **or** PDF | JSON |
+| [`lfm2-vl-extract.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lfm2-vl-extract.py) | [LFM2.5-VL-1.6B-Extract](https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B-Extract) | 1.6B | image | JSON |
+| [`nuextract3.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/nuextract3.py) | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | image | markdown **or** JSON |
+| [`lfm2-extract.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lfm2-extract.py) | [LFM2-1.2B-Extract](https://huggingface.co/LiquidAI/LFM2-1.2B-Extract) | 1.2B | **text** | JSON / XML / YAML |
+| [`lift-extract.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lift-extract.py) | [lift](https://huggingface.co/datalab-to/lift) | 9B | image **or** PDF | JSON |
 
 Pass `--schema` (inline JSON, a URL, or a file path). The LFM models are small and fast; run them on the `vllm/vllm-openai` image so the CUDA toolkit is present (each script's docstring has the exact command). Because `lfm2-extract.py` works on a **text** column, you can **chain it after OCR**: a recipe above turns a page into `markdown`, then `lfm2-extract.py` turns that markdown into fields.
 
@@ -112,7 +112,7 @@ hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
 
 | Script | Model | Size | Backend | Notes |
 |--------|-------|------|---------|-------|
-| `pp-doclayout.py` | [PP-DocLayout-L](https://huggingface.co/PaddlePaddle/PP-DocLayout-L) | 123M | paddleocr | Layout bboxes (no text). Bucket support: incremental parquet shards, resumable. |
+| [`pp-doclayout.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/pp-doclayout.py) | [PP-DocLayout-L](https://huggingface.co/PaddlePaddle/PP-DocLayout-L) | 123M | paddleocr | Layout bboxes (no text). Bucket support: incremental parquet shards, resumable. |
 
 ```bash
 hf jobs uv run --flavor l4x1 -s HF_TOKEN \
@@ -205,20 +205,20 @@ Beyond the shared flags, some models add their own. Run `--help` on any script f
 
 | Script | Extra options |
 |--------|---------------|
-| `surya-ocr.py` | `--task ocr\|layout\|table`, `--table-mode full\|simple`, `--pdf-column`/`--page-range`, `--blocks-column` |
-| `pp-ocrv6.py` | `--model-tier tiny\|small\|medium` (1.5M–34.5M params) |
-| `glm-ocr.py` | `--task ocr\|formula\|table` |
-| `paddleocr-vl.py` | `--task-mode ocr\|table\|formula\|chart` |
-| `paddleocr-vl-1.5.py` | `--task-mode ocr\|table\|formula\|chart\|spotting\|seal` |
-| `paddleocr-vl-1.6.py` | `--task-mode ocr\|table\|formula` |
-| `lighton-ocr.py` | `--vocab-size 151k\|32k\|16k` (smaller = faster on European languages) |
-| `deepseek-ocr-vllm.py` | `--resolution-mode tiny\|small\|base\|large\|gundam`, `--prompt-mode document\|image\|free\|figure\|describe`; pass `-e UV_TORCH_BACKEND=auto` |
-| `dots-ocr.py` | `--prompt-mode ocr\|layout-all\|layout-only` |
-| `dots-mocr.py` | `--prompt-mode` (8: ocr, layout-all, layout-only, web-parsing, scene-spotting, grounding-ocr, svg, general); SVG: `--model rednote-hilab/dots.mocr-svg --prompt-mode svg` |
-| `qianfan-ocr.py` | `--prompt-mode ocr\|table\|formula\|chart\|scene\|kie`, `--think` (Layout-as-Thought); `kie` needs `--custom-prompt` |
-| `unlimited-ocr-vllm.py` | `--strip-grounding` (drop `<\|det\|>`/`<\|ref\|>` grounding tags); needs the **`vllm/vllm-openai:unlimited-ocr`** image |
-| `numarkdown-ocr.py` | `--include-thinking` (store the reasoning trace) |
-| `nuextract3.py` | `--template` / `--schema` / `--enable-thinking` — see the NuExtract3 section above |
+| [`surya-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/surya-ocr.py) | `--task ocr\|layout\|table`, `--table-mode full\|simple`, `--pdf-column`/`--page-range`, `--blocks-column` |
+| [`pp-ocrv6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/pp-ocrv6.py) | `--model-tier tiny\|small\|medium` (1.5M–34.5M params) |
+| [`glm-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/glm-ocr.py) | `--task ocr\|formula\|table` |
+| [`paddleocr-vl.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl.py) | `--task-mode ocr\|table\|formula\|chart` |
+| [`paddleocr-vl-1.5.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl-1.5.py) | `--task-mode ocr\|table\|formula\|chart\|spotting\|seal` |
+| [`paddleocr-vl-1.6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl-1.6.py) | `--task-mode ocr\|table\|formula` |
+| [`lighton-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr.py) | `--vocab-size 151k\|32k\|16k` (smaller = faster on European languages) |
+| [`deepseek-ocr-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/deepseek-ocr-vllm.py) | `--resolution-mode tiny\|small\|base\|large\|gundam`, `--prompt-mode document\|image\|free\|figure\|describe`; pass `-e UV_TORCH_BACKEND=auto` |
+| [`dots-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/dots-ocr.py) | `--prompt-mode ocr\|layout-all\|layout-only` |
+| [`dots-mocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/dots-mocr.py) | `--prompt-mode` (8: ocr, layout-all, layout-only, web-parsing, scene-spotting, grounding-ocr, svg, general); SVG: `--model rednote-hilab/dots.mocr-svg --prompt-mode svg` |
+| [`qianfan-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/qianfan-ocr.py) | `--prompt-mode ocr\|table\|formula\|chart\|scene\|kie`, `--think` (Layout-as-Thought); `kie` needs `--custom-prompt` |
+| [`unlimited-ocr-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/unlimited-ocr-vllm.py) | `--strip-grounding` (drop `<\|det\|>`/`<\|ref\|>` grounding tags); needs the **`vllm/vllm-openai:unlimited-ocr`** image |
+| [`numarkdown-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/numarkdown-ocr.py) | `--include-thinking` (store the reasoning trace) |
+| [`nuextract3.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/nuextract3.py) | `--template` / `--schema` / `--enable-thinking` — see the NuExtract3 section above |
 
 **Image-mode models** — `abot-ocr.py` and `nuextract3.py` (Qwen3.5 architecture) need the `vllm/vllm-openai` image because the default uv-script image lacks `nvcc`. Add `--image vllm/vllm-openai:latest --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages` (see the NuExtract3 example above for the full command). `unlimited-ocr-vllm.py` is a special case — its architecture isn't in any stable vLLM wheel, so it needs Baidu's **dedicated** `vllm/vllm-openai:unlimited-ocr` image (tag `:unlimited-ocr-cu129` on Hopper), e.g. `--image vllm/vllm-openai:unlimited-ocr --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages` (its docstring has the full command).
 
