@@ -81,6 +81,7 @@ Legend: ✅ production-ready · ⚠️ works only with a required pinned image �
 | `nuextract3.py`, `lfm2-extract.py`, `lfm2-vl-extract.py` | ✅ | vLLM | l4x1 | structured extraction |
 | `hunyuan-ocr.py` | ✅ | vLLM | l4x1 | **1.0, revision-pinned** (root repo became 1.5 in-place); `transformers<5.13` cap — see gotcha |
 | `hunyuan-ocr-1.5.py` | ✅ | vLLM | l4x1 | tracks repo root (=1.5); task-locked prompts; `transformers<5.13` cap — see gotcha |
+| `granite-docling-ocr.py` | 🧪 | vLLM (stable) | l4x1 | new, not yet Jobs-smoke-tested; `--revision untied` default — see gotcha |
 | `rolm-ocr.py`, `smoldocling-ocr.py`, `numarkdown-ocr.py`, `qianfan-ocr.py`, `firered-ocr.py`, `abot-ocr.py`, `falcon-ocr.py`, `olmocr2-vllm.py`, `dots-mocr.py` | ✅ | vLLM | varies | see `README.md` for flags |
 | `pp-ocrv6.py`, `pp-doclayout.py` | ✅ | PaddleOCR / PaddleX | l4x1 | classical det+rec; dataset **or** bucket I/O |
 
@@ -179,6 +180,20 @@ ships in a stable wheel. 1.5 prompts are task-locked (12 types, Chinese wording,
 client's `hunyuan_tasks.py`) and sampling is card-locked (temp 0.0, rep-penalty 1.08) — don't
 "improve" either; upstream observed hand-tweaked prompts silently degrade quality.
 
+### `granite-docling-ocr.py` — untied revision + bf16-only failure mode
+Granite-Docling-258M (Idefics3 arch, in stable vLLM; SmolDocling successor). The `main` branch ships
+**tied weights that vLLM can't load** (`AttributeError: 'LlamaModel' object has no attribute 'wte'` at
+engine init — model-card troubleshooting), so the recipe defaults to `--revision untied` (IBM's own
+untied branch, used by the card's vLLM examples). That revision default is a *workaround pin*: loosen
+back to `main` once a stable vLLM loads the tied checkpoint. Output is **DocTags emitted as special
+tokens** — sampling must use `skip_special_tokens=False` (else the output is gutted); markdown comes
+from docling-core (`DocTagsDocument.from_doctags_and_image_pairs` → `DoclingDocument.export_to_markdown()`),
+falling back to raw DocTags on parse failure. Element task modes (`chart`/`formula`/`code`/`table`)
+and `--custom-prompt` store the raw output (OTSL/LaTeX/text — not a full-page doc). On pre-Ampere GPUs
+(no bf16, e.g. T4) the model emits pure `!` — the script auto-drops to float32 (card-documented
+workaround). Context is hard-capped at 8192 (`max_position_embeddings`, no rope_scaling); image tokens
+are bounded by the model's own processor (resize to 2048 longest edge, 512-px tiles).
+
 ### `glm-ocr.py`
 Chatty on blank pages / can emit degenerate repeats — that's **model quality, not a crash**; don't
 re-debug it as a recipe bug. (The actual historical crash was the `pyarrow<18` cap — see Conventions.)
@@ -261,6 +276,9 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
 
 ## Change log
 
+- **2026-07-08** — added `granite-docling-ocr.py` (IBM Granite-Docling-258M, stable vLLM, DocTags →
+  markdown via docling-core; `--revision untied` default, float32 fallback on pre-bf16 GPUs). Not yet
+  Jobs-smoke-tested — see the gotcha.
 - **2026-07-08** — HunyuanOCR upstream repo swap: pinned `hunyuan-ocr.py` to the last 1.0 revision +
   added `hunyuan-ocr-1.5.py` (12 task types, locked sampling); `transformers<5.13` cap in both for the
   stable-vLLM HunyuanVL register breakage (vllm#47872). See the hunyuan gotcha above.
