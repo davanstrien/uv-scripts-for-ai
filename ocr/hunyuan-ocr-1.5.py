@@ -51,6 +51,9 @@ vLLM: 0.18.1 (release) is the first stable wheel with native
 
 trust_remote_code=True per the model card (the processor ships custom code).
 
+License: Tencent Hunyuan Community License (territory excludes EU/UK/South Korea)
+https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE
+
 Note: batch_size defaults to 16 (untested on this arch as of writing — 1.5 on
 vLLM ≥0.18.1 should batch fine, unlike the 1.0 V1 batching issue; will be
 smoke-tested). Lower it if you hit engine errors.
@@ -299,6 +302,8 @@ tags:
 # Document OCR using {model_name} (HunyuanOCR-1.5)
 
 This dataset contains OCR results from images in [{source_dataset}](https://huggingface.co/datasets/{source_dataset}) using HunyuanOCR-1.5, a lightweight ~1B end-to-end OCR VLM from Tencent (128K context, 4K max image resolution).
+
+Model license: [Tencent Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (territory excludes EU/UK/South Korea).
 
 ## Processing Details
 

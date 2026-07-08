@@ -86,6 +86,8 @@ Legend: ✅ production-ready · ⚠️ works only with a required pinned image �
 
 **License note:** Surya and `lift` ship code as Apache-2.0 but **weights under a modified OpenRAIL-M**
 (research/personal/<$5M, no competitive use vs Datalab's API) — surfaced in each docstring + card.
+HunyuanOCR (1.0 + 1.5) is under the [Tencent Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE)
+(territory excludes EU/UK/South Korea; standard across Tencent's Hunyuan releases) — surfaced in each docstring + card.
 
 ---
 

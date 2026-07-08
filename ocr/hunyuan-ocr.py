@@ -38,6 +38,9 @@ Features:
 
 Model: tencent/HunyuanOCR (pinned to the last 1.0 revision)
 
+License: Tencent Hunyuan Community License (territory excludes EU/UK/South Korea)
+https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE
+
 Note: Due to vLLM V1 engine batching issues with HunyuanOCR, batch_size defaults to 1.
 """
 
@@ -292,6 +295,8 @@ tags:
 # Document OCR using {model_name}
 
 This dataset contains OCR results from images in [{source_dataset}](https://huggingface.co/datasets/{source_dataset}) using HunyuanOCR, a lightweight 1B VLM from Tencent.
+
+Model license: [Tencent Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (territory excludes EU/UK/South Korea).
 
 ## Processing Details
 
