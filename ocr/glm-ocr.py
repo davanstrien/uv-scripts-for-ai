@@ -199,6 +199,15 @@ def create_dataset_card(
         "table": "table recognition",
     }
 
+    # Canonical provenance stamp (see AGENTS.md): Jobs claim gated on JOB_ID, set by HF Jobs in-container.
+    on_jobs = os.environ.get("JOB_ID") is not None
+    hw = os.environ.get("ACCELERATOR") or ""
+    origin = (
+        "Produced on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs)"
+        + (f" (`{hw}`)" if hw else "")
+    ) if on_jobs else "Generated"
+    jobs_tag = "\n- hf-jobs" if on_jobs else ""
+
     return f"""---
 tags:
 - ocr
@@ -206,7 +215,7 @@ tags:
 - glm-ocr
 - markdown
 - uv-script
-- generated
+- generated{jobs_tag}
 ---
 
 # Document OCR using {model_name}
@@ -252,16 +261,16 @@ The dataset contains all original columns plus:
 
 ## Reproduction
 
+{origin} with the [`glm-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py) recipe from [uv-scripts](https://huggingface.co/uv-scripts). Run it yourself:
+
 ```bash
-uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \\
+hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \\
     {source_dataset} \\
     <output-dataset> \\
     --image-column {image_column} \\
     --batch-size {batch_size} \\
     --task {task}
 ```
-
-Generated with [UV Scripts](https://huggingface.co/uv-scripts)
 """
 
 

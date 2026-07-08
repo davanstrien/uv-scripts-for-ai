@@ -49,6 +49,34 @@ workflow's optional `repo_id` / `repo_type` inputs.)
   dataset repos hosting code).
 - Every script's docstring shows a runnable **`hf jobs uv run`** example. README examples use the **HF raw
   URL** `https://huggingface.co/datasets/uv-scripts/<repo>/raw/main/<script>.py` (the trackable invocation).
+- **Provenance stamp (canonical — copy this, don't invent variants).** Every output dataset card a recipe
+  pushes ends with a `## Reproduction` section in exactly this shape (inline it in the card f-string;
+  no shared helper):
+
+  ```python
+  on_jobs = os.environ.get("JOB_ID") is not None          # set by HF Jobs in-container
+  hw = os.environ.get("ACCELERATOR") or ""                # e.g. "a10g-small"; empty on CPU
+  origin = (
+      f"Produced on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs)"
+      + (f" (`{hw}`)" if hw else "")
+  ) if on_jobs else "Generated"
+  ```
+
+  ```markdown
+  ## Reproduction
+
+  {origin} with the [`<script>.py`](<script-raw-url>) recipe from [uv-scripts](https://huggingface.co/uv-scripts). Run it yourself:
+
+  ```bash
+  hf jobs uv run <script-raw-url> <args>
+  ```
+  ```
+
+  Rules: the reproduce command is **`hf jobs uv run`** (never bare `uv run` — the card is the Jobs
+  advertisement); the "Produced on HF Jobs" claim is **gated on `JOB_ID`** (a local run must not claim it);
+  credit goes to the **org**, never a personal name; no badges. Card frontmatter tags: always `uv-script`,
+  plus **`hf-jobs` when `JOB_ID` is set** — these are the adoption meters
+  (`list_datasets(tags="uv-script")` / `tags="hf-jobs"` count stamped public outputs).
 - GPU scripts check `torch.cuda.is_available()` and exit with a clear message. Write outputs to the Hub
   (`push_to_hub`) or a bucket (`-v hf://…`), never local paths (Jobs disk is ephemeral). Name by task, not tool.
 
