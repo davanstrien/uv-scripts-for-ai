@@ -316,6 +316,8 @@ def main(
     private: bool = False,
     shuffle: bool = False,
     seed: int = 42,
+    config: str = None,
+    create_pr: bool = False,
 ):
     """
     Process a dataset of document images through olmOCR-2 to extract markdown.
@@ -461,36 +463,41 @@ def main(
         ds = ds.remove_columns([metadata_column_name])
     ds = ds.add_column(metadata_column_name, all_metadata)
 
-    # Add inference information
-    inference_info = json.dumps(
-        {
-            "model": model,
-            "script": "olmocr2-vllm.py",
-            "version": "1.0.0",
-            "timestamp": datetime.now().isoformat(),
-            "batch_size": batch_size,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-        }
-    )
+    # Add inference information — standard schema: a JSON-string LIST of entries, each carrying
+    # model_id (used as the leaderboard label) and column_name (the output text column). The
+    # script's own extras (version, timestamp, sampling params) ride along as extra keys.
+    inference_entry = {
+        "model_id": model,
+        "column_name": output_column,
+        "script": "olmocr2-vllm.py",
+        "version": "1.0.0",
+        "timestamp": datetime.now().isoformat(),
+        "batch_size": batch_size,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
 
-    # Handle existing inference_info column
+    # Handle existing inference_info column (append to the list; create a fresh list otherwise)
     if inference_info_column in ds.column_names:
-        # Parse existing, append new model info
+        logger.info("Updating existing inference_info column")
+
         def update_inference_info(example):
             try:
-                existing = json.loads(example[inference_info_column])
-                if not isinstance(existing, list):
-                    existing = [existing]
-            except (json.JSONDecodeError, KeyError):
-                existing = []
-
-            existing.append(json.loads(inference_info))
-            return {inference_info_column: json.dumps(existing)}
+                existing_info = (
+                    json.loads(example[inference_info_column])
+                    if example[inference_info_column]
+                    else []
+                )
+            except (json.JSONDecodeError, TypeError):
+                existing_info = []
+            existing_info.append(inference_entry)
+            return {inference_info_column: json.dumps(existing_info)}
 
         ds = ds.map(update_inference_info)
     else:
-        ds = ds.add_column(inference_info_column, [inference_info] * len(ds))
+        logger.info("Creating new inference_info column")
+        inference_list = [json.dumps([inference_entry])] * len(ds)
+        ds = ds.add_column(inference_info_column, inference_list)
 
     # Calculate processing time
     elapsed_time = time.time() - start_time
@@ -515,9 +522,13 @@ def main(
 
     # Push to hub
     logger.info(f"Pushing to HuggingFace Hub: {output_dataset}")
-    ds.push_to_hub(
+    commit_info = ds.push_to_hub(
         output_dataset,
         private=private,
+        **({"config_name": config} if config else {}),
+        create_pr=create_pr,
+        commit_message=f"Add {model} OCR results ({len(ds)} samples)"
+        + (f" [{config}]" if config else ""),
     )
 
     # Update dataset card
@@ -528,6 +539,8 @@ def main(
     logger.info(f"✓ Dataset: https://huggingface.co/datasets/{output_dataset}")
     logger.info(f"✓ Processing time: {processing_time}")
     logger.info(f"✓ Samples processed: {len(ds):,}")
+    if create_pr and getattr(commit_info, "pr_url", None):
+        logger.info(f"✓ Pull request created: {commit_info.pr_url}")
 
 
 if __name__ == "__main__":
@@ -650,6 +663,15 @@ Examples:
         help="Make output dataset private",
     )
     parser.add_argument(
+        "--config",
+        help="Config/subset name when pushing to Hub (for benchmarking multiple models in one repo)",
+    )
+    parser.add_argument(
+        "--create-pr",
+        action="store_true",
+        help="Create a pull request instead of pushing directly (for parallel benchmarking)",
+    )
+    parser.add_argument(
         "--shuffle",
         action="store_true",
         help="Shuffle dataset before processing",
@@ -681,4 +703,6 @@ Examples:
         private=args.private,
         shuffle=args.shuffle,
         seed=args.seed,
+        config=args.config,
+        create_pr=args.create_pr,
     )
