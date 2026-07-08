@@ -12,8 +12,9 @@ script's docstring and `README.md`; benchmark result tables live in `OCR-BENCHMA
 
 ## Conventions & invariants
 
-Read this before adding or changing a recipe. Each rule maps to a failure we've actually hit; the
-planned **self-review skill** (see [Deferred](#deferred--tracked)) just enforces this list.
+Read this before adding or changing a recipe. Each rule maps to a failure we've actually hit.
+The mechanical rules are enforced by **`tools/check-contract.py`**; the **`review-recipe`** skill
+(`.claude/skills/review-recipe/`) drives the checker plus the judgment-only checks.
 
 - **Self-contained single file.** Each recipe is one PEP 723 UV script runnable from a raw URL
   (`hf jobs uv run <url>`). No shared *importable local* module (the job env only gets the one file).
@@ -247,10 +248,11 @@ LightOnOCR-2's commentary style).
 
 - **bucketbag adoption** — evaluate adopting `bucketbag` for the bucket recipes (slim recipes / harden
   bucketbag / find other beneficiaries) → [#67](https://github.com/davanstrien/uv-scripts-for-ai/issues/67).
-- **Self-review skill** (spark) — a dev-only skill (sibling to `bump-vllm-pins`) that reviews a recipe/diff
-  against the [Conventions](#conventions--invariants) block: context-length, collision guard, vLLM-image +
-  preflight, env guards, dep sanity, image bounding, optional Jobs smoke. Enforces that list; build after
-  the current work.
+- **Contract-gap sweep** — `tools/check-contract.py` (shipped 2026-07-08, with the `review-recipe`
+  skill — closes [#69](https://github.com/davanstrien/uv-scripts-for-ai/issues/69)) found the
+  pre-existing gaps: 8 recipes missing `--config`/`--create-pr`, inference_info key drift in ~10,
+  15 non-`[OCR FAILED]` sentinels, 14 bare pushes. Fix as one or two sweep PRs; the checker's
+  error list is the work queue.
 - **Error-signalling** — companion `ocr_error` status column (null cell + truncated exception) instead of
   sentinels in the output column, so "read nothing" ≠ "run errored". Touches ~all recipes; deferred.
 - **OCR smoke-test dataset** — a tiny curated set (~20–30 images across doc-type/quality/language/layout,
@@ -272,6 +274,10 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
 
 ## Change log
 
+- **2026-07-08** — contract tooling: `tools/check-contract.py` (8 AST rules over all recipes, CI-able)
+  + `review-recipe` dev skill (closes #69); conventions gained the new-recipe checklist, frozen
+  `inference_info` schema (`model_id`/`model_name`/`column_name`, list-of-entries, one `[OCR FAILED]`
+  sentinel), and the ⏳ status marker. Pre-existing gaps inventoried → see Deferred "Contract-gap sweep".
 - **2026-07-08** — HunyuanOCR upstream repo swap: pinned `hunyuan-ocr.py` to the last 1.0 revision +
   added `hunyuan-ocr-1.5.py` (12 task types, locked sampling); `transformers<5.13` cap in both for the
   stable-vLLM HunyuanVL register breakage (vllm#47872). See the hunyuan gotcha above.
