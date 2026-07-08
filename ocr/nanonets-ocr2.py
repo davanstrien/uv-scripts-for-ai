@@ -277,6 +277,8 @@ def main(
     output_column: str = "markdown",
     overwrite: bool = False,
     verbose: bool = False,
+    config: str = None,
+    create_pr: bool = False,
 ):
     """Process images from HF dataset through Nanonets-OCR2-3B model."""
 
@@ -406,7 +408,15 @@ def main(
 
     # Push to hub
     logger.info(f"Pushing to {output_dataset}")
-    dataset.push_to_hub(output_dataset, private=private, token=HF_TOKEN)
+    commit_info = dataset.push_to_hub(
+        output_dataset,
+        private=private,
+        token=HF_TOKEN,
+        **({"config_name": config} if config else {}),
+        create_pr=create_pr,
+        commit_message=f"Add {model} OCR results ({len(dataset)} samples)"
+        + (f" [{config}]" if config else ""),
+    )
 
     # Calculate processing time
     end_time = datetime.now()
@@ -436,6 +446,8 @@ def main(
     logger.info(
         f"Dataset available at: https://huggingface.co/datasets/{output_dataset}"
     )
+    if create_pr and getattr(commit_info, "pr_url", None):
+        logger.info(f"Pull request created: {commit_info.pr_url}")
 
     if verbose:
         import importlib.metadata
@@ -560,6 +572,15 @@ Examples:
         "--private", action="store_true", help="Make output dataset private"
     )
     parser.add_argument(
+        "--config",
+        help="Config/subset name when pushing to Hub (for benchmarking multiple models in one repo)",
+    )
+    parser.add_argument(
+        "--create-pr",
+        action="store_true",
+        help="Create a pull request instead of pushing directly (for parallel benchmarking)",
+    )
+    parser.add_argument(
         "--shuffle",
         action="store_true",
         help="Shuffle the dataset before processing (useful for random sampling)",
@@ -607,4 +628,6 @@ Examples:
         output_column=args.output_column,
         overwrite=args.overwrite,
         verbose=args.verbose,
+        config=args.config,
+        create_pr=args.create_pr,
     )
