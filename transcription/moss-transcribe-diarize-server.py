@@ -333,7 +333,21 @@ def main():
         sys.exit(1)
     if args.max_files:
         files = files[: args.max_files]
-    logger.info(f"Found {len(files)} audio file(s)")
+
+    # Resume: outputs are written per file, so a rerun after a timeout or
+    # crash only processes what's missing.
+    done = {
+        f
+        for f in files
+        if (output_dir / f.relative_to(input_dir).with_suffix(".json")).exists()
+    }
+    if done:
+        logger.info(f"Skipping {len(done)} file(s) with existing output JSON")
+        files = [f for f in files if f not in done]
+        if not files:
+            logger.info("Nothing to do — all outputs exist")
+            return
+    logger.info(f"Found {len(files)} audio file(s) to process")
 
     wait_for_server(args.server)
 
