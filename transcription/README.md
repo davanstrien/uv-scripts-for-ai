@@ -124,7 +124,9 @@ Long files are generation-bound (the whole diarized transcript is decoded in one
 
 ## Serve as a live endpoint
 
-MOSS-Transcribe-Diarize can be served as an OpenAI-compatible transcription API with vLLM on Jobs (see [Serving on Jobs](https://huggingface.co/docs/hub/jobs-serving)). Model support was merged into vLLM on 2026-07-08 — after the v0.24.0 release — so use a commit-pinned nightly image until the next release (then plain `vllm/vllm-openai:latest` works). The image needs the audio extras installed first:
+MOSS-Transcribe-Diarize can be served as an OpenAI-compatible transcription API on Jobs (see [Serving on Jobs](https://huggingface.co/docs/hub/jobs-serving)). Two verified paths; both expose `/v1/audio/transcriptions` at `https://<job-id>--8000.hf.jobs` (requests need an HF token with read access to your namespace).
+
+**vLLM** (simplest; returns the raw `[start][Sxx]text[end]` transcript). Model support was merged into vLLM on 2026-07-08 — after the v0.24.0 release — so use a commit-pinned nightly image until the next release (then plain `vllm/vllm-openai:latest` works). The image needs the audio extras installed first:
 
 ```bash
 hf jobs run --detach --expose 8000 --flavor l4x1 -s HF_TOKEN --timeout 2h \
@@ -132,18 +134,28 @@ hf jobs run --detach --expose 8000 --flavor l4x1 -s HF_TOKEN --timeout 2h \
     bash -c "pip install librosa soundfile && vllm serve OpenMOSS-Team/MOSS-Transcribe-Diarize --trust-remote-code"
 ```
 
-`--expose 8000` makes the server reachable at `https://<job-id>--8000.hf.jobs` (requires an HF token with read access to your namespace). Post audio to `/v1/audio/transcriptions`:
+Parse the response `text` into segments with `parse_transcript` from the model's [GitHub package](https://github.com/OpenMOSS/MOSS-Transcribe-Diarize).
+
+**sglang-omni** (upstream's recommended production server; adds `response_format=verbose_json` with parsed speaker segments). Its prebuilt image predates this model, so install it at job start over a current [sglang nightly image](https://hub.docker.com/r/lmsysorg/sglang/tags) — the clone + fresh-venv sequence is [upstream's documented install](https://github.com/sgl-project/sglang-omni/blob/main/docs/get_started/installation.md) and adds under a minute:
+
+```bash
+hf jobs run --detach --expose 8000 --flavor l4x1 -s HF_TOKEN --timeout 2h \
+    lmsysorg/sglang:nightly-dev-cu13-20260709-074bb928 -- \
+    bash -c "pip install -q uv 2>/dev/null; git clone --depth 1 https://github.com/sgl-project/sglang-omni.git && cd sglang-omni && uv venv .venv -p 3.12 && . .venv/bin/activate && uv pip install . && sgl-omni serve --model-path OpenMOSS-Team/MOSS-Transcribe-Diarize --host 0.0.0.0 --port 8000 --max-running-requests 16 --mem-fraction-static 0.80"
+```
+
+Query either server the same way (`response_format=verbose_json` on sglang-omni only; raise `max_new_tokens`, e.g. `65536`, for long recordings):
 
 ```bash
 curl -X POST https://<job-id>--8000.hf.jobs/v1/audio/transcriptions \
     -H "Authorization: Bearer $HF_TOKEN" \
     -F model=OpenMOSS-Team/MOSS-Transcribe-Diarize \
     -F file=@meeting.wav \
-    -F response_format=json \
-    -F temperature=0
+    -F response_format=verbose_json \
+    -F max_new_tokens=65536
 ```
 
-The response `text` is the raw `[start][Sxx]text[end]` transcript — parse it into segments with `parse_transcript` from the model's [GitHub package](https://github.com/OpenMOSS/MOSS-Transcribe-Diarize) (`verbose_json` is not supported by vLLM for this model; parsed-segment responses are an [sglang-omni](https://github.com/sgl-project/sglang-omni) adapter feature, see Notes). The job — and its billing — stops at `--timeout` or `hf jobs cancel <job_id>`.
+The job — and its billing — stops at `--timeout` or `hf jobs cancel <job_id>`.
 
 ## Notes
 
@@ -151,4 +163,4 @@ The response `text` is the raw `[start][Sxx]text[end]` transcript — parse it i
 - **Tokenizer workaround**: `cohere-transcribe.py` applies a one-line patch for a tokenizer compat issue. Will be removed once upstream fixes land ([model discussion](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026/discussions/11)).
 - **easytranscriber**: the Cohere backend requires `transformers>=5.4.0` (pinned in the script). Pyannote VAD is gated — accept terms at [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) and [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) if using `--vad pyannote`. Otherwise stick with the default Silero VAD.
 - **moss-transcribe-diarize**: not gated (Apache 2.0). Uses `trust_remote_code=True` (model code lives in the [model repo](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize)); inference helpers install from the model's [GitHub repo](https://github.com/OpenMOSS/MOSS-Transcribe-Diarize) pinned to a commit (the package isn't on PyPI). Generation time scales with audio length — long multi-speaker recordings emit tens of thousands of tokens, so watch the `truncated` flag in the output JSON.
-- **sglang-omni serving**: upstream's recommended production server ([sglang-omni](https://github.com/sgl-project/sglang-omni)) adds `verbose_json` (parsed speaker segments) on the same endpoint, but is not runnable on Jobs yet: as of 2026-07-09 the only published image (`lmsysorg/sglang-omni:dev`, 2026-06-16) predates the model's support (added 2026-07-04) and the `sgl-omni` CLI, and the newer code needs a newer core `sglang` than the image ships. Use the vLLM path above until a fresh image lands.
+- **sglang-omni install**: the `lmsysorg/sglang-omni:dev` image predates this model — don't use it. Install from git over a current `lmsysorg/sglang` nightly image as shown above, and follow the clone + fresh-venv sequence exactly: installing outside the repo skips its `[tool.uv]` dependency overrides and fails on a protobuf conflict. Once they publish a fresh image, `sgl-omni serve` alone will do.
