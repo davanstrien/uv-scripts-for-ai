@@ -54,7 +54,7 @@ No download/upload step. Buckets are mounted directly as volumes via [hf-mount](
 | `cohere-transcribe-vllm.py` | Cohere Transcribe (2B) | vLLM nightly | `.txt` | 214x RT (A100) |
 | `easytranscriber-transcribe.py` | Cohere Transcribe 2B (default) or Whisper variants | [easytranscriber](https://github.com/kb-labb/easytranscriber) | JSON word timestamps (+ optional `.txt` / `.srt`) | 42.9x RT (L4) |
 | `moss-transcribe-diarize.py` | [MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize) (0.9B) | transformers (remote code) | JSON speaker segments `{start, end, speaker, text}` (+ optional `.txt` / `.srt`) | 3.2x RT (A10G, 74-min file) |
-| `moss-transcribe-diarize-server.py` | [MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize) (0.9B) | in-job sgl-omni server | JSON speaker segments (+ optional `.txt`) | 37.8x RT aggregate (A100, 4 streams) |
+| `moss-transcribe-diarize-server.py` | [MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize) (0.9B) | in-job sgl-omni server | JSON speaker segments (+ optional `.txt`) | 47.4x RT aggregate (A100, 6 streams) |
 
 **`cohere-transcribe.py`** (recommended for plain text) — uses `model.transcribe()` with automatic long-form chunking, overlap, and reassembly. Stable dependencies.
 
@@ -138,11 +138,13 @@ CBS Suspense (1940s radio drama), 66 episodes, 33 hours of audio.
 
 Long files are generation-bound (the whole diarized transcript is decoded in one pass), so RTFx drops as recordings grow; short clips run far faster. `l4x1` also works — same class of GPU.
 
-**`moss-transcribe-diarize-server.py`** (Apollo 11 mission audio, 3 tapes / 2.7 h, concurrency 4):
+**`moss-transcribe-diarize-server.py`** (Apollo 11 mission audio from the [Internet Archive](https://archive.org/details/Apollo11Audio) — the full collection in one job):
 
-| GPU | Time | RTFx | Output |
-|-----|------|------|--------|
-| A100 | 4.3 min | 37.8x realtime aggregate | 1,697 segments, 96–99% coverage per tape |
+| GPU | Audio | Time | RTFx | Cost | Output |
+|-----|-------|------|------|------|--------|
+| A100 | 174.5 h (103 tapes) | 3.8 h | 47.4x realtime aggregate | $9.46 | 45k speaker segments, 97% coverage |
+
+Result published as [`davanstrien/apollo-11-diarized`](https://huggingface.co/datasets/davanstrien/apollo-11-diarized) with a searchable demo at [`davanstrien/apollo-11-search`](https://huggingface.co/spaces/davanstrien/apollo-11-search).
 
 ### Data
 
