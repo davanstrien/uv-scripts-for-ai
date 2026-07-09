@@ -323,7 +323,8 @@ def run_streaming_shard(ds, model, prompt_str, args):
         if not part_buf:
             return
         path = f"/tmp/part-{args.shard_index:05d}-{prog['part_idx']:04d}.parquet"
-        pq.write_table(pa.Table.from_pylist(part_buf), path)
+        pq.write_table(pa.Table.from_pylist(part_buf), path,
+                       row_group_size=25_000, write_page_index=True)
         dest = f"runs/{args.run_id}/data/{args.shard_index:05d}.part{prog['part_idx']:04d}.parquet"
         logger.info(f"Uploading {len(part_buf):,}-row part → {args.output_bucket}/{dest}")
         put_bucket_files(args.output_bucket, [(path, dest)])
@@ -591,7 +592,10 @@ def main():
             table = ds.with_format("arrow")[:].append_column(args.output_column, emb_col)
             out_path = f"/tmp/shard-{args.shard_index:05d}.parquet"
             dest = f"runs/{args.run_id}/data/{args.shard_index:05d}.parquet"
-            pq.write_table(table, out_path)
+            # Small row groups + page index or the dataset viewer can't random-access:
+            # pyarrow's default ~1M-row groups ≈ multi-GB with an embeddings column
+            # ("Scan size limit exceeded"). ~25k rows ≈ ~100MB here.
+            pq.write_table(table, out_path, row_group_size=25_000, write_page_index=True)
             logger.info(f"Uploading shard parquet → {args.output_bucket}/{dest}")
             put_bucket_files(args.output_bucket, [(out_path, dest)])
         except Exception:
