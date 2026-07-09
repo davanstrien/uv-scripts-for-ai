@@ -7,7 +7,7 @@
 #     "numpy",
 #     "pillow",
 #     "einops",
-#     "huggingface-hub",
+#     "huggingface-hub>=1.12",
 # ]
 # ///
 """
@@ -56,6 +56,18 @@ Examples:
     # Test on a small slice first, keep the output private
     hf jobs uv run --flavor l4x1 -s HF_TOKEN generate-embeddings.py \\
         stanfordnlp/imdb  your-name/imdb-emb --max-samples 100 --private
+
+FAN-OUT (multi-job) MODE:
+    Split one embedding run across N Jobs with --num-shards/--shard-index (or the RANK /
+    NUM_SHARDS / RUN_ID / OUTPUT_BUCKET env vars, so a launcher only varies RANK per job —
+    see launch-embedding-fleet.py). Each shard takes an exact, non-overlapping contiguous
+    slice, writes its rows to the run's bucket as runs/<run-id>/data/<rank>.parquet (object
+    PUTs — no repo-commit contention), and heartbeats progress to
+    runs/<run-id>/status/<rank>.json. consolidate-shards.py merges shards into the final
+    dataset with one commit. Re-running a failed rank overwrites only its own files (resume).
+    Note: --max-samples applies BEFORE sharding, so a capped run still partitions exactly.
+    Each rank still downloads the full split before slicing — fine at few-million-row scale;
+    for larger corpora shard at the file level or stream instead.
 """
 import argparse
 import logging
@@ -204,6 +216,155 @@ def sniff_token_lengths(model, texts, max_seq_len, sample=512):
     return median
 
 
+def put_bucket_files(bucket_id, add, max_retries=3):
+    """batch_bucket_files with a short retry — bucket PUTs are cheap object writes but can
+    flake transiently; shard data must not be lost to a blip."""
+    from huggingface_hub import batch_bucket_files
+    for attempt in range(1, max_retries + 1):
+        try:
+            batch_bucket_files(bucket_id, add=add)
+            return True
+        except Exception as e:
+            if attempt == max_retries:
+                raise
+            logger.warning(f"bucket PUT attempt {attempt}/{max_retries} failed: {e}; retrying in {5 * attempt}s")
+            time.sleep(5 * attempt)
+
+
+class StatusReporter:
+    """Fan-out worker heartbeat: PUTs runs/<run-id>/status/<rank>.json to the run bucket,
+    throttled to one write per ~30s (last-writer-wins per key, so N workers never contend).
+    A failed status write must never kill a paid embedding run — errors are logged, not raised."""
+
+    def __init__(self, bucket, run_id, rank, rows_total, tokens_per_row=None):
+        self.bucket, self.run_id, self.rank = bucket, run_id, rank
+        self.rows_total, self.tokens_per_row = rows_total, tokens_per_row
+        self.started_at = time.time()
+        self.rows_done = 0
+        self._last_write = 0.0
+
+    def report(self, rows_done=None, state="running", force=False):
+        import json
+        if rows_done is not None:
+            self.rows_done = rows_done
+        now = time.time()
+        if not force and now - self._last_write < 30:
+            return
+        elapsed = max(now - self.started_at, 1e-6)
+        payload = {
+            "run_id": self.run_id,
+            "rank": self.rank,
+            "state": state,
+            "rows_done": self.rows_done,
+            "rows_total": self.rows_total,
+            "tokens_done_est": int(self.rows_done * self.tokens_per_row) if self.tokens_per_row else None,
+            "rows_per_sec": round(self.rows_done / elapsed, 1),
+            "started_at": self.started_at,
+            "updated_at": now,
+            "job_id": os.environ.get("JOB_ID"),
+        }
+        dest = f"runs/{self.run_id}/status/{self.rank:05d}.json"
+        try:
+            put_bucket_files(self.bucket, [(json.dumps(payload).encode(), dest)], max_retries=2)
+            self._last_write = now
+        except Exception as e:
+            logger.warning(f"status write skipped ({e})")
+
+
+def run_streaming_shard(ds, model, prompt_str, args):
+    """Streaming fan-out worker: iterate this rank's FILE-shard, encode in chunks, and flush
+    parquet PARTS to the bucket every ~250k rows, so memory and disk stay bounded no matter
+    how big the shard is. Output keys: runs/<run-id>/data/<rank>.part<p>.parquet — the
+    consolidator accepts both this and row mode's single <rank>.parquet naming."""
+    import itertools
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    encode_fn = model.encode_query if args.query_mode else model.encode_document
+    encode_kwargs = {"prompt": prompt_str} if prompt_str is not None else {}
+
+    def clean(t):
+        return t if isinstance(t, str) and t.strip() else " "
+
+    # Buffer a head sample for token sniffing + the auto-batch probe, then chain it back.
+    it = iter(ds)
+    head = list(itertools.islice(it, 1024))
+    if not head:
+        logger.error(f"File-shard {args.shard_index} yielded no rows.")
+        sys.exit(1)
+    if args.column not in head[0]:
+        logger.error(f"Column {args.column!r} not in rows. Available: {sorted(head[0])}")
+        sys.exit(1)
+    if args.output_column in head[0]:
+        logger.error(f"Output column {args.output_column!r} already exists — choose another --output-column.")
+        sys.exit(1)
+    head_texts = [clean(r[args.column]) for r in head]
+    median_tok = sniff_token_lengths(model, head_texts, args.max_seq_len)
+    if str(args.batch_size).lower() == "auto":
+        if median_tok is None or median_tok >= 256:
+            candidates = (32, 64, 128, 256)
+        elif median_tok >= 64:
+            candidates = (64, 128, 256, 512)
+        else:
+            candidates = (128, 256, 512, 1024)
+        batch_size = find_batch_size(model, head_texts, args.normalize, candidates=candidates)
+    else:
+        batch_size = int(args.batch_size)
+
+    reporter = StatusReporter(args.output_bucket, args.run_id, args.shard_index,
+                              rows_total=None, tokens_per_row=median_tok)
+    reporter.report(0, force=True)
+
+    chunk_rows, part_rows = 25_000, 250_000
+    prog = {"part_idx": 0, "rows_done": 0}
+    buf_rows, buf_texts, part_buf = [], [], []
+
+    def flush_part():
+        if not part_buf:
+            return
+        path = f"/tmp/part-{args.shard_index:05d}-{prog['part_idx']:04d}.parquet"
+        pq.write_table(pa.Table.from_pylist(part_buf), path)
+        dest = f"runs/{args.run_id}/data/{args.shard_index:05d}.part{prog['part_idx']:04d}.parquet"
+        logger.info(f"Uploading {len(part_buf):,}-row part → {args.output_bucket}/{dest}")
+        put_bucket_files(args.output_bucket, [(path, dest)])
+        os.remove(path)
+        part_buf.clear()
+        prog["part_idx"] += 1
+
+    def encode_chunk():
+        if not buf_rows:
+            return
+        emb = encode_fn(buf_texts, batch_size=batch_size, show_progress_bar=False,
+                        convert_to_numpy=True, normalize_embeddings=args.normalize, **encode_kwargs)
+        for r, e in zip(buf_rows, emb):
+            r[args.output_column] = e.tolist()
+        part_buf.extend(buf_rows)
+        prog["rows_done"] += len(buf_rows)
+        buf_rows.clear()
+        buf_texts.clear()
+        reporter.report(prog["rows_done"])
+        if len(part_buf) >= part_rows:
+            flush_part()
+
+    t0 = time.perf_counter()
+    try:
+        for row in itertools.chain(head, it):
+            buf_rows.append(dict(row))
+            buf_texts.append(clean(row[args.column]))
+            if len(buf_rows) >= chunk_rows:
+                encode_chunk()
+        encode_chunk()
+        flush_part()
+    except Exception:
+        reporter.report(state="error", force=True)
+        raise
+    secs = time.perf_counter() - t0
+    logger.info(f"Embedded {prog['rows_done']:,} rows in {secs:.0f}s "
+                f"({prog['rows_done'] / max(secs, 1e-6):.0f} rows/s), {prog['part_idx']} part(s)")
+    reporter.report(prog["rows_done"], state="done", force=True)
+    logger.info(f"✅ streaming shard {args.shard_index + 1}/{args.num_shards} of run {args.run_id} uploaded")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("input_dataset", help="Input dataset ID on the Hugging Face Hub")
@@ -232,7 +393,57 @@ def main():
     p.add_argument("--normalize", action="store_true", default=True)
     p.add_argument("--no-normalize", dest="normalize", action="store_false")
     p.add_argument("--private", action="store_true", help="Make the output dataset private")
+    # Fan-out mode (see docstring). Env-defaulted so a launcher drives workers purely via env.
+    # Defaults stay raw strings; int conversion happens after parse so a malformed env var
+    # reaches p.error() instead of blowing up argparse construction.
+    p.add_argument("--num-shards", default=os.environ.get("NUM_SHARDS"),
+                   help="Fan-out: total number of shards (env NUM_SHARDS). Enables shard mode.")
+    p.add_argument("--shard-index", default=os.environ.get("RANK"),
+                   help="Fan-out: this worker's shard index, 0-based (env RANK).")
+    p.add_argument("--output-bucket", default=os.environ.get("OUTPUT_BUCKET"),
+                   help="Fan-out: bucket for shard parquets + status (env OUTPUT_BUCKET).")
+    p.add_argument("--run-id", default=os.environ.get("RUN_ID"),
+                   help="Fan-out: run identifier grouping shards under runs/<run-id>/ (env RUN_ID).")
+    p.add_argument("--streaming", action="store_true",
+                   default=os.environ.get("STREAMING") == "1",
+                   help="Fan-out: stream the dataset and shard at the FILE level (env STREAMING=1). "
+                        "Each rank downloads only its own files — use for very big datasets. "
+                        "Text modality only; incompatible with --max-samples.")
+    p.add_argument("--revision", default=os.environ.get("REVISION"),
+                   help="Input dataset revision (commit sha). Pin this in fan-out runs so every "
+                        "rank slices the identical snapshot (env REVISION).")
     args = p.parse_args()
+
+    def int_or_error(val, name):
+        if val is None:
+            return None
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            p.error(f"{name} must be an integer (got {val!r}).")
+
+    args.num_shards = int_or_error(args.num_shards, "--num-shards / NUM_SHARDS")
+    args.shard_index = int_or_error(args.shard_index, "--shard-index / RANK")
+
+    sharded = args.num_shards is not None
+    if sharded:
+        if args.num_shards < 1:
+            p.error(f"--num-shards must be >= 1 (got {args.num_shards}).")
+        if args.shard_index is None or not 0 <= args.shard_index < args.num_shards:
+            p.error(f"--shard-index must be in [0, {args.num_shards}) when --num-shards is set "
+                    f"(got {args.shard_index}).")
+        if not (args.output_bucket and args.run_id):
+            p.error("fan-out mode needs --output-bucket and --run-id (env OUTPUT_BUCKET / RUN_ID).")
+    elif args.shard_index is not None:
+        p.error("--shard-index requires --num-shards.")
+
+    if args.streaming:
+        if not sharded:
+            p.error("--streaming is a fan-out mode — it needs --num-shards/--shard-index.")
+        if args.modality != "text":
+            p.error("--streaming currently supports text modality only.")
+        if args.max_samples:
+            p.error("--max-samples is incompatible with --streaming (use row mode for capped test runs).")
 
     import torch
     from datasets import load_dataset
@@ -245,18 +456,45 @@ def main():
     if not torch.cuda.is_available():
         logger.warning("No CUDA — running on CPU (much slower). Prefer a GPU flavor, e.g. --flavor l4x1.")
 
-    logger.info(f"Loading {args.input_dataset} [{args.split}]")
-    ds = (load_dataset(args.input_dataset, args.config, split=args.split) if args.config
-          else load_dataset(args.input_dataset, split=args.split))
-    if args.column not in ds.column_names:
-        logger.error(f"Column {args.column!r} not found. Available: {ds.column_names}")
-        sys.exit(1)
-    if args.output_column in ds.column_names:
-        logger.error(f"Output column {args.output_column!r} already exists — choose another --output-column.")
-        sys.exit(1)
-    if args.max_samples:
+    logger.info(f"Loading {args.input_dataset} [{args.split}]"
+                + (f" @ {args.revision[:12]}" if args.revision else "")
+                + (" (streaming)" if args.streaming else ""))
+    load_kwargs = {"split": args.split, "streaming": args.streaming}
+    if args.revision:
+        load_kwargs["revision"] = args.revision
+    ds = (load_dataset(args.input_dataset, args.config, **load_kwargs) if args.config
+          else load_dataset(args.input_dataset, **load_kwargs))
+    if ds.column_names is not None:
+        if args.column not in ds.column_names:
+            logger.error(f"Column {args.column!r} not found. Available: {ds.column_names}")
+            sys.exit(1)
+        if args.output_column in ds.column_names:
+            logger.error(f"Output column {args.output_column!r} already exists — choose another --output-column.")
+            sys.exit(1)
+    if args.max_samples and not args.streaming:
         ds = ds.select(range(min(args.max_samples, len(ds))))
-    logger.info(f"{len(ds)} rows; modality={args.modality}")
+    if sharded and args.streaming:
+        # File-level split: each rank reads ONLY its own data files. Sizes vary per rank and
+        # rows_total is unknown upfront; correctness (exact, deterministic, idempotent) holds
+        # as long as every rank pins the same --revision.
+        if ds.n_shards < args.num_shards:
+            logger.error(f"Dataset has {ds.n_shards} file shard(s) < --num-shards {args.num_shards}. "
+                         f"Lower --num-shards or use row mode.")
+            sys.exit(1)
+        ds = ds.shard(num_shards=args.num_shards, index=args.shard_index)
+        logger.info(f"Fan-out file-shard {args.shard_index + 1}/{args.num_shards} of run {args.run_id} "
+                    f"({ds.n_shards} file(s) for this rank)")
+    elif sharded:
+        # Contiguous slices keep row order reconstructable at consolidation. Note the whole
+        # split was still downloaded above — acceptable at few-M rows, not at corpus scale.
+        ds = ds.shard(num_shards=args.num_shards, index=args.shard_index, contiguous=True)
+        logger.info(f"Fan-out shard {args.shard_index + 1}/{args.num_shards} of run {args.run_id}")
+        if len(ds) == 0:
+            logger.error(f"Shard {args.shard_index} is empty — num_shards exceeds the row count. "
+                         f"Lower --num-shards (or raise --max-samples).")
+            sys.exit(1)
+    if not args.streaming:
+        logger.info(f"{len(ds)} rows; modality={args.modality}")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = SentenceTransformer(args.model, device=device, trust_remote_code=True)
@@ -269,6 +507,9 @@ def main():
     prompt_str = None  # None = let encode_query/encode_document choose natively
     if args.modality == "text":
         prompt_str = resolve_prompt(model, args.model, is_query=args.query_mode, args=args)
+        if args.streaming:
+            run_streaming_shard(ds, model, prompt_str, args)
+            return
         items = [t if isinstance(t, str) and t.strip() else " " for t in ds[args.column]]
     else:
         if args.prompt or args.prompt_name:
@@ -302,11 +543,63 @@ def main():
     else:
         encode_fn = model.encode
         encode_kwargs = {}
+    reporter = None
+    if sharded:
+        reporter = StatusReporter(args.output_bucket, args.run_id, args.shard_index,
+                                  rows_total=len(items), tokens_per_row=median_tok)
+        reporter.report(0, force=True)
+
     t0 = time.perf_counter()
-    emb = encode_fn(items, batch_size=batch_size, show_progress_bar=True,
-                    convert_to_numpy=True, normalize_embeddings=args.normalize, **encode_kwargs)
+    try:
+        if reporter is None:
+            emb = encode_fn(items, batch_size=batch_size, show_progress_bar=True,
+                            convert_to_numpy=True, normalize_embeddings=args.normalize, **encode_kwargs)
+        else:
+            # Macro-chunks so the heartbeat can report rows_done between encode calls.
+            # Chunking doesn't change results — batching happens at batch_size regardless.
+            import numpy as np
+            chunk_rows = 25_000
+            parts = []
+            for start in range(0, len(items), chunk_rows):
+                chunk = items[start:start + chunk_rows]
+                parts.append(encode_fn(chunk, batch_size=batch_size, show_progress_bar=True,
+                                       convert_to_numpy=True, normalize_embeddings=args.normalize,
+                                       **encode_kwargs))
+                reporter.report(start + len(chunk))
+            emb = np.concatenate(parts) if len(parts) > 1 else parts[0]
+    except Exception:
+        if reporter:
+            reporter.report(state="error", force=True)
+        raise
     secs = time.perf_counter() - t0
     logger.info(f"Embedded {len(items)} in {secs:.1f}s ({len(items)/secs:.0f} rows/s), dim={dim}")
+
+    if sharded:
+        # Shard mode: no repo commit here (N workers committing → 412 contention). Write this
+        # rank's parquet to the run bucket; consolidate-shards.py makes the single final commit.
+        #
+        # Build the embedding column as zero-copy float32 Arrow — NEVER as Python floats.
+        # `[e.tolist() for e in emb]` on an 800k-row shard is ~10 GB of PyFloat objects and
+        # swap-thrashed L4 workers into multi-hour silent stalls (wiki fleet, 2026-07-09).
+        import numpy as np
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        reporter.report(len(items), state="writing", force=True)
+        try:
+            emb32 = np.ascontiguousarray(emb, dtype=np.float32)
+            emb_col = pa.FixedSizeListArray.from_arrays(pa.array(emb32.ravel()), emb32.shape[1])
+            table = ds.with_format("arrow")[:].append_column(args.output_column, emb_col)
+            out_path = f"/tmp/shard-{args.shard_index:05d}.parquet"
+            dest = f"runs/{args.run_id}/data/{args.shard_index:05d}.parquet"
+            pq.write_table(table, out_path)
+            logger.info(f"Uploading shard parquet → {args.output_bucket}/{dest}")
+            put_bucket_files(args.output_bucket, [(out_path, dest)])
+        except Exception:
+            reporter.report(state="error", force=True)
+            raise
+        reporter.report(len(items), state="done", force=True)
+        logger.info(f"✅ shard {args.shard_index + 1}/{args.num_shards} of run {args.run_id} uploaded")
+        return
 
     ds = ds.add_column(args.output_column, [e.tolist() for e in emb])
 
