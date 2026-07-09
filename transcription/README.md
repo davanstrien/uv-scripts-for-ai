@@ -46,6 +46,7 @@ No download/upload step. Buckets are mounted directly as volumes via [hf-mount](
 | `cohere-transcribe-vllm.py` | Cohere Transcribe (2B) | vLLM nightly | `.txt` | 214x RT (A100) |
 | `easytranscriber-transcribe.py` | Cohere Transcribe 2B (default) or Whisper variants | [easytranscriber](https://github.com/kb-labb/easytranscriber) | JSON word timestamps (+ optional `.txt` / `.srt`) | 42.9x RT (L4) |
 | `moss-transcribe-diarize.py` | [MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize) (0.9B) | transformers (remote code) | JSON speaker segments `{start, end, speaker, text}` (+ optional `.txt` / `.srt`) | 3.2x RT (A10G, 74-min file) |
+| `moss-transcribe-diarize-server.py` | [MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize) (0.9B) | in-job sgl-omni server | JSON speaker segments (+ optional `.txt`) | 37.8x RT aggregate (A100, 4 streams) |
 
 **`cohere-transcribe.py`** (recommended for plain text) — uses `model.transcribe()` with automatic long-form chunking, overlap, and reassembly. Stable dependencies.
 
@@ -54,6 +55,8 @@ No download/upload step. Buckets are mounted directly as volumes via [hf-mount](
 **`easytranscriber-transcribe.py`** — when you need **word-level timestamps** (subtitles, search indexing, forced alignment). Runs VAD → ASR → wav2vec2 emissions → forced alignment. Defaults to the Cohere backend so you get the same model as the other scripts with alignment on top; swap to `--backend ct2` + a Whisper model for languages Cohere doesn't cover (e.g. Swedish via `KBLab/kb-whisper-large`).
 
 **`moss-transcribe-diarize.py`** — when you need **who said what**. Joint transcription + speaker diarization + timestamps in one generation pass (no separate ASR/diarization/alignment stages). 128k context handles up to ~90 min of audio per file internally, so files are never pre-chunked and the anonymous speaker labels (`[S01]`, `[S02]`, ...) stay consistent across the whole recording. English + Chinese; also accepts video containers (mp4, mkv, ...); supports hotword biasing for names/jargon.
+
+**`moss-transcribe-diarize-server.py`** — same model at **~12x the throughput** for many files: serves it behind sglang-omni inside the job and posts files concurrently (continuous batching). Splits long tapes into ≤55-min clips to fit the context window (speaker labels reset between clips, recorded as `part` on each segment) and automatically continues from the last timestamp when the model stops early, reporting `coverage_s` per file. Needs `a100-large` — 24 GB cards OOM on long-tape KV. The `hf jobs run` command lives in the script docstring (server + driver in one job).
 
 #### Options — `cohere-transcribe.py` / `cohere-transcribe-vllm.py`
 
@@ -78,6 +81,17 @@ No download/upload step. Buckets are mounted directly as volumes via [hf-mount](
 | `--emit-srt` | off | Also write `.srt` subtitles derived from alignment segments |
 | `--batch-size-features` | 8 | Feature-extraction batch size |
 | `--batch-size-transcribe` | 16 | ASR batch size (where backend supports it) |
+| `--max-files` | all | Limit files to process (for testing) |
+
+#### Options — `moss-transcribe-diarize-server.py`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--concurrency` | 4 | Concurrent transcription requests (KV-cache bound; 6 works on A100) |
+| `--part-minutes` | 55 | Clip length for splitting long audio (longest that fits the context window). Speaker labels reset between clips |
+| `--server` | `http://127.0.0.1:8000` | sgl-omni server URL (in-job localhost by default) |
+| `--request-timeout` | 3600 | Per-request timeout in seconds |
+| `--emit-txt` | off | Also write `.txt` transcripts |
 | `--max-files` | all | Limit files to process (for testing) |
 
 #### Options — `moss-transcribe-diarize.py`
@@ -116,6 +130,12 @@ CBS Suspense (1940s radio drama), 66 episodes, 33 hours of audio.
 
 Long files are generation-bound (the whole diarized transcript is decoded in one pass), so RTFx drops as recordings grow; short clips run far faster. `l4x1` also works — same class of GPU.
 
+**`moss-transcribe-diarize-server.py`** (Apollo 11 mission audio, 3 tapes / 2.7 h, concurrency 4):
+
+| GPU | Time | RTFx | Output |
+|-----|------|------|--------|
+| A100 | 4.3 min | 37.8x realtime aggregate | 1,697 segments, 96–99% coverage per tape |
+
 ### Data
 
 | Script | Description |
@@ -144,7 +164,7 @@ hf jobs run --detach --expose 8000 --flavor l4x1 -s HF_TOKEN --timeout 2h \
     bash -c "pip install -q uv 2>/dev/null; git clone --depth 1 https://github.com/sgl-project/sglang-omni.git && cd sglang-omni && uv venv .venv -p 3.12 && . .venv/bin/activate && uv pip install . && sgl-omni serve --model-path OpenMOSS-Team/MOSS-Transcribe-Diarize --host 0.0.0.0 --port 8000 --max-running-requests 16 --mem-fraction-static 0.80"
 ```
 
-Query either server the same way (`response_format=verbose_json` on sglang-omni only; raise `max_new_tokens`, e.g. `65536`, for long recordings):
+Query either server the same way (`response_format=verbose_json` on sglang-omni only; raise `max_new_tokens`, e.g. `65536`, for long recordings). **Caution — long audio on the serve path**: sglang-omni silently truncates input past ~62 minutes (observed deterministically at ~62.5 min on the same tape that transcribes fully via the transformers recipe, regardless of `max_new_tokens`). Split longer recordings before posting — `moss-transcribe-diarize-server.py` does this automatically:
 
 ```bash
 curl -X POST https://<job-id>--8000.hf.jobs/v1/audio/transcriptions \
