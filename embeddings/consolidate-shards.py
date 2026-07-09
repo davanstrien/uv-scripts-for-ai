@@ -38,31 +38,42 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("consolidate-shards")
 
 
+ROW_GROUP_ROWS = 25_000  # ~100MB groups with an embeddings column; viewer needs random access
+
+
 def normalize_embeddings_column(local, out_col):
-    """Rewrite the file in place if its embeddings column isn't fixed_size_list<float32>.
+    """Rewrite the file in place if its embeddings column isn't fixed_size_list<float32>
+    OR its row groups are too big for the dataset viewer.
 
     Shards written by different script versions can disagree (old: list<double>, new:
-    fixed_size_list<float32>); a repo with mixed parquet schemas breaks load_dataset, so
-    the consolidator is the place to unify. Returns the file's row count."""
+    fixed_size_list<float32>) — mixed schemas break load_dataset. And pyarrow-default
+    ~1M-row groups are multi-GB with embeddings, which the viewer rejects with
+    "Scan size limit exceeded". Returns the file's row count."""
     import pyarrow as pa
     import pyarrow.compute as pc
     import pyarrow.parquet as pq
     pf = pq.ParquetFile(local)
+    meta = pf.metadata
     schema = pf.schema_arrow
     if out_col not in schema.names:
-        return pf.metadata.num_rows  # nothing to normalize (unexpected, but not fatal here)
+        return meta.num_rows  # nothing to normalize (unexpected, but not fatal here)
     field = schema.field(out_col)
-    if pa.types.is_fixed_size_list(field.type) and field.type.value_type == pa.float32():
-        return pf.metadata.num_rows
+    schema_ok = pa.types.is_fixed_size_list(field.type) and field.type.value_type == pa.float32()
+    groups_ok = meta.num_row_groups > 0 and all(
+        meta.row_group(i).num_rows <= 4 * ROW_GROUP_ROWS for i in range(meta.num_row_groups))
+    if schema_ok and groups_ok:
+        return meta.num_rows
     t = pq.read_table(local)
-    col = t[out_col].combine_chunks()
-    dim = len(col[0].as_py())
-    values = pc.cast(pc.list_flatten(col), pa.float32())
-    fixed = pa.FixedSizeListArray.from_arrays(values, dim)
-    idx = t.schema.get_field_index(out_col)
-    t = t.set_column(idx, pa.field(out_col, fixed.type), fixed)
-    logger.info(f"  normalized {Path(local).name}: {field.type} → {fixed.type}")
-    pq.write_table(t, local)
+    if not schema_ok:
+        col = t[out_col].combine_chunks()
+        dim = len(col[0].as_py())
+        values = pc.cast(pc.list_flatten(col), pa.float32())
+        fixed = pa.FixedSizeListArray.from_arrays(values, dim)
+        idx = t.schema.get_field_index(out_col)
+        t = t.set_column(idx, pa.field(out_col, fixed.type), fixed)
+    logger.info(f"  normalized {Path(local).name}: schema_ok={schema_ok} groups_ok={groups_ok} "
+                f"→ {t.schema.field(out_col).type}, {ROW_GROUP_ROWS}-row groups + page index")
+    pq.write_table(t, local, row_group_size=ROW_GROUP_ROWS, write_page_index=True)
     return t.num_rows
 
 
