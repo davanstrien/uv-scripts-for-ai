@@ -21,6 +21,7 @@ their dependencies (sentence-transformers vs vLLM vs Lance) are too different to
 | `generate-embeddings.py` | The default. Text or images. Simple, fast, runs anywhere. | sentence-transformers |
 | `generate-embeddings-vllm.py` | Max throughput on large *decoder* embedding models (Qwen3-Embedding). | vLLM pooling |
 | `embed-to-lance.py` | Get a **searchable vector index as a Hub dataset** (the "vector DB" path). | sentence-transformers + Lance |
+| `launch-embedding-fleet.py` | **Fan one run out across N parallel Jobs** (+ `consolidate-shards.py`). | run_uv_job + Buckets |
 
 ## Quick start
 
@@ -37,6 +38,41 @@ hf jobs uv run --flavor l4x1 -s HF_TOKEN \
 ```
 
 Always try `--max-samples 100 --private` first.
+
+## Fan-out: N Jobs in parallel
+
+One L4 does ~900 rows/s with `all-MiniLM-L6-v2`; a fleet of 8 does ~7k. `launch-embedding-fleet.py`
+splits the run into exact, non-overlapping shards (one Job each), workers stream shard parquets +
+progress heartbeats to a [Bucket](https://huggingface.co/docs/hub/storage-buckets) (object writes —
+no repo-commit contention), and a final CPU Job merges everything into the output dataset in one
+commit, with full provenance on the card.
+
+```bash
+# 8 L4s over a corpus; runs from your laptop, workers run on Jobs
+uv run https://huggingface.co/datasets/uv-scripts/embeddings/raw/main/launch-embedding-fleet.py \
+  your-name/corpus your-name/corpus-embeddings --num-shards 8 --flavor l4x1 --timeout 1h
+```
+
+Every shard is idempotent (a rank overwrites only its own files), so failures never cost you the
+run. Workers that fail are auto-retried once; past that, one command converges any run — no need
+to know which rank failed or why:
+
+```bash
+uv run launch-embedding-fleet.py <in> <out> --run-id <id> --resume   # re-runs ONLY missing shards, then merges
+```
+
+(`--retry-rank`/`--consolidate-only` remain for surgical control.) Each worker's timeout gives a
+**hard cost ceiling**: a fleet can never cost more than `N × flavor-rate × timeout`.
+
+Watch a run live — progress, ETA, live ~$ vs ceiling, GPU utilization, replica health — in the
+[fleet dashboard Space](https://huggingface.co/spaces/davanstrien/embedding-fleet-dashboard)
+(the launcher prints your run's deep link).
+
+Scale note: by default workers shard row-wise after loading the split, so each rank downloads the
+full split first — fine up to a few tens of millions of rows. Past that, add `--streaming`: workers
+then shard at the **file** level and each rank streams only its own files (text only; needs
+`num_files ≥ num_shards`). The launcher pins the input dataset revision either way, so every rank
+— including a `--retry-rank` weeks later — slices the identical snapshot.
 
 ## Which model?
 
