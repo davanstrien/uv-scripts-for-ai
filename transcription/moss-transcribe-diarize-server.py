@@ -13,8 +13,8 @@ High-throughput transcription + diarization via an in-job sgl-omni server.
 Same model and outputs as moss-transcribe-diarize.py, but serves
 MOSS-Transcribe-Diarize behind sglang-omni inside the job and posts files
 concurrently — continuous batching decodes many tapes at once (measured
-43x realtime aggregate at just 2 streams on a100-large, vs 3.2x for the
-sequential transformers recipe).
+37.8x realtime aggregate at concurrency 4 on a100-large including server
+boot, vs 3.2x for the sequential transformers recipe).
 
 This script is the *driver* half: it expects the server on localhost
 (started by the job command below), splits long audio to fit the model's

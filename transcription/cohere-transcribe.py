@@ -26,14 +26,14 @@ Input:                              Output:
 Examples:
 
   # Local test (requires CUDA GPU)
-  uv run transcribe-transformers.py ./test-audio ./test-output --language en
+  uv run cohere-transcribe.py ./test-audio ./test-output --language en
 
   # HF Jobs with bucket volumes
   hf jobs uv run --flavor l4x1 \\
       -s HF_TOKEN \\
       -v hf://buckets/user/audio-input:/input:ro \\
       -v hf://buckets/user/transcripts:/output \\
-      transcribe-transformers.py /input /output --language en --compile
+      cohere-transcribe.py /input /output --language en --compile
 
 Model: CohereLabs/cohere-transcribe-03-2026 (2B, Apache 2.0)
   - 14 languages: en, de, fr, it, es, pt, el, nl, pl, ar, vi, zh, ja, ko
@@ -97,14 +97,14 @@ def main():
 Languages: en, de, fr, it, es, pt, el, nl, pl, ar, vi, zh, ja, ko
 
 Examples:
-  uv run transcribe-transformers.py ./audio ./output --language en
-  uv run transcribe-transformers.py /input /output --language en --compile
+  uv run cohere-transcribe.py ./audio ./output --language en
+  uv run cohere-transcribe.py /input /output --language en --compile
 
 HF Jobs with bucket volumes:
   hf jobs uv run --flavor l4x1 -s HF_TOKEN \\
       -v hf://buckets/user/audio-bucket:/input:ro \\
       -v hf://buckets/user/transcripts:/output \\
-      transcribe-transformers.py /input /output --language en --compile
+      cohere-transcribe.py /input /output --language en --compile
         """,
     )
     parser.add_argument("input_dir", help="Directory containing audio files")
@@ -267,19 +267,19 @@ if __name__ == "__main__":
         print("Designed for HF Buckets mounted as volumes.")
         print()
         print("Usage:")
-        print("  uv run transcribe-transformers.py INPUT_DIR OUTPUT_DIR --language en")
+        print("  uv run cohere-transcribe.py INPUT_DIR OUTPUT_DIR --language en")
         print()
         print("Examples:")
-        print("  uv run transcribe-transformers.py ./audio ./output --language en")
-        print("  uv run transcribe-transformers.py ./audio ./output --language en --compile")
+        print("  uv run cohere-transcribe.py ./audio ./output --language en")
+        print("  uv run cohere-transcribe.py ./audio ./output --language en --compile")
         print()
         print("HF Jobs with bucket volumes:")
         print("  hf jobs uv run --flavor l4x1 -s HF_TOKEN \\")
         print("      -v hf://buckets/user/audio-input:/input:ro \\")
         print("      -v hf://buckets/user/transcripts:/output \\")
-        print("      transcribe-transformers.py /input /output --language en --compile")
+        print("      cohere-transcribe.py /input /output --language en --compile")
         print()
-        print("For full help: uv run transcribe-transformers.py --help")
+        print("For full help: uv run cohere-transcribe.py --help")
         sys.exit(0)
 
     main()

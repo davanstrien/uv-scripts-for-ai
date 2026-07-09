@@ -5,12 +5,12 @@ tags:
   - audio
   - transcription
   - automatic-speech-recognition
-private: true
+  - speaker-diarization
 ---
 
 # Transcription
 
-Scripts for transcribing audio files using HF Buckets and Jobs.
+Scripts for transcribing — and diarizing — audio files using HF Buckets and Jobs.
 
 ## Quick Start
 
@@ -30,6 +30,14 @@ hf jobs uv run --flavor l4x1 -s HF_TOKEN \
     -v hf://buckets/user/transcripts:/output \
     https://huggingface.co/datasets/uv-scripts/transcription/raw/main/cohere-transcribe.py \
     /input /output --language en --compile
+
+# Or: transcribe + figure out WHO said what (speaker diarization + timestamps)
+hf jobs uv run --flavor l4x1 -s HF_TOKEN \
+    -e UV_TORCH_BACKEND=cu128 \
+    -v hf://buckets/user/audio-files:/input:ro \
+    -v hf://buckets/user/transcripts:/output \
+    https://huggingface.co/datasets/uv-scripts/transcription/raw/main/moss-transcribe-diarize.py \
+    /input /output --emit-txt
 ```
 
 No download/upload step. Buckets are mounted directly as volumes via [hf-mount](https://github.com/huggingface/hf-mount).
@@ -156,7 +164,7 @@ hf jobs run --detach --expose 8000 --flavor l4x1 -s HF_TOKEN --timeout 2h \
 
 Parse the response `text` into segments with `parse_transcript` from the model's [GitHub package](https://github.com/OpenMOSS/MOSS-Transcribe-Diarize).
 
-**sglang-omni** (upstream's recommended production server; adds `response_format=verbose_json` with parsed speaker segments). Its prebuilt image predates this model, so install it at job start over a current [sglang nightly image](https://hub.docker.com/r/lmsysorg/sglang/tags) — the clone + fresh-venv sequence is [upstream's documented install](https://github.com/sgl-project/sglang-omni/blob/main/docs/get_started/installation.md) and adds under a minute:
+**sglang-omni** (upstream's recommended production server; adds `response_format=verbose_json` with parsed speaker segments). Its prebuilt image predates this model, so install it at job start over a current [sglang nightly image](https://hub.docker.com/r/lmsysorg/sglang/tags) — the tag below is the tested pin; newer nightlies should also work. The clone + fresh-venv sequence is [upstream's documented install](https://github.com/sgl-project/sglang-omni/blob/main/docs/get_started/installation.md) and adds under a minute:
 
 ```bash
 hf jobs run --detach --expose 8000 --flavor l4x1 -s HF_TOKEN --timeout 2h \
