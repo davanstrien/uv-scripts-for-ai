@@ -37,7 +37,7 @@ The recipes here run as batch jobs. To call a model interactively, from an agent
 
 ## Models at a glance
 
-**Start here:** for a quick first run, try **`lighton-ocr2.py`** (1B, very fast) or **`paddleocr-vl-1.6.py`** (0.9B, current OmniDocBench SOTA); for the smallest footprint, **`falcon-ocr.py`** (0.3B, strong on tables). Reach for a 7–8B model only when quality demands it. Several of these models sit on the public [olmOCR-Bench](https://huggingface.co/datasets/allenai/olmOCR-bench) — pull the live ranking from your terminal in one command:
+**Start here:** for a quick first run, try **`lighton-ocr2.py`** (1B, very fast), **`paddleocr-vl-1.6.py`** (0.9B, 96.33 OmniDocBench) or **`ovis-ocr2.py`** (0.9B, 96.58 OmniDocBench — current SOTA); for the smallest footprint, **`falcon-ocr.py`** (0.3B, strong on tables). Reach for a 7–8B model only when quality demands it. Several of these models sit on the public [olmOCR-Bench](https://huggingface.co/datasets/allenai/olmOCR-bench) — pull the live ranking from your terminal in one command:
 
 ```bash
 hf datasets leaderboard allenai/olmOCR-bench
@@ -57,7 +57,8 @@ _Sorted by model size:_
 | [`glm-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/glm-ocr.py) | [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) | 0.9B | vLLM | 94.62% OmniDocBench V1.5 |
 | [`paddleocr-vl.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl.py) | [PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL) | 0.9B | vLLM | 4 task modes (ocr/table/formula/chart) |
 | [`paddleocr-vl-1.5.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl-1.5.py) | [PaddleOCR-VL-1.5](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.5) | 0.9B | Transformers | 94.5% OmniDocBench, 6 task modes |
-| [`paddleocr-vl-1.6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl-1.6.py) | [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) | 0.9B | vLLM | **96.33% OmniDocBench v1.6** (SOTA), drop-in upgrade of 1.5 |
+| [`paddleocr-vl-1.6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl-1.6.py) | [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) | 0.9B | vLLM | **96.33% OmniDocBench v1.6**, drop-in upgrade of 1.5 |
+| [`ovis-ocr2.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/ovis-ocr2.py) | [OvisOCR2](https://huggingface.co/ATH-MaaS/OvisOCR2) | 0.9B | vLLM | **96.58 OmniDocBench v1.6** (SOTA; first end-to-end model to top it). Qwen3.5 base; markdown + LaTeX + HTML tables. Apache 2.0 |
 | [`lighton-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr.py) | [LightOnOCR-1B](https://huggingface.co/lightonai/LightOnOCR-1B-1025) | 1B | vLLM | Fast, 3 vocab sizes |
 | [`lighton-ocr2.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr2.py) | [LightOnOCR-2-1B](https://huggingface.co/lightonai/LightOnOCR-2-1B) | 1B | vLLM | 7× faster than v1, RLVR trained |
 | [`hunyuan-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/hunyuan-ocr.py) | [HunyuanOCR 1.0](https://huggingface.co/tencent/HunyuanOCR/tree/f6af82ee007fe6091b29fb3bb287b491ead41c82) | 1B | vLLM | Lightweight VLM. Pinned to the last 1.0 revision (repo root became 1.5 in-place on 2026-07-06). [Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (excludes EU/UK/KR) |
@@ -208,6 +209,7 @@ Beyond the shared flags, some models add their own. Run `--help` on any script f
 | [`surya-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/surya-ocr.py) | `--task ocr\|layout\|table`, `--table-mode full\|simple`, `--pdf-column`/`--page-range`, `--blocks-column` |
 | [`pp-ocrv6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/pp-ocrv6.py) | `--model-tier tiny\|small\|medium` (1.5M–34.5M params) |
 | [`glm-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/glm-ocr.py) | `--task ocr\|formula\|table` |
+| [`ovis-ocr2.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/ovis-ocr2.py) | `--keep-image-tags` (retain visual-region `<img>` bbox tags, filtered by default), `--min-pixels`/`--max-pixels` (processor bounds, card defaults 448²/2880²) |
 | [`paddleocr-vl.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl.py) | `--task-mode ocr\|table\|formula\|chart` |
 | [`paddleocr-vl-1.5.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl-1.5.py) | `--task-mode ocr\|table\|formula\|chart\|spotting\|seal` |
 | [`paddleocr-vl-1.6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl-1.6.py) | `--task-mode ocr\|table\|formula` |
