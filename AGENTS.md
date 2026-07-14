@@ -78,7 +78,8 @@ workflow's optional `repo_id` / `repo_type` inputs.)
   plus **`hf-jobs` when `JOB_ID` is set** — these are the adoption meters
   (`list_datasets(tags="uv-script")` / `tags="hf-jobs"` count stamped public outputs).
 - GPU scripts check `torch.cuda.is_available()` and exit with a clear message. Write outputs to the Hub
-  (`push_to_hub`) or a bucket (`-v hf://…`), never local paths (Jobs disk is ephemeral). Name by task, not tool.
+  (`push_to_hub`) or a bucket (`-v hf://…`), never bare local paths (Jobs disk is ephemeral; local *input*
+  dirs can be mounted with `-v ./dir:/mnt`, which syncs them to a bucket). Name by task, not tool.
 
 ## The mirror — how it works
 

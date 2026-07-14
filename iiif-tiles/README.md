@@ -65,6 +65,15 @@ hf jobs uv run tile_iiif.py \
     --collection-name "Historic Manuscripts"
 ```
 
+Scans still on your machine? Mount the folder straight into the job — the CLI syncs it to a private bucket automatically (re-runs only sync changed files; `huggingface_hub` ≥ 1.22), so there's no separate upload step:
+
+```bash
+hf jobs uv run -v ./my-scans:/input tile_iiif.py \
+    --source-dir /input \
+    --output-bucket myorg/iiif-tiles \
+    --collection-name "Historic Manuscripts"
+```
+
 ## View the results
 
 Once tiles are in a bucket, open the manifest in any IIIF viewer:

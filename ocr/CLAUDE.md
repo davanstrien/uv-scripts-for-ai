@@ -21,7 +21,8 @@ planned **self-review skill** (see [Deferred](#deferred--tracked)) just enforces
   dep (e.g. bucket I/O → `bucketbag`, [#67](https://github.com/davanstrien/uv-scripts-for-ai/issues/67)),
   never a local import. Recipes = inline; internal tooling may share freely.
 - **GPU + output.** Check `torch.cuda.is_available()` and exit clearly if absent. Write to the Hub
-  (`push_to_hub`) or a bucket (`-v hf://…`), never local paths (Jobs disk is ephemeral).
+  (`push_to_hub`) or a bucket (`-v hf://…`), never bare local paths (Jobs disk is ephemeral; local *input*
+  dirs mount via `-v ./dir:/mnt`, synced to a bucket automatically).
 - **vLLM image + fail-fast preflight.** If the model's arch isn't in a stable vLLM wheel, **omit
   `vllm`/`torch` from deps** and run on the pinned `vllm/vllm-openai` image via
   `--image … --python … -e PYTHONPATH=…`; add a preflight that `sys.exit(1)`s naming the exact flags

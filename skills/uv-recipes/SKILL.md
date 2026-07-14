@@ -72,7 +72,7 @@ To spend review effort well (active learning), order the queue by informativenes
 
 ## Rules that keep jobs working
 
-- Jobs disk is ephemeral — write to the Hub, never local paths. The default pattern is **a dataset in, a dataset out** (`push_to_hub`). For data you rewrite often (mutable, incremental writes, checkpoints, one file per item), use a [storage bucket](https://huggingface.co/docs/hub/storage-buckets) instead — mount one with `-v hf://buckets/<user>/<bucket>:/mnt`, or read/write `hf://buckets/…` paths via fsspec. See [buckets.md](buckets.md).
+- Jobs disk is ephemeral — write outputs to the Hub, never local paths. The default pattern is **a dataset in, a dataset out** (`push_to_hub`). **Local input files** don't need an upload step: `-v ./scans:/input` syncs the folder to a private bucket and mounts it in the Job (re-runs only sync changed files; `huggingface_hub` ≥ 1.22). For data you rewrite often (mutable, incremental writes, checkpoints, one file per item), use a [storage bucket](https://huggingface.co/docs/hub/storage-buckets) — mount one with `-v hf://buckets/<user>/<bucket>:/mnt`, or read/write `hf://buckets/…` paths via fsspec. See [buckets.md](buckets.md).
 - GPU recipes check `torch.cuda.is_available()` and exit clearly if missing — match `--flavor` to the recipe.
 - Test on `--max-samples 10` first.
 

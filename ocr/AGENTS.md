@@ -73,6 +73,19 @@ A couple of scripts have `-bucket.py` variants (currently `falcon-ocr-bucket.py`
 `ls` the repo to check whether a `-bucket.py` variant exists for the model you want
 before assuming it's available.
 
+The `-v` source can also be a **local directory** (`huggingface_hub` ≥ 1.22) — the CLI
+syncs it to a private bucket and mounts it, so local images/PDFs need no upload step:
+
+    hf jobs uv run --flavor l4x1 -s HF_TOKEN \
+      -v ./pages:/input \
+      -v hf://buckets/<user>/<output>:/output \
+      https://huggingface.co/datasets/uv-scripts/ocr/raw/main/<script>-bucket.py \
+      /input /output
+
+Re-runs only sync new/changed files. Local mounts are read-only by default; a local
+*output* dir works too with `:rw` — pull results back with the `hf buckets sync`
+command the CLI prints at launch.
+
 ## Common flags across dataset-mode scripts
 
 Most scripts support: `--max-samples`, `--shuffle`, `--seed`, `--split`, `--image-column`,
