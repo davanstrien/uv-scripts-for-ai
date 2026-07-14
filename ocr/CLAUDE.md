@@ -71,6 +71,7 @@ Legend: ✅ production-ready · ⚠️ works only with a required pinned image �
 | `dots-ocr.py` | ✅ | vLLM (stable) | l4x1 | `--max-model-len` 32768; no internal resize |
 | `dots-ocr-1.5.py` | ✅ | vLLM 0.17.1 | l4x1 | see gotcha (`content_format`, mirror, bbox space) |
 | `glm-ocr.py` | ✅ | vLLM (nightly) | l4x1 | `VLLM_USE_DEEP_GEMM=0`; no pyarrow cap |
+| `ovis-ocr2.py` | ✅ | vLLM (stable ≥0.22.1) | l4x1 / a10g-small | `gdn_prefill_backend="triton"` (card); card-exact prompt via `enable_thinking=False` template + `llm.generate`; `<img>` region tags filtered by default (`--keep-image-tags`) |
 | `glm-ocr-v2.py` | 🧪 | vLLM (nightly) | l4x1 | CommitScheduler incremental — on hold (see Deferred) |
 | `nanonets-ocr.py` | ✅ | vLLM | a10g-small | `--max-model-len` 32768 (`--max-tokens` 15000) |
 | `nanonets-ocr2.py` | ⚠️+image | vLLM `:v0.10.2` | a10g-small | Qwen2.5-VL ≥0.11 regression → pure `!` |
@@ -252,6 +253,11 @@ LightOnOCR-2's commentary style).
 - **Incremental uploads** — superseded by HF Buckets / `bucketbag` ([#67](https://github.com/davanstrien/uv-scripts-for-ai/issues/67));
   `glm-ocr-v2.py` keeps the older CommitScheduler resume path for very large jobs today (do not port it — on hold).
 - **Leaderboard Space** — public ELO/pointwise view fed by the benchmark datasets. Idea only.
+- **MonkeyOCRv2 — evaluated, not added** (2026-07-14). `zenosai/MonkeyOCRv2-S-Parsing` (0.6B) needs the
+  [GitHub repo's](https://github.com/Yuliang-Liu/MonkeyOCRv2) custom multi-stage pipeline (`parsing/parse.py`,
+  structure detection) — not pip-packaged, pins `vllm==0.11.2`, and the card text says "academic research and
+  non-commercial use only" while the metadata tag says `apache-2.0` (conflicting license signals). Revisit if
+  it gets packaged / vLLM-native support or the license is clarified.
 
 **Watch:** `deepseek-ocr2` / `glm-ocr` stay on nightly vLLM until their arch lands in a stable release.
 The nightly index (`https://wheels.vllm.ai/nightly`) occasionally has transient build issues (e.g. only
@@ -261,6 +267,10 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
 
 ## Change log
 
+- **2026-07-14** — added `ovis-ocr2.py` (`ATH-MaaS/OvisOCR2`, 0.9B Qwen3.5, 96.58 OmniDocBench v1.6,
+  Apache-2.0; stable vLLM ≥0.22.1, `gdn_prefill_backend="triton"`, card-exact prompt/postprocessing).
+  Smoke-tested green on the default uv image, a10g-small, resolved vLLM 0.25.1 (5/5 pages, tags filtered,
+  stamp OK). Evaluated MonkeyOCRv2 alongside it — deferred (see Deferred / tracked).
 - **2026-07-08** — HunyuanOCR upstream repo swap: pinned `hunyuan-ocr.py` to the last 1.0 revision +
   added `hunyuan-ocr-1.5.py` (12 task types, locked sampling); `transformers<5.13` cap in both for the
   stable-vLLM HunyuanVL register breakage (vllm#47872). See the hunyuan gotcha above.
