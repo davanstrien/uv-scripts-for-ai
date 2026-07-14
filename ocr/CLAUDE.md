@@ -15,6 +15,12 @@ script's docstring and `README.md`; benchmark result tables live in `OCR-BENCHMA
 Read this before adding or changing a recipe. Each rule maps to a failure we've actually hit; the
 planned **self-review skill** (see [Deferred](#deferred--tracked)) just enforces this list.
 
+- **Model-card fidelity.** Default prompts, sampling params, and processor settings follow the
+  model card / official inference client — cite the source in a comment. If upstream locks values
+  (fixed prompts, pinned sampling), lock them in the recipe too and expose only the sanctioned knobs
+  as flags. Deliberate deviations (e.g. skipping benchmark-GT post-processing) go in the docstring
+  with the why. If a card value looks wrong for a use case (e.g. `repetition_penalty` on
+  table-heavy docs), benchmark the alternative before deviating — don't silently override.
 - **Self-contained single file.** Each recipe is one PEP 723 UV script runnable from a raw URL
   (`hf jobs uv run <url>`). No shared *importable local* module (the job env only gets the one file).
   Extra pip deps are fine — **pin them**. A heavy/stable/shared subsystem may become an opt-in *package*
