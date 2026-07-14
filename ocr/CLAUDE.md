@@ -12,8 +12,9 @@ script's docstring and `README.md`; benchmark result tables live in `OCR-BENCHMA
 
 ## Conventions & invariants
 
-Read this before adding or changing a recipe. Each rule maps to a failure we've actually hit; the
-planned **self-review skill** (see [Deferred](#deferred--tracked)) just enforces this list.
+Read this before adding or changing a recipe. Each rule maps to a failure we've actually hit.
+The mechanical rules are enforced by **`tools/check-contract.py`**; the **`review-recipe`** skill
+(`.claude/skills/review-recipe/`) drives the checker plus the judgment-only checks.
 
 - **Self-contained single file.** Each recipe is one PEP 723 UV script runnable from a raw URL
   (`hf jobs uv run <url>`). No shared *importable local* module (the job env only gets the one file).
@@ -27,7 +28,17 @@ planned **self-review skill** (see [Deferred](#deferred--tracked)) just enforces
   `--image … --python … -e PYTHONPATH=…`; add a preflight that `sys.exit(1)`s naming the exact flags
   (surya-class — see gotchas). Pinned-image scripts: `surya-ocr` (`:v0.20.1`, **site-packages**),
   `nanonets-ocr2` (`:v0.10.2`), `unlimited-ocr` (`:unlimited-ocr`), `deepseek-ocr2`/`glm-ocr` (nightly).
-- **Pins are temporary.** An image/version pin (`:v0.10.2`, `:v0.20.1`, a nightly, `surya-ocr==0.20.0`,
+- **New-recipe checklist.** Start from the canonical donor — **`glm-ocr.py`** for vLLM recipes
+  (`tesseract-ocr.py` for non-vLLM), not an older script (pre-contract ancestors mislead). Ship with:
+  the recipe itself, a row in *both* README tables (models-at-a-glance + modes-and-flags), a
+  Script-status row here (⏳ until Jobs-smoke-tested), a gotcha section *only if* it has load-bearing
+  quirks, and a change-log line. Smoke-test on Jobs (`--max-samples 5`, l4x1) before flipping ⏳ → ✅.
+- **`inference_info` schema (frozen).** A JSON *string* holding a **list of entries** (append, never
+  replace; never a bare dict). Required keys per entry: `model_id`, `model_name`, `column_name`
+  (never `model` or `output_column` — both drifted into scripts and broke ocr-bench interop).
+  Extra keys are free. One error sentinel only: **`[OCR FAILED]`** in the output cell.
+- **Pins are temporary** (and "pin them" above means *at least a floor*; exact `==` pins only as
+  documented workarounds). An image/version pin (`:v0.10.2`, `:v0.20.1`, a nightly, `surya-ocr==0.20.0`,
   …) is a workaround for a *current* ecosystem gap — a decode regression, an arch not yet in a stable
   wheel, a resolver backtrack. In the recipe, record **why** the pin exists and **what would loosen it**
   (e.g. "move back to the default image when a newer vLLM ships a Qwen2.5-VL decode fix"; "drop the
@@ -57,7 +68,8 @@ planned **self-review skill** (see [Deferred](#deferred--tracked)) just enforces
 
 ## Script status
 
-Legend: ✅ production-ready · ⚠️ works only with a required pinned image · 🧪 experimental/on-hold.
+Legend: ✅ production-ready · ⚠️ works only with a required pinned image · 🧪 experimental/on-hold
+· ⏳ written to contract, not yet Jobs-smoke-tested. "Flavor" = recommended/validated flavor.
 "+image" = needs a `--image vllm/vllm-openai:<tag>` override (not the default uv image).
 
 | Script | | Backend | Flavor | Note |
@@ -236,10 +248,11 @@ LightOnOCR-2's commentary style).
 
 - **bucketbag adoption** — evaluate adopting `bucketbag` for the bucket recipes (slim recipes / harden
   bucketbag / find other beneficiaries) → [#67](https://github.com/davanstrien/uv-scripts-for-ai/issues/67).
-- **Self-review skill** (spark) — a dev-only skill (sibling to `bump-vllm-pins`) that reviews a recipe/diff
-  against the [Conventions](#conventions--invariants) block: context-length, collision guard, vLLM-image +
-  preflight, env guards, dep sanity, image bounding, optional Jobs smoke. Enforces that list; build after
-  the current work.
+- **Contract-gap sweep** — `tools/check-contract.py` (shipped 2026-07-08, with the `review-recipe`
+  skill — closes [#69](https://github.com/davanstrien/uv-scripts-for-ai/issues/69)) found the
+  pre-existing gaps: 8 recipes missing `--config`/`--create-pr`, inference_info key drift in ~10,
+  15 non-`[OCR FAILED]` sentinels, 14 bare pushes. Fix as one or two sweep PRs; the checker's
+  error list is the work queue.
 - **Error-signalling** — companion `ocr_error` status column (null cell + truncated exception) instead of
   sentinels in the output column, so "read nothing" ≠ "run errored". Touches ~all recipes; deferred.
 - **OCR smoke-test dataset** — a tiny curated set (~20–30 images across doc-type/quality/language/layout,
@@ -261,6 +274,10 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
 
 ## Change log
 
+- **2026-07-08** — contract tooling: `tools/check-contract.py` (8 AST rules over all recipes, CI-able)
+  + `review-recipe` dev skill (closes #69); conventions gained the new-recipe checklist, frozen
+  `inference_info` schema (`model_id`/`model_name`/`column_name`, list-of-entries, one `[OCR FAILED]`
+  sentinel), and the ⏳ status marker. Pre-existing gaps inventoried → see Deferred "Contract-gap sweep".
 - **2026-07-08** — HunyuanOCR upstream repo swap: pinned `hunyuan-ocr.py` to the last 1.0 revision +
   added `hunyuan-ocr-1.5.py` (12 task types, locked sampling); `transformers<5.13` cap in both for the
   stable-vLLM HunyuanVL register breakage (vllm#47872). See the hunyuan gotcha above.
