@@ -15,6 +15,11 @@ script's docstring and `README.md`; benchmark result tables live in `OCR-BENCHMA
 Read this before adding or changing a recipe. Each rule maps to a failure we've actually hit; the
 planned **self-review skill** (see [Deferred](#deferred--tracked)) just enforces this list.
 
+- **Catalog entry.** Adding or changing a recipe means updating [`models.json`](./models.json)
+  (script → model, params, backend, image pins, language claim) and, if the language claim
+  changed, [LANGUAGES.md](./LANGUAGES.md). Language fields record what the **model card claims**
+  (with an evidence level), never inferred coverage. Hand-maintained for now; if drift becomes a
+  problem, the follow-up is generating the README table from the JSON.
 - **Self-contained single file.** Each recipe is one PEP 723 UV script runnable from a raw URL
   (`hf jobs uv run <url>`). No shared *importable local* module (the job env only gets the one file).
   Extra pip deps are fine — **pin them**. A heavy/stable/shared subsystem may become an opt-in *package*

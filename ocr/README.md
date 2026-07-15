@@ -45,12 +45,14 @@ hf datasets leaderboard allenai/olmOCR-bench
 
 But which model wins on *your* documents is still document-dependent — so [ocr-bench](https://github.com/davanstrien/ocr-bench) builds a **per-collection leaderboard** for your own data (pairwise VLM-as-judge, optionally human-validated), using these scripts under the hood.
 
+**Language coverage:** [LANGUAGES.md](LANGUAGES.md) lists what each model's card claims (and how much evidence backs it). Machine-readable catalog for agents — script → model, params, backend, image pins, languages: [`models.json`](models.json).
+
 _Sorted by model size:_
 
 | Script | Model | Size | Backend | Notes |
 |--------|-------|------|---------|-------|
 | [`tesseract-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/tesseract-ocr.py) | [Tesseract 5](https://github.com/tesseract-ocr/tesseract) | n/a (classical) | pytesseract (CPU) | **The legacy baseline** — no GPU at all, runs on `cpu-upgrade`. Plain-text output, `--lang`/`--psm`/`--oem` exposed, 100+ language packs via apt. Apache 2.0 |
-| [`pp-ocrv6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/pp-ocrv6.py) | [PP-OCRv6](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) | 1.5–34.5M | PaddleOCR (paddle) | **Smallest neural** — classical det+rec pipeline, not a VLM. Three tiers (`--model-tier tiny\|small\|medium`), plain-text output (not markdown). 50 langs. Runs on `t4-small`. Apache 2.0 |
+| [`pp-ocrv6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/pp-ocrv6.py) | [PP-OCRv6](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) | 1.5–34.5M | PaddleOCR (paddle) | **Smallest neural** — classical det+rec pipeline, not a VLM. Three tiers (`--model-tier tiny\|small\|medium`), plain-text output (not markdown). 48 langs. Runs on `t4-small`. Apache 2.0 |
 | [`falcon-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/falcon-ocr.py) | [Falcon-OCR](https://huggingface.co/tiiuae/Falcon-OCR) | 0.3B | falcon-perception | Smallest VLM in collection. #1 on multi-column docs and tables (olmOCR), Apache 2.0 |
 | [`smoldocling-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/smoldocling-ocr.py) | [SmolDocling](https://huggingface.co/ds4sd/SmolDocling-256M-preview) | 256M | Transformers | DocTags structured output |
 | [`surya-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/surya-ocr.py) | [Surya OCR 2](https://huggingface.co/datalab-to/surya-ocr-2) | 0.65B | vLLM | **Structured** OCR + `--task layout\|table`: per-block HTML with bboxes & reading order in an extra `surya_blocks` column. 91 langs, top-under-3B on olmOCR-Bench. Modified OpenRAIL-M license. Needs the **pinned** `vllm/vllm-openai:v0.20.1` image |
@@ -63,7 +65,7 @@ _Sorted by model size:_
 | [`lighton-ocr2.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr2.py) | [LightOnOCR-2-1B](https://huggingface.co/lightonai/LightOnOCR-2-1B) | 1B | vLLM | 7× faster than v1, RLVR trained |
 | [`hunyuan-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/hunyuan-ocr.py) | [HunyuanOCR 1.0](https://huggingface.co/tencent/HunyuanOCR/tree/f6af82ee007fe6091b29fb3bb287b491ead41c82) | 1B | vLLM | Lightweight VLM. Pinned to the last 1.0 revision (repo root became 1.5 in-place on 2026-07-06). [Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (excludes EU/UK/KR) |
 | [`hunyuan-ocr-1.5.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/hunyuan-ocr-1.5.py) | [HunyuanOCR-1.5](https://huggingface.co/tencent/HunyuanOCR) | 1B | vLLM | 128K context, 4K images, 12 task types, ancient scripts. ~4-5× faster/page than dots.ocr & DeepSeek-OCR-2 (tech report). [Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (excludes EU/UK/KR) |
-| [`dots-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/dots-ocr.py) | [DoTS.ocr](https://huggingface.co/Tencent/DoTS.ocr) | 1.7B | vLLM | 100+ languages |
+| [`dots-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/dots-ocr.py) | [dots.ocr](https://huggingface.co/rednote-hilab/dots.ocr) | 1.7B | vLLM | 100 languages (in-house bench), explicit low-resource claim |
 | [`firered-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/firered-ocr.py) | [FireRed-OCR](https://huggingface.co/FireRedTeam/FireRed-OCR) | 2.1B | vLLM | Qwen3-VL fine-tune, Apache 2.0 |
 | [`abot-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/abot-ocr.py) | [ABot-OCR](https://huggingface.co/acvlab/ABot-OCR) | 2B | vLLM | Qwen3-VL based, doc→Markdown (text/LaTeX/HTML tables). Needs `vllm/vllm-openai` image. [paper](https://arxiv.org/abs/2605.27978) |
 | [`nanonets-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/nanonets-ocr.py) | [Nanonets-OCR-s](https://huggingface.co/nanonets/Nanonets-OCR-s) | 2B | vLLM | LaTeX, tables, forms |

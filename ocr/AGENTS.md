@@ -25,6 +25,10 @@ a short note. Axes that matter:
   `falcon-perception` are alternatives for specific models.
 - **Task support**: most scripts do plain text; some expose `--task-mode`
   (table, formula, layout, etc.) — check the script's own docstring.
+- **Language coverage**: [`models.json`](./models.json) maps every script to its model,
+  params, backend, required image pins, and what the model card claims about languages —
+  with an `evidence` level (`per-language-benchmark` beats a bare `multilingual` tag).
+  Human-readable version: [LANGUAGES.md](./LANGUAGES.md).
 
 For the authoritative benchmark numbers on any model in the table, query the model
 card programmatically — every OCR model publishes eval results on its card:
