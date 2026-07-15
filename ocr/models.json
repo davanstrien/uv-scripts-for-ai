@@ -1,0 +1,360 @@
+{
+  "_meta": {
+    "description": "Machine-readable catalog of the OCR recipes in this directory: script -> model, params, backend, required image pins, and what the model's own card claims about language coverage. Human-readable language notes: LANGUAGES.md. Language evidence levels, strongest first: per-language-benchmark | count-claim | named-list | multilingual-unspecified | english-only | not-stated | not-applicable. Claims come from model cards (compiled 2026-07-15) - treat as claims, not guarantees.",
+    "updated": "2026-07-15",
+    "run_pattern": "hf jobs uv run --flavor <flavor> -s HF_TOKEN https://huggingface.co/datasets/uv-scripts/ocr/raw/main/<script> <input-dataset> <output-dataset>"
+  },
+  "tesseract-ocr.py": {
+    "model_id": null,
+    "model_name": "Tesseract 5",
+    "params": null,
+    "backend": "pytesseract (CPU)",
+    "task": "ocr",
+    "output": "plain text",
+    "license": "apache-2.0",
+    "languages": {
+      "evidence": "named-list",
+      "count": "125 traineddata packs (~100+ languages + script models)",
+      "list_url": "https://github.com/tesseract-ocr/tessdata_best",
+      "notes": "Broadest named coverage; script models (Latin, Cyrillic, Devanagari, ...) cover languages without a dedicated pack. Legacy baseline quality."
+    }
+  },
+  "pp-ocrv6.py": {
+    "model_id": "PaddlePaddle/PP-OCRv6",
+    "params": "1.5M-34.5M",
+    "backend": "paddleocr",
+    "task": "ocr",
+    "output": "plain text",
+    "license": "apache-2.0",
+    "languages": { "evidence": "count-claim", "count": 48 }
+  },
+  "falcon-ocr.py": {
+    "model_id": "tiiuae/Falcon-OCR",
+    "params": "0.3B",
+    "backend": "falcon-perception",
+    "task": "ocr",
+    "output": "markdown",
+    "license": "apache-2.0",
+    "languages": { "evidence": "not-stated" }
+  },
+  "smoldocling-ocr.py": {
+    "model_id": "ds4sd/SmolDocling-256M-preview",
+    "params": "256M",
+    "backend": "transformers",
+    "task": "ocr",
+    "output": "DocTags",
+    "languages": { "evidence": "english-only" }
+  },
+  "surya-ocr.py": {
+    "model_id": "datalab-to/surya-ocr-2",
+    "params": "0.65B",
+    "backend": "vllm",
+    "image": "vllm/vllm-openai:v0.20.1",
+    "task": "ocr | layout | table",
+    "output": "markdown + surya_blocks (per-block HTML, bboxes, reading order)",
+    "license": "modified OpenRAIL-M",
+    "languages": {
+      "evidence": "per-language-benchmark",
+      "count": 91,
+      "benchmark_url": "https://github.com/datalab-to/surya/blob/master/static/docs/multilingual.md",
+      "notes": "38/91 languages score >=90%, 76/91 >=80%; weakest of top-15: Arabic 72.7%, Vietnamese 73.2%."
+    }
+  },
+  "glm-ocr.py": {
+    "model_id": "zai-org/GLM-OCR",
+    "params": "0.9B",
+    "backend": "vllm",
+    "task": "ocr",
+    "output": "markdown",
+    "languages": {
+      "evidence": "named-list",
+      "count": 8,
+      "named": ["zh", "en", "fr", "es", "ru", "de", "ja", "ko"],
+      "notes": "Declared in card metadata only; no per-language evidence in the card body."
+    }
+  },
+  "paddleocr-vl.py": {
+    "model_id": "PaddlePaddle/PaddleOCR-VL",
+    "params": "0.9B",
+    "backend": "vllm",
+    "task": "ocr | table | formula | chart",
+    "output": "markdown",
+    "languages": {
+      "evidence": "count-claim",
+      "count": 109,
+      "notes": "Names scripts (Cyrillic, Arabic, Devanagari, Thai); claims handwriting + historical documents; no per-language numbers."
+    }
+  },
+  "paddleocr-vl-1.5.py": {
+    "model_id": "PaddlePaddle/PaddleOCR-VL-1.5",
+    "params": "0.9B",
+    "backend": "transformers",
+    "task": "ocr (6 modes)",
+    "output": "markdown",
+    "languages": {
+      "evidence": "count-claim",
+      "count": "109+ (adds Tibetan, Bengali)",
+      "notes": "Claims improved rare-character and ancient-text recognition."
+    }
+  },
+  "paddleocr-vl-1.6.py": {
+    "model_id": "PaddlePaddle/PaddleOCR-VL-1.6",
+    "params": "0.9B",
+    "backend": "vllm",
+    "task": "ocr",
+    "output": "markdown",
+    "languages": {
+      "evidence": "count-claim",
+      "count": "109+ (inherited from 1.5, not restated)",
+      "notes": "Upgrade-focused card; language-specific claims are Chinese ancient documents and rare characters."
+    }
+  },
+  "ovis-ocr2.py": {
+    "model_id": "ATH-MaaS/OvisOCR2",
+    "params": "0.9B",
+    "backend": "vllm",
+    "task": "ocr",
+    "output": "markdown + LaTeX + HTML tables",
+    "license": "apache-2.0",
+    "languages": { "evidence": "not-stated" }
+  },
+  "lighton-ocr.py": {
+    "model_id": "lightonai/LightOnOCR-1B-1025",
+    "params": "1B",
+    "backend": "vllm",
+    "task": "ocr",
+    "output": "markdown",
+    "languages": {
+      "evidence": "named-list",
+      "count": 9,
+      "named": ["en", "fr", "de", "es", "it", "nl", "pt", "sv", "da"],
+      "notes": "Explicitly European / Latin-alphabet focused."
+    }
+  },
+  "lighton-ocr2.py": {
+    "model_id": "lightonai/LightOnOCR-2-1B",
+    "params": "1B",
+    "backend": "vllm",
+    "task": "ocr",
+    "output": "markdown",
+    "languages": {
+      "evidence": "named-list",
+      "count": 11,
+      "named": ["en", "fr", "de", "es", "it", "nl", "pt", "sv", "da", "zh", "ja"],
+      "notes": "Adds zh/ja over v1; declared, not benchmarked per language."
+    }
+  },
+  "hunyuan-ocr.py": {
+    "model_id": "tencent/HunyuanOCR",
+    "revision": "f6af82ee007fe6091b29fb3bb287b491ead41c82",
+    "params": "1B",
+    "backend": "vllm",
+    "task": "ocr",
+    "output": "markdown",
+    "license": "Hunyuan Community License (excludes EU/UK/KR)",
+    "languages": { "evidence": "multilingual-unspecified" }
+  },
+  "hunyuan-ocr-1.5.py": {
+    "model_id": "tencent/HunyuanOCR",
+    "params": "1B",
+    "backend": "vllm",
+    "task": "ocr | 12 task types",
+    "output": "markdown",
+    "license": "Hunyuan Community License (excludes EU/UK/KR)",
+    "languages": {
+      "evidence": "multilingual-unspecified",
+      "notes": "Explicitly targets low-resource + ancient-script OCR as a design goal; nothing enumerated."
+    }
+  },
+  "dots-ocr.py": {
+    "model_id": "rednote-hilab/dots.ocr",
+    "params": "1.7B",
+    "backend": "vllm",
+    "task": "ocr + layout",
+    "output": "markdown",
+    "languages": {
+      "evidence": "count-claim",
+      "count": 100,
+      "notes": "Explicit low-resource claim backed by in-house dots.ocr-bench (1,493 PDFs across 100 languages); aggregate scores only."
+    }
+  },
+  "firered-ocr.py": {
+    "model_id": "FireRedTeam/FireRed-OCR",
+    "params": "2.1B",
+    "backend": "vllm",
+    "task": "ocr",
+    "output": "markdown",
+    "license": "apache-2.0",
+    "languages": { "evidence": "not-stated" }
+  },
+  "abot-ocr.py": {
+    "model_id": "acvlab/ABot-OCR",
+    "params": "2B",
+    "backend": "vllm",
+    "image": "vllm/vllm-openai",
+    "task": "ocr",
+    "output": "markdown (text, LaTeX, HTML tables)",
+    "languages": { "evidence": "not-stated" }
+  },
+  "nanonets-ocr.py": {
+    "model_id": "nanonets/Nanonets-OCR-s",
+    "params": "2B",
+    "backend": "vllm",
+    "task": "ocr",
+    "output": "markdown (LaTeX, tables, forms)",
+    "languages": { "evidence": "english-only" }
+  },
+  "dots-mocr.py": {
+    "model_id": "rednote-hilab/dots.mocr",
+    "params": "3B",
+    "backend": "vllm",
+    "task": "ocr | 8 prompt modes incl. SVG, layout + bbox",
+    "output": "markdown",
+    "languages": { "evidence": "multilingual-unspecified" }
+  },
+  "nanonets-ocr2.py": {
+    "model_id": "nanonets/Nanonets-OCR2-3B",
+    "params": "3B",
+    "backend": "vllm",
+    "image": "vllm/vllm-openai:v0.10.2",
+    "task": "ocr",
+    "output": "markdown",
+    "languages": {
+      "evidence": "named-list",
+      "count": "11 named + 'many more'",
+      "named": ["en", "zh", "fr", "es", "pt", "de", "it", "ru", "ja", "ko", "ar"],
+      "notes": "Only card claiming multilingual handwriting; list illustrative, no per-language benchmark."
+    }
+  },
+  "deepseek-ocr-vllm.py": {
+    "model_id": "deepseek-ai/DeepSeek-OCR",
+    "params": "4B",
+    "backend": "vllm",
+    "task": "ocr | 5 resolution + 5 prompt modes",
+    "output": "markdown",
+    "license": "mit",
+    "languages": { "evidence": "multilingual-unspecified" }
+  },
+  "deepseek-ocr.py": {
+    "model_id": "deepseek-ai/DeepSeek-OCR",
+    "params": "4B",
+    "backend": "transformers",
+    "task": "ocr",
+    "output": "markdown",
+    "license": "mit",
+    "languages": { "evidence": "multilingual-unspecified" }
+  },
+  "deepseek-ocr2-vllm.py": {
+    "model_id": "deepseek-ai/DeepSeek-OCR-2",
+    "params": "3B",
+    "backend": "vllm (nightly)",
+    "image": "vllm/vllm-openai",
+    "task": "ocr",
+    "output": "markdown",
+    "license": "apache-2.0",
+    "languages": { "evidence": "multilingual-unspecified" }
+  },
+  "unlimited-ocr-vllm.py": {
+    "model_id": "baidu/Unlimited-OCR",
+    "params": "3.3B",
+    "backend": "vllm",
+    "image": "vllm/vllm-openai:unlimited-ocr",
+    "task": "ocr (layout-grounded markdown; single-image batch)",
+    "output": "markdown",
+    "license": "mit",
+    "languages": { "evidence": "multilingual-unspecified" }
+  },
+  "nuextract3.py": {
+    "model_id": "numind/NuExtract3",
+    "params": "4B",
+    "backend": "vllm",
+    "image": "vllm/vllm-openai",
+    "task": "ocr | schema-guided extraction",
+    "output": "markdown or JSON",
+    "languages": { "evidence": "multilingual-unspecified" }
+  },
+  "qianfan-ocr.py": {
+    "model_id": "baidu/Qianfan-OCR",
+    "params": "4.7B",
+    "backend": "vllm",
+    "task": "ocr",
+    "output": "markdown",
+    "languages": {
+      "evidence": "count-claim",
+      "count": 192,
+      "notes": "Headline claim; no list or per-language numbers."
+    }
+  },
+  "olmocr2-vllm.py": {
+    "model_id": "allenai/olmOCR-2-7B-1025-FP8",
+    "params": "7B",
+    "backend": "vllm",
+    "task": "ocr",
+    "output": "markdown",
+    "languages": { "evidence": "english-only" }
+  },
+  "rolm-ocr.py": {
+    "model_id": "reducto/RolmOCR",
+    "params": "7B",
+    "backend": "vllm",
+    "task": "ocr",
+    "output": "plain text",
+    "languages": { "evidence": "not-stated" }
+  },
+  "numarkdown-ocr.py": {
+    "model_id": "numind/NuMarkdown-8B-Thinking",
+    "params": "8B",
+    "backend": "vllm",
+    "task": "ocr (reasoning)",
+    "output": "markdown",
+    "languages": { "evidence": "not-stated" }
+  },
+  "lfm2-vl-extract.py": {
+    "model_id": "LiquidAI/LFM2.5-VL-1.6B-Extract",
+    "params": "1.6B",
+    "backend": "vllm",
+    "image": "vllm/vllm-openai",
+    "task": "schema-guided extraction (image -> JSON)",
+    "output": "JSON",
+    "languages": {
+      "evidence": "english-only",
+      "notes": "Vision card declares en only; the text sibling's 9-language list does NOT carry over."
+    }
+  },
+  "lfm2-extract.py": {
+    "model_id": "LiquidAI/LFM2-1.2B-Extract",
+    "params": "1.2B",
+    "backend": "vllm",
+    "image": "vllm/vllm-openai",
+    "task": "schema-guided extraction (text -> structured); chain after any OCR recipe",
+    "output": "JSON / XML / YAML",
+    "languages": {
+      "evidence": "named-list",
+      "count": 9,
+      "named": ["en", "ar", "zh", "fr", "de", "ja", "ko", "pt", "es"],
+      "notes": "Text-only model (not OCR). Card prose names 9 incl. Portuguese; card YAML lists 8 (pt missing)."
+    }
+  },
+  "lift-extract.py": {
+    "model_id": "datalab-to/lift",
+    "params": "9B",
+    "backend": "transformers | vllm",
+    "task": "schema-guided extraction (image or multi-page PDF -> JSON)",
+    "output": "JSON",
+    "license": "modified OpenRAIL-M",
+    "languages": { "evidence": "not-stated" }
+  },
+  "pp-doclayout.py": {
+    "model_id": "PaddlePaddle/PP-DocLayout-L",
+    "params": "123M",
+    "backend": "paddleocr",
+    "task": "layout detection (no text extraction)",
+    "output": "bounding boxes + region classes",
+    "languages": { "evidence": "not-applicable" }
+  },
+  "glm-ocr-v2.py": { "variant_of": "glm-ocr.py", "notes": "Adds checkpoint/resume for very large jobs." },
+  "glm-ocr-bucket.py": { "variant_of": "glm-ocr.py", "notes": "Reads images/PDFs from a mounted bucket, writes one .md per page." },
+  "falcon-ocr-bucket.py": { "variant_of": "falcon-ocr.py", "notes": "Reads images/PDFs from a mounted bucket, writes one .md per page." },
+  "surya-ocr-bucket.py": { "variant_of": "surya-ocr.py", "notes": "Bucket-to-bucket structured OCR (--io-mode mount|copy), resumable." },
+  "ocr-vllm-judge.py": { "model_id": "configurable", "task": "pairwise OCR-quality judging (VLM-as-judge)", "languages": { "evidence": "not-applicable" } }
+}
