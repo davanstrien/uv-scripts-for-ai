@@ -29,8 +29,15 @@ starts the server, then runs this driver against it):
   hf jobs run --detach --flavor a100-large -s HF_TOKEN --timeout 8h \\
       -v hf://buckets/user/audio-files:/input:ro \\
       -v hf://buckets/user/transcripts:/output \\
-      lmsysorg/sglang:nightly-dev-cu13-20260709-074bb928 -- \\
+      lmsysorg/sglang-omni:dev -- \\
       bash -c "pip install -q uv; git clone --depth 1 https://github.com/sgl-project/sglang-omni.git && cd sglang-omni && uv venv .venv -p 3.12 && . .venv/bin/activate && uv pip install . && (sgl-omni serve --model-path OpenMOSS-Team/MOSS-Transcribe-Diarize --host 0.0.0.0 --port 8000 --max-running-requests 16 --mem-fraction-static 0.80 &) && uv run https://huggingface.co/datasets/uv-scripts/transcription/raw/main/moss-transcribe-diarize-server.py /input /output --emit-txt"
+
+The image is the upstream-recommended sgl-omni base (prebakes UCX/flash-attn/
+sglang; validated 2026-07-16 — 100% coverage, 8.2x realtime on 2 test tapes).
+sglang-omni has no PyPI package or preinstalled image (checked same day), so
+the in-job source install is the official path. This driver relies on
+sgl-omni's `verbose_json` parsed speaker segments, so serve with sgl-omni
+as shown.
 
 Input:                              Output:
   /input/tape1.mp3            ->      /output/tape1.json  (segments; parts merged)
