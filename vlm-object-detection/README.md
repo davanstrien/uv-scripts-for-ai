@@ -195,6 +195,8 @@ In HF Jobs, pass example artifacts via volume mount:
 --example-answer-file /example/answer.json
 ```
 
+Or skip the dataset repo and mount a local folder directly — `-v ./example:/example` syncs it to a private bucket automatically (`huggingface_hub` ≥ 1.22).
+
 Pick an example that looks similar to your typical target page — the model anchors heavily to "what a page should look like."
 
 ## Acknowledgements

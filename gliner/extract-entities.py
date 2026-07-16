@@ -68,7 +68,8 @@ def parse_args():
         help=(
             "Input. Either a HF dataset ID (e.g. 'org/dataset') or a local path "
             "to parquet/jsonl file(s) — useful when running in HF Jobs with a mounted "
-            "bucket: '-v hf://buckets/<ns>/<bucket>:/input' then pass '/input/cards.parquet'."
+            "bucket ('-v hf://buckets/<ns>/<bucket>:/input') or a local folder synced "
+            "automatically ('-v ./data:/input', hub >= 1.22), then pass '/input/cards.parquet'."
         ),
     )
     p.add_argument(

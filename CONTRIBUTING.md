@@ -51,7 +51,8 @@ if __name__ == "__main__":
 
 - **Self-contained:** declare all deps inline; no `requirements.txt`, no shared importable modules.
 - **Hub-native I/O:** read inputs from and write outputs to the Hub (`push_to_hub`) or a bucket (`-v hf://…`).
-  Job disk is ephemeral — never rely on local output paths.
+  Job disk is ephemeral — never rely on local output paths. (Users can mount a local *input* folder with
+  `-v ./dir:/mnt`, which syncs it to a bucket — scripts just see a mounted directory.)
 - **GPU scripts:** check `torch.cuda.is_available()` and exit with a clear message if a GPU is required.
 - **Fast downloads:** prefer `huggingface-hub[hf_transfer]`.
 - **Naming:** name by task, not tool (`classify-dataset.py`, not `bert-classify.py`).

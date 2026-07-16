@@ -23,6 +23,27 @@ hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
 
 The `ocr` family already ships bucket-aware recipes — **`glm-ocr-bucket.py`** and **`falcon-ocr-bucket.py`** read images/PDFs from a mounted bucket and write one `.md` per page. Read the recipe's `--help` for exact arguments.
 
+## Mount a local folder (no upload step)
+
+The `-v` source can also be a **local directory** (requires `huggingface_hub` ≥ 1.22). The CLI syncs it to a bucket and mounts it in the Job — no "upload to a repo first" step:
+
+```bash
+hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
+  -v ./scans:/input \
+  -v hf://buckets/<user>/<bucket>:/output \
+  https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr-bucket.py \
+  /input /output
+```
+
+How it behaves:
+
+- Files sync to a **private** `<namespace>/jobs-artifacts` bucket (auto-created), into a subfolder derived from the directory path — **re-running only syncs new or changed files**.
+- It's a **copy, not a live mount**: local edits after launch aren't visible to the Job; re-run the command to re-sync.
+- **Read-only by default.** Append `:rw` (e.g. `-v ./out:/output:rw`) to let the Job write back; pull results down afterwards with the `hf buckets sync` command the CLI prints at launch.
+- Python API equivalent: `sync_job_volume("./scans", "/input")` returns a `Volume` to pass in `run_uv_job(..., volumes=[...])`.
+
+Prefer a **named bucket** (previous section) when the data is large or has thousands of files — bulk reads over the FUSE mount are slow, so at that scale copy from the mount to the Job's local disk first, or use a bucket you populate once — or when several machines/jobs share it.
+
 ## Write to a bucket from Python (fsspec)
 
 A recipe that writes incrementally can use `hf://buckets/…` paths directly:

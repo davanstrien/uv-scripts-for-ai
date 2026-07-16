@@ -42,6 +42,8 @@ hf jobs uv run --flavor l4x1 -s HF_TOKEN \
 
 No download/upload step. Buckets are mounted directly as volumes via [hf-mount](https://github.com/huggingface/hf-mount).
 
+Audio already on your machine? Mount the folder directly — `-v ./audio:/input` syncs it to a private bucket and mounts it in the job (re-runs only sync changed files; `huggingface_hub` ≥ 1.22), so you can skip the `download-ia`/bucket step.
+
 > **Local dev**: if you've cloned this repo, swap the URL for the local filename (e.g. `cohere-transcribe.py /input /output ...`).
 
 ## Scripts
