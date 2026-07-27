@@ -189,12 +189,23 @@ override), FlashInfer, and `MAX_PATCHES_WITH_RESIZE=true` in the image env.
    inline parser is the Space's bbox-preserving `parse_blocks`, not the model repo's
    `eval/hpd_to_markdown.py` (that one drops chart/seal blocks and discards bboxes).
 
-**Not yet exercised:** both smoke runs were single-column typewritten scans (`ufo-ColPali`), which
-produced `text/title/header/image/image_caption/page_number/aside_text/footer` blocks but **no
-`table` or `formula`** — so the table (HTML) and formula (LaTeX) paths through `clean_text`, and
-the `chart`/`seal` empty-text rule, are untested against real output. Run it on a table-heavy set
-before trusting those. Throughput is page-length-bound: 1.00 img/s on 5 pages vs 0.30 img/s on a
-shuffled 10 where one long page decoded alone at the tail.
+**Coverage:** the `ufo-ColPali` runs only produced text-ish blocks, so a third run on 12 shuffled
+`opendatalab/OmniDocBench` pages (the model's own eval set) closed the gap — 12/12, 0 errors, and
+it exercised the paths that matter: **6 `table` blocks** (real HTML with `rowspan`/`colspan`,
+auto-closed by `clean_text`), **4 `equation` blocks** (LaTeX `\( … \)` via `normalize_arith`), plus
+`table_caption`/`table_footnote`/`page_footnote`/`image_footnote`/`code`. Still unseen in any run:
+`chart` and `seal` (the two types whose text is deliberately suppressed). Short markdown is not
+automatically a failure — a PPT slide correctly yielded 32 chars, an image-dominated page 118.
+Throughput is page-length-bound: 1.00 img/s (5 UFO pages), 0.30 (shuffled 10, one long page
+decoding alone at the tail), 0.48 (12 OmniDocBench pages).
+
+**Two benign log lines, don't re-debug them:** (1) `Error retrieving safetensors: Repo id must be
+in the form …` for the local P-MTP directory — appears in every run including green ones, and the
+head demonstrably loads (SpecDecoding metrics report 50–96% draft acceptance depending on how
+predictable the page is). (2) On a 61.7 MPx page, `Token indices sequence length is longer than the
+specified maximum (16650 > 14588)` from the HF tokenizer — no request errored and that page still
+produced coherent blocks, but if giant scans ever do degrade, that's the knob: `--max-pixels` to
+bound the input, or raise `--max-model-len` (the LM allows 40960).
 
 Server-only **by design**: forking is a scheduler feature, so an offline `llm.generate` loop
 forfeits the model's entire selling point. Don't add an offline sibling without a reason.
@@ -326,8 +337,9 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
   `l4x1` / `davanstrien/ufo-ColPali` (5/5 pages, 0 errors, 1.00 img/s, spec-decode mean
   acceptance length 4.01 @ 50.1% draft acceptance, 52.9% prefix-cache hit rate); bbox space
   confirmed by overlay render. Second run, shuffled 10 pages: 10/10, 0 errors, 0 tag leaks, 0
-  out-of-range bboxes. Tables/formulas still unexercised (see gotcha). Writes `markdown` +
-  `hpd_blocks` (+ `hpd_raw` with `--keep-raw`).
+  out-of-range bboxes. Third run on 12 shuffled `opendatalab/OmniDocBench` pages (12/12, 0 errors,
+  0.48 img/s) covered tables (HTML w/ rowspan/colspan) and equations (LaTeX); `chart`/`seal` still
+  unseen. Writes `markdown` + `hpd_blocks` (+ `hpd_raw` with `--keep-raw`).
 - **2026-07-14** — added `ovis-ocr2.py` (`ATH-MaaS/OvisOCR2`, 0.9B Qwen3.5, 96.58 OmniDocBench v1.6,
   Apache-2.0; stable vLLM ≥0.22.1, `gdn_prefill_backend="triton"`, card-exact prompt/postprocessing).
   Smoke-tested green on the default uv image, a10g-small, resolved vLLM 0.25.1 (5/5 pages, tags filtered,
