@@ -86,6 +86,7 @@ Legend: ✅ production-ready · ⚠️ works only with a required pinned image �
 | `surya-ocr-bucket.py` | ✅+image | vLLM `:v0.20.1` | l4x1 | bucket I/O; pin `surya-ocr==0.20.0` |
 | `lift-extract.py` | ✅ | hf / vLLM | a100-large | schema-constrained extraction; naming gotcha |
 | `nuextract3.py`, `lfm2-extract.py`, `lfm2-vl-extract.py` | ✅ | vLLM | l4x1 | structured extraction |
+| `hpd-parsing-server.py` | ✅+image | vLLM server (vendor fork) | l4x1 | vendor image only (no `uv` in it → `hf jobs run` + bootstrap); P-MTP path fixed in-recipe; `markdown` + `hpd_blocks` — see gotcha |
 | `hunyuan-ocr.py` | ✅ | vLLM | l4x1 | **1.0, revision-pinned** (root repo became 1.5 in-place); `transformers<5.13` cap — see gotcha |
 | `hunyuan-ocr-1.5.py` | ✅ | vLLM | l4x1 | tracks repo root (=1.5); task-locked prompts; `transformers<5.13` cap — see gotcha |
 | `rolm-ocr.py`, `smoldocling-ocr.py`, `numarkdown-ocr.py`, `qianfan-ocr.py`, `firered-ocr.py`, `abot-ocr.py`, `falcon-ocr.py`, `olmocr2-vllm.py`, `dots-mocr.py` | ✅ | vLLM | varies | see `README.md` for flags |
@@ -155,6 +156,76 @@ runs on **`vllm/vllm-openai:unlimited-ocr`** (`:unlimited-ocr-cu129` on Hopper),
 hard scans) and belongs to **serving** — both engines read clean multi-page docs, but **SGLang is more
 robust on hard/degraded scans**. Serving setup (SGLang pin `lmsysorg/sglang:v0.5.10.post1`, a100+flashinfer
 — HF `h200` nodes fail with `CUDA error 802`) is in `serving-unlimited-ocr.md`.
+
+### `hpd-parsing-server.py` — vendor image, vendor fork, four sharp edges
+`PaddlePaddle/HPD-Parsing` (1B, InternVL3.5 + Qwen3-0.6B) only runs on Paddle's **fork of vLLM**
+(`0.17.1+hpdparsing`), which implements the dynamic request forking its decoding paradigm needs.
+That fork ships as a Baidu-CDN wheel or the image
+`ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/hpd-parsing-vllm:latest-nvidia-gpu` — **the
+first non-Docker-Hub image in this collection**. It pulls anonymously (verified 2026-07-27; plain
+bearer-token challenge, no credentials) and HF Jobs can fetch it, but it is ~11 GB, so cold start
+is ~7 min before anything runs. Tags: `latest-nvidia-gpu` (weights from the Hub) and
+`latest-nvidia-gpu-offline` (weights baked in at `/home/hpd/models`). Inside: CUDA 12.8.1, a
+python3.10 venv at `/home/hpd/venv` first on `PATH` (so `vllm` resolves with no `--python`
+override), FlashInfer, and `MAX_PATCHES_WITH_RESIZE=true` in the image env.
+
+1. **No `uv` in the image** → `hf jobs uv run --image …` dies with `"uv": executable file not
+   found in $PATH` (the `vllm/vllm-openai` images ship uv; this one doesn't). Run it as
+   `hf jobs run … <image> -- bash -lc 'pip install -q uv && uv run <script-url> …'` — note the
+   image is a *positional* arg for `hf jobs run`, and `--` before `bash -lc`.
+2. **The vendor's own speculative-model path is broken outside their offline mode.** The
+   entrypoint passes `--speculative-config '{"model": "PaddlePaddle/HPD-Parsing/P-MTP", …}'`,
+   which vLLM rejects (`Repo id must be in the form 'repo_name' or 'namespace/repo_name'`) — it
+   takes a repo id *or* a local dir, and that is neither. Works in the `-offline` image only
+   because the same string is a real directory there. `resolve_spec_model()` snapshot-downloads
+   the `P-MTP/*` subfolder into the normal HF cache and passes that path instead.
+3. **`--enable-prefix-caching` stays ON**, against the usual OCR serve pattern: forked children
+   reuse the parent branch's prefix KV (52.9% hit rate on the smoke run). `--attention-config
+   '{"use_prefill_query_quantization":true}'` is fork-only, no upstream equivalent. Both come
+   from `/home/hpd/entrypoint.sh` — `build_serve_args()` is that command, not our translation.
+4. **Bboxes are 0-1000 normalized, not pixels** (unlike `surya_blocks`) — `px = v/1000 * width`,
+   verified by overlay render. Recorded per-row in `inference_info.bbox_space` so downstream code
+   can't guess wrong. Raw output is a `<BLOCK> <type> [bbox] <CHILD> <content>` stream; the
+   inline parser is the Space's bbox-preserving `parse_blocks`, not the model repo's
+   `eval/hpd_to_markdown.py` (that one drops chart/seal blocks and discards bboxes).
+
+**Coverage:** the `ufo-ColPali` runs only produced text-ish blocks, so a third run on 12 shuffled
+`opendatalab/OmniDocBench` pages (the model's own eval set) closed the gap — 12/12, 0 errors, and
+it exercised the paths that matter: **6 `table` blocks** (real HTML with `rowspan`/`colspan`,
+auto-closed by `clean_text`), **4 `equation` blocks** (LaTeX `\( … \)` via `normalize_arith`), plus
+`table_caption`/`table_footnote`/`page_footnote`/`image_footnote`/`code`. Still unseen in any run:
+`chart` and `seal` (the two types whose text is deliberately suppressed). Short markdown is not
+automatically a failure — a PPT slide correctly yielded 32 chars, an image-dominated page 118.
+Throughput is page-length-bound: 1.00 img/s (5 UFO pages), 0.30 (shuffled 10, one long page
+decoding alone at the tail), 0.48 (12 OmniDocBench pages).
+
+**Known failure mode — repetition collapse on dense pages, and `--max-tokens` does NOT bound a
+page.** On 12 Chronicling America pages (1774–1809, LoC via IIIF) 10 were excellent — output length
+within 1% of LoC's own OCR and visibly cleaner — but **2 collapsed into degenerate repetition**
+(`"the United States of America,"` ×222; `"largest of the world's largest"` ×167), both dense 1809
+advertisement pages that fragmented into 279–340 blocks. One emitted **726,706 chars against 24,907
+in the reference OCR (29×)**. This is structural, not a fluke: hierarchical decoding gives *each
+forked child branch* its own `--max-tokens` budget, so a page that fragments into hundreds of
+regions can emit ~100× the per-branch limit. Nothing errors and nothing truncates — you get a giant
+garbage cell, and throughput craters (0.05 img/s on that run vs 0.48 on OmniDocBench). Screen
+outputs by length ratio against a reference, or cap block count, before trusting a corpus run;
+`ovis-ocr2.py` carries a `clean_truncated_repeats` port from its card, HPD's upstream postprocessing
+has no equivalent. A per-block repetition guard + a repetition flag is the obvious follow-up (it
+pairs with the `ocr_error` column in [Deferred](#deferred--tracked)).
+
+**Two benign log lines, don't re-debug them:** (1) `Error retrieving safetensors: Repo id must be
+in the form …` for the local P-MTP directory — appears in every run including green ones, and the
+head demonstrably loads (SpecDecoding metrics report 50–96% draft acceptance depending on how
+predictable the page is). (2) On a 61.7 MPx page, `Token indices sequence length is longer than the
+specified maximum (16650 > 14588)` from the HF tokenizer — no request errored and that page still
+produced coherent blocks, but if giant scans ever do degrade, that's the knob: `--max-pixels` to
+bound the input, or raise `--max-model-len` (the LM allows 40960).
+
+Server-only **by design**: forking is a scheduler feature, so an offline `llm.generate` loop
+forfeits the model's entire selling point. Don't add an offline sibling without a reason.
+Accuracy (94.91 OmniDocBench v1.6) is *below* `ovis-ocr2` (96.58) and `paddleocr-vl-1.6` (96.33)
+— this recipe earns its slot on throughput + the layout column, not quality. Card claims en/zh
+only, and it shows: the smoke run on degraded French scans emitted stray CJK mid-word.
 
 ### `lift-extract.py` — naming + backends
 Datalab `lift` (9B, Qwen3.5), schema-constrained image/PDF → JSON; the only recipe ingesting PDFs directly.
@@ -273,6 +344,18 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
 
 ## Change log
 
+- **2026-07-27** — added `hpd-parsing-server.py` (`PaddlePaddle/HPD-Parsing`, 1B, Apache-2.0;
+  94.91 OmniDocBench v1.6 at 4,752 TPS). Server-only, on Paddle's own image (the first
+  non-Docker-Hub image here) — see the gotcha for the four sharp edges: no `uv` in the image,
+  the broken vendor P-MTP path, prefix-caching-on, and normalized bboxes. Smoke-tested green on
+  `l4x1` / `davanstrien/ufo-ColPali` (5/5 pages, 0 errors, 1.00 img/s, spec-decode mean
+  acceptance length 4.01 @ 50.1% draft acceptance, 52.9% prefix-cache hit rate); bbox space
+  confirmed by overlay render. Second run, shuffled 10 pages: 10/10, 0 errors, 0 tag leaks, 0
+  out-of-range bboxes. Third run on 12 shuffled `opendatalab/OmniDocBench` pages (12/12, 0 errors,
+  0.48 img/s) covered tables (HTML w/ rowspan/colspan) and equations (LaTeX); `chart`/`seal` still
+  unseen. Fourth run on 12 Chronicling America pages (1774–1809) found the repetition-collapse
+  failure mode — 10/12 excellent, 2/12 degenerate (see gotcha). Writes `markdown` + `hpd_blocks`
+  (+ `hpd_raw` with `--keep-raw`).
 - **2026-07-14** — added `ovis-ocr2.py` (`ATH-MaaS/OvisOCR2`, 0.9B Qwen3.5, 96.58 OmniDocBench v1.6,
   Apache-2.0; stable vLLM ≥0.22.1, `gdn_prefill_backend="triton"`, card-exact prompt/postprocessing).
   Smoke-tested green on the default uv image, a10g-small, resolved vLLM 0.25.1 (5/5 pages, tags filtered,

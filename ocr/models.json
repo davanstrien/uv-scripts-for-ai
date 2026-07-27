@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "description": "Machine-readable catalog of the OCR recipes in this directory: script -> model, params, backend, required image pins, and what the model's own card claims about language coverage. Human-readable language notes: LANGUAGES.md. Language evidence levels, strongest first: per-language-benchmark | count-claim | named-list | multilingual-unspecified | english-only | not-stated | not-applicable. Claims come from model cards (compiled 2026-07-15) - treat as claims, not guarantees.",
-    "updated": "2026-07-15",
+    "description": "Machine-readable catalog of the OCR recipes in this directory: script -> model, params, backend, required image pins, and what the model's own card claims about language coverage. Human-readable language notes: LANGUAGES.md. Language evidence levels, strongest first: per-language-benchmark | count-claim | named-list | multilingual-unspecified | english-only | not-stated | not-applicable. Claims come from model cards (compiled 2026-07-15; hpd-parsing added 2026-07-27) - treat as claims, not guarantees.",
+    "updated": "2026-07-27",
     "run_pattern": "hf jobs uv run --flavor <flavor> -s HF_TOKEN https://huggingface.co/datasets/uv-scripts/ocr/raw/main/<script> <input-dataset> <output-dataset>"
   },
   "tesseract-ocr.py": {
@@ -168,6 +168,23 @@
       "count": 11,
       "named": ["en", "fr", "de", "es", "it", "nl", "pt", "sv", "da", "zh", "ja"],
       "notes": "Adds zh/ja over v1; declared, not benchmarked per language."
+    }
+  },
+  "hpd-parsing-server.py": {
+    "model_id": "PaddlePaddle/HPD-Parsing",
+    "params": "1B",
+    "backend": "vllm-server (vendor fork 0.17.1+hpdparsing: request forking + P-MTP)",
+    "image": "ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/hpd-parsing-vllm:latest-nvidia-gpu",
+    "run_pattern_override": "hf jobs run --detach --flavor l4x1 -s HF_TOKEN --timeout 2h <image> -- bash -lc 'pip install -q uv && uv run <script-url> <input-dataset> <output-dataset>'",
+    "task": "ocr | layout",
+    "output": "markdown + hpd_blocks (per-block type, bbox, text; bbox 0-1000 NORMALIZED, not pixels)",
+    "license": "apache-2.0",
+    "notes": "Server-only by design (no offline sibling): forking is a scheduler feature of the vendor's vLLM fork, shipped only in their image, whose own entrypoint is the serve command. Vendor image has NO uv - `hf jobs uv run --image` fails, bootstrap uv in the command (see run_pattern_override). Keeps --enable-prefix-caching ON (forked children share the parent prefix KV; measured 52.9% hit rate), unlike the usual OCR serve pattern. Speculative head path fixed in-recipe: the entrypoint's 'PaddlePaddle/HPD-Parsing/P-MTP' is not a valid repo id. 94.91 OmniDocBench v1.6; accuracy below ovis-ocr2/paddleocr-vl-1.6 - chosen for throughput + layout output. ~11 GB image pull on cold start.",
+    "languages": {
+      "evidence": "named-list",
+      "count": 2,
+      "named": ["en", "zh"],
+      "notes": "Card metadata lists en + zh only; no per-language numbers. Smoke run on degraded French scans produced stray CJK tokens - treat non-en/zh as unsupported."
     }
   },
   "hunyuan-ocr.py": {

@@ -50,6 +50,12 @@ recipe, LightOn's card, Paddle's vLLM recipe, Unlimited-OCR's recipe):
 
 OCR workloads never reuse images, so prefix/multimodal caches only cost memory.
 
+**One documented exception: HPD-Parsing.** Its vendor entrypoint sets
+`--enable-prefix-caching` deliberately — hierarchical parallel decoding forks a child
+branch per page region, and those children reuse the *parent branch's* prefix KV, so the
+cache is load-bearing rather than dead weight (our 5-page smoke run showed a 52.9% prefix
+cache hit rate). Don't "correct" it to `--no-enable-prefix-caching` in a sweep.
+
 ## Version pins carry over — via the image tag
 
 Where an offline recipe pins an engine version, the server variant needs the same pin
@@ -78,6 +84,7 @@ card/docs (verbatim commands live in the linked sources):
 | baidu/Unlimited-OCR | ✅ vLLM + SGLang | Custom image / dev wheel; see [serving-unlimited-ocr.md](serving-unlimited-ocr.md) |
 | baidu/Qianfan-OCR | ✅ vLLM (minimal) | Needs `--hf-overrides '{"architectures": ["InternVLChatModel"]}'` |
 | PaddlePaddle/PaddleOCR-VL 1.x | ✅ paddle `genai_server` + vLLM recipe | Serves the 0.9B VLM only; raw serve skips the layout stage (official quality warning) |
+| PaddlePaddle/HPD-Parsing | ✅✅ vLLM — the image *entrypoint* **is** the serve command | Only runs on the vendor's vLLM fork, so server mode is the only mode (`hpd-parsing-server.py` has no offline sibling). Image ships no `uv` → bootstrap it in the job command. **Keeps prefix caching ON** — see below |
 | deepseek-ai/DeepSeek-OCR / -2 | ⚠️ vLLM recipe pages only | docs.vllm.ai recipes; needs the DeepSeek n-gram logits processor flags |
 | allenai/olmOCR-2-7B-FP8 | ✅ (GitHub) | olmocr toolkit spawns `vllm serve` itself; YAML-front-matter prompt required |
 | reducto/RolmOCR | ✅ vLLM | Card serve + client (client's model string has a typo — pass `--served-model-name`) |
