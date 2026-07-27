@@ -86,6 +86,7 @@ Legend: ✅ production-ready · ⚠️ works only with a required pinned image �
 | `surya-ocr-bucket.py` | ✅+image | vLLM `:v0.20.1` | l4x1 | bucket I/O; pin `surya-ocr==0.20.0` |
 | `lift-extract.py` | ✅ | hf / vLLM | a100-large | schema-constrained extraction; naming gotcha |
 | `nuextract3.py`, `lfm2-extract.py`, `lfm2-vl-extract.py` | ✅ | vLLM | l4x1 | structured extraction |
+| `hpd-parsing-server.py` | ✅+image | vLLM server (vendor fork) | l4x1 | vendor image only (no `uv` in it → `hf jobs run` + bootstrap); P-MTP path fixed in-recipe; `markdown` + `hpd_blocks` — see gotcha |
 | `hunyuan-ocr.py` | ✅ | vLLM | l4x1 | **1.0, revision-pinned** (root repo became 1.5 in-place); `transformers<5.13` cap — see gotcha |
 | `hunyuan-ocr-1.5.py` | ✅ | vLLM | l4x1 | tracks repo root (=1.5); task-locked prompts; `transformers<5.13` cap — see gotcha |
 | `rolm-ocr.py`, `smoldocling-ocr.py`, `numarkdown-ocr.py`, `qianfan-ocr.py`, `firered-ocr.py`, `abot-ocr.py`, `falcon-ocr.py`, `olmocr2-vllm.py`, `dots-mocr.py` | ✅ | vLLM | varies | see `README.md` for flags |
@@ -155,6 +156,51 @@ runs on **`vllm/vllm-openai:unlimited-ocr`** (`:unlimited-ocr-cu129` on Hopper),
 hard scans) and belongs to **serving** — both engines read clean multi-page docs, but **SGLang is more
 robust on hard/degraded scans**. Serving setup (SGLang pin `lmsysorg/sglang:v0.5.10.post1`, a100+flashinfer
 — HF `h200` nodes fail with `CUDA error 802`) is in `serving-unlimited-ocr.md`.
+
+### `hpd-parsing-server.py` — vendor image, vendor fork, four sharp edges
+`PaddlePaddle/HPD-Parsing` (1B, InternVL3.5 + Qwen3-0.6B) only runs on Paddle's **fork of vLLM**
+(`0.17.1+hpdparsing`), which implements the dynamic request forking its decoding paradigm needs.
+That fork ships as a Baidu-CDN wheel or the image
+`ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/hpd-parsing-vllm:latest-nvidia-gpu` — **the
+first non-Docker-Hub image in this collection**. It pulls anonymously (verified 2026-07-27; plain
+bearer-token challenge, no credentials) and HF Jobs can fetch it, but it is ~11 GB, so cold start
+is ~7 min before anything runs. Tags: `latest-nvidia-gpu` (weights from the Hub) and
+`latest-nvidia-gpu-offline` (weights baked in at `/home/hpd/models`). Inside: CUDA 12.8.1, a
+python3.10 venv at `/home/hpd/venv` first on `PATH` (so `vllm` resolves with no `--python`
+override), FlashInfer, and `MAX_PATCHES_WITH_RESIZE=true` in the image env.
+
+1. **No `uv` in the image** → `hf jobs uv run --image …` dies with `"uv": executable file not
+   found in $PATH` (the `vllm/vllm-openai` images ship uv; this one doesn't). Run it as
+   `hf jobs run … <image> -- bash -lc 'pip install -q uv && uv run <script-url> …'` — note the
+   image is a *positional* arg for `hf jobs run`, and `--` before `bash -lc`.
+2. **The vendor's own speculative-model path is broken outside their offline mode.** The
+   entrypoint passes `--speculative-config '{"model": "PaddlePaddle/HPD-Parsing/P-MTP", …}'`,
+   which vLLM rejects (`Repo id must be in the form 'repo_name' or 'namespace/repo_name'`) — it
+   takes a repo id *or* a local dir, and that is neither. Works in the `-offline` image only
+   because the same string is a real directory there. `resolve_spec_model()` snapshot-downloads
+   the `P-MTP/*` subfolder into the normal HF cache and passes that path instead.
+3. **`--enable-prefix-caching` stays ON**, against the usual OCR serve pattern: forked children
+   reuse the parent branch's prefix KV (52.9% hit rate on the smoke run). `--attention-config
+   '{"use_prefill_query_quantization":true}'` is fork-only, no upstream equivalent. Both come
+   from `/home/hpd/entrypoint.sh` — `build_serve_args()` is that command, not our translation.
+4. **Bboxes are 0-1000 normalized, not pixels** (unlike `surya_blocks`) — `px = v/1000 * width`,
+   verified by overlay render. Recorded per-row in `inference_info.bbox_space` so downstream code
+   can't guess wrong. Raw output is a `<BLOCK> <type> [bbox] <CHILD> <content>` stream; the
+   inline parser is the Space's bbox-preserving `parse_blocks`, not the model repo's
+   `eval/hpd_to_markdown.py` (that one drops chart/seal blocks and discards bboxes).
+
+**Not yet exercised:** both smoke runs were single-column typewritten scans (`ufo-ColPali`), which
+produced `text/title/header/image/image_caption/page_number/aside_text/footer` blocks but **no
+`table` or `formula`** — so the table (HTML) and formula (LaTeX) paths through `clean_text`, and
+the `chart`/`seal` empty-text rule, are untested against real output. Run it on a table-heavy set
+before trusting those. Throughput is page-length-bound: 1.00 img/s on 5 pages vs 0.30 img/s on a
+shuffled 10 where one long page decoded alone at the tail.
+
+Server-only **by design**: forking is a scheduler feature, so an offline `llm.generate` loop
+forfeits the model's entire selling point. Don't add an offline sibling without a reason.
+Accuracy (94.91 OmniDocBench v1.6) is *below* `ovis-ocr2` (96.58) and `paddleocr-vl-1.6` (96.33)
+— this recipe earns its slot on throughput + the layout column, not quality. Card claims en/zh
+only, and it shows: the smoke run on degraded French scans emitted stray CJK mid-word.
 
 ### `lift-extract.py` — naming + backends
 Datalab `lift` (9B, Qwen3.5), schema-constrained image/PDF → JSON; the only recipe ingesting PDFs directly.
@@ -273,6 +319,15 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
 
 ## Change log
 
+- **2026-07-27** — added `hpd-parsing-server.py` (`PaddlePaddle/HPD-Parsing`, 1B, Apache-2.0;
+  94.91 OmniDocBench v1.6 at 4,752 TPS). Server-only, on Paddle's own image (the first
+  non-Docker-Hub image here) — see the gotcha for the four sharp edges: no `uv` in the image,
+  the broken vendor P-MTP path, prefix-caching-on, and normalized bboxes. Smoke-tested green on
+  `l4x1` / `davanstrien/ufo-ColPali` (5/5 pages, 0 errors, 1.00 img/s, spec-decode mean
+  acceptance length 4.01 @ 50.1% draft acceptance, 52.9% prefix-cache hit rate); bbox space
+  confirmed by overlay render. Second run, shuffled 10 pages: 10/10, 0 errors, 0 tag leaks, 0
+  out-of-range bboxes. Tables/formulas still unexercised (see gotcha). Writes `markdown` +
+  `hpd_blocks` (+ `hpd_raw` with `--keep-raw`).
 - **2026-07-14** — added `ovis-ocr2.py` (`ATH-MaaS/OvisOCR2`, 0.9B Qwen3.5, 96.58 OmniDocBench v1.6,
   Apache-2.0; stable vLLM ≥0.22.1, `gdn_prefill_backend="triton"`, card-exact prompt/postprocessing).
   Smoke-tested green on the default uv image, a10g-small, resolved vLLM 0.25.1 (5/5 pages, tags filtered,
