@@ -199,6 +199,20 @@ automatically a failure — a PPT slide correctly yielded 32 chars, an image-dom
 Throughput is page-length-bound: 1.00 img/s (5 UFO pages), 0.30 (shuffled 10, one long page
 decoding alone at the tail), 0.48 (12 OmniDocBench pages).
 
+**Known failure mode — repetition collapse on dense pages, and `--max-tokens` does NOT bound a
+page.** On 12 Chronicling America pages (1774–1809, LoC via IIIF) 10 were excellent — output length
+within 1% of LoC's own OCR and visibly cleaner — but **2 collapsed into degenerate repetition**
+(`"the United States of America,"` ×222; `"largest of the world's largest"` ×167), both dense 1809
+advertisement pages that fragmented into 279–340 blocks. One emitted **726,706 chars against 24,907
+in the reference OCR (29×)**. This is structural, not a fluke: hierarchical decoding gives *each
+forked child branch* its own `--max-tokens` budget, so a page that fragments into hundreds of
+regions can emit ~100× the per-branch limit. Nothing errors and nothing truncates — you get a giant
+garbage cell, and throughput craters (0.05 img/s on that run vs 0.48 on OmniDocBench). Screen
+outputs by length ratio against a reference, or cap block count, before trusting a corpus run;
+`ovis-ocr2.py` carries a `clean_truncated_repeats` port from its card, HPD's upstream postprocessing
+has no equivalent. A per-block repetition guard + a repetition flag is the obvious follow-up (it
+pairs with the `ocr_error` column in [Deferred](#deferred--tracked)).
+
 **Two benign log lines, don't re-debug them:** (1) `Error retrieving safetensors: Repo id must be
 in the form …` for the local P-MTP directory — appears in every run including green ones, and the
 head demonstrably loads (SpecDecoding metrics report 50–96% draft acceptance depending on how
@@ -339,7 +353,9 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
   confirmed by overlay render. Second run, shuffled 10 pages: 10/10, 0 errors, 0 tag leaks, 0
   out-of-range bboxes. Third run on 12 shuffled `opendatalab/OmniDocBench` pages (12/12, 0 errors,
   0.48 img/s) covered tables (HTML w/ rowspan/colspan) and equations (LaTeX); `chart`/`seal` still
-  unseen. Writes `markdown` + `hpd_blocks` (+ `hpd_raw` with `--keep-raw`).
+  unseen. Fourth run on 12 Chronicling America pages (1774–1809) found the repetition-collapse
+  failure mode — 10/12 excellent, 2/12 degenerate (see gotcha). Writes `markdown` + `hpd_blocks`
+  (+ `hpd_raw` with `--keep-raw`).
 - **2026-07-14** — added `ovis-ocr2.py` (`ATH-MaaS/OvisOCR2`, 0.9B Qwen3.5, 96.58 OmniDocBench v1.6,
   Apache-2.0; stable vLLM ≥0.22.1, `gdn_prefill_backend="triton"`, card-exact prompt/postprocessing).
   Smoke-tested green on the default uv image, a10g-small, resolved vLLM 0.25.1 (5/5 pages, tags filtered,
