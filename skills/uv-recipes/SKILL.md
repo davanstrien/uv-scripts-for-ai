@@ -68,7 +68,7 @@ Each recipe's output dataset is the next recipe's input (handoff through the Hub
 
 A recipe's prediction column is a set of **suggestions, not final labels**. To put a human in the loop, **build a small, task-specific review UI on the spot** — a single-file Gradio app or static HTML that shows each input beside its predicted label with an accept / edit control, writing corrections back to a Hub dataset. Tailor it to the task: image + markdown side-by-side for OCR, image with box overlay for detection, text with highlighted spans for NER. Keep it minimal.
 
-To spend review effort well (active learning), order the queue by informativeness first — by model **uncertainty** (low confidence from a `classification` recipe) or by **diversity** (embed with `build-atlas`, sample to cover the space). Review the most-informative first; optionally fine-tune on the verified labels and re-predict, repeating until predictions stop changing. A **scheduled job** or **webhook** can re-run pre-labelling as new data lands.
+To spend review effort well (active learning), order the queue by informativeness first — by model **uncertainty** (low confidence from a `classification` recipe) or by **diversity** (embed with `build-atlas`, sample to cover the space). Review the most-informative first; optionally fine-tune on the verified labels (the `classification` repo's `train-classifier.py` fine-tunes an encoder from a labelled Hub dataset in one job) and re-predict, repeating until predictions stop changing. A **scheduled job** or **webhook** can re-run pre-labelling as new data lands.
 
 ## Rules that keep jobs working
 

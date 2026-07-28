@@ -1,0 +1,13 @@
+# .github/workflows/sync-classification.yml
+name: Sync classification → HF
+on:
+  push:
+    branches: [main]
+    paths: ['classification/**', '.github/workflows/sync-classification.yml']
+jobs:
+  sync:
+    uses: ./.github/workflows/_sync-folder.yml
+    with:
+      folder: classification
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}

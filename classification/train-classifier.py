@@ -50,8 +50,9 @@ Long documents: pair --max-length 8192 with --gradient-checkpointing and a small
 Model: https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M
 
 Smoke-tested 2026-07-28 on a10g-small (transformers 5.14.1, torch 2.13.0): single-label
-(ag_news, acc 0.757 on a 2k/1-epoch smoke) and multi-label (go_emotions, threshold tuning
-lifting micro-F1 0.00->0.24 on a 2k/1-epoch smoke); both pushed models pass the in-job
+(ag_news, acc 0.757 on a 2k/1-epoch smoke), multi-label (go_emotions, threshold tuning
+lifting micro-F1 0.00->0.24 on a 2k/1-epoch smoke), and the standard-architecture path
+(ModernBERT-base on ag_news, acc 0.871, vanilla artifact); pushed models pass the in-job
 reload check and a fresh local CPU reload.
 """
 
