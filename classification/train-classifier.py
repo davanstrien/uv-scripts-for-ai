@@ -508,6 +508,11 @@ library_name: transformers
 {'''
 Per-label decision thresholds tuned on the eval split are stored in
 `config.classifier_thresholds`.
+
+**Choosing an operating point**: the stored thresholds maximise per-label F1. For
+precision-first use (e.g. auto-applying labels), act only on predictions well above
+their threshold — sigmoid probabilities are a usable confidence signal, and filtering
+to high-confidence predictions trades coverage for precision. Route the rest to review.
 ''' if multi and thresholds else ""}
 ## Usage
 
