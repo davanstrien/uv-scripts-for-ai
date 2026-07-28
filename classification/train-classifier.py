@@ -132,7 +132,32 @@ class EncoderForSequenceClassification(PreTrainedModel):
             else:
                 loss = nn.functional.cross_entropy(logits, labels.view(-1))
         return SequenceClassifierOutput(loss=loss, logits=logits)
+
+
+# AutoModelForSequenceClassification.from_pretrained registers this class against the
+# config class, and that requires config_class to be set (transformers v5 crashes on None).
+try:
+    __CONFIG_IMPORT__
+    EncoderForSequenceClassification.config_class = __CONFIG_CLASS__
+except ImportError:  # flat import during training; the trainer sets config_class itself
+    pass
 '''
+
+
+def render_modeling_file(config) -> str:
+    """Fill the wrapper template with the backbone's concrete config class."""
+    config_cls = type(config)
+    name = config_cls.__name__
+    if config_cls.__module__.startswith("transformers."):
+        import_stmt = f"from transformers import {name}"
+    else:
+        # remote-code config: its module file is copied into the pushed repo alongside
+        # this wrapper, where the dynamic-module loader supports relative imports
+        module_file = config_cls.__module__.split(".")[-1]
+        import_stmt = f"from .{module_file} import {name}"
+    return MODELING_FILE.replace("__CONFIG_IMPORT__", import_stmt).replace(
+        "__CONFIG_CLASS__", name
+    )
 
 
 def check_cuda_availability() -> None:
@@ -254,12 +279,13 @@ def build_model(model_id, problem_type, label_names, work_dir):
             setattr(config, key, value)
         wrapper_path = os.path.join(work_dir, f"{WRAPPER_MODULE}.py")
         with open(wrapper_path, "w") as f:
-            f.write(MODELING_FILE)
+            f.write(render_modeling_file(config))
         spec = importlib.util.spec_from_file_location(WRAPPER_MODULE, wrapper_path)
         module = importlib.util.module_from_spec(spec)
         sys.modules[WRAPPER_MODULE] = module
         spec.loader.exec_module(module)
         wrapper_cls = getattr(module, WRAPPER_CLASS)
+        wrapper_cls.config_class = type(config)
         model = wrapper_cls(config)
         # Replace the randomly-initialised backbone with the pretrained weights.
         model.model = AutoModel.from_pretrained(model_id, trust_remote_code=True)
