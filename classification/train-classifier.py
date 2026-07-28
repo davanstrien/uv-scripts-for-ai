@@ -48,6 +48,11 @@ Long documents: pair --max-length 8192 with --gradient-checkpointing and a small
 (--batch-size 2 --grad-accum 8) on a10g/a100 flavors.
 
 Model: https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M
+
+Smoke-tested 2026-07-28 on a10g-small (transformers 5.14.1, torch 2.13.0): single-label
+(ag_news, acc 0.757 on a 2k/1-epoch smoke) and multi-label (go_emotions, threshold tuning
+lifting micro-F1 0.00->0.24 on a 2k/1-epoch smoke); both pushed models pass the in-job
+reload check and a fresh local CPU reload.
 """
 
 import argparse
@@ -227,12 +232,12 @@ def encode_labels(example, label_column, problem_type, label2id, num_labels, int
             else:
                 idx = label2id[str(v)]
             vec[idx] = 1.0
-        return {"labels": vec}
+        return {"encoded_labels": vec}
     if isinstance(raw, str):
-        return {"labels": label2id[raw]}
+        return {"encoded_labels": label2id[raw]}
     if ints_are_indices:
-        return {"labels": int(raw)}
-    return {"labels": label2id[str(raw)]}
+        return {"encoded_labels": int(raw)}
+    return {"encoded_labels": label2id[str(raw)]}
 
 
 # ---------------------------------------------------------------------------
@@ -617,11 +622,17 @@ def main(
     keep = {"input_ids", "attention_mask", "labels"}
 
     def prepare(split):
+        # Encode into a TEMP column, drop the original, then rename to "labels".
+        # Writing straight into the original column name makes datasets cast the
+        # encoded values back to the original schema (e.g. multi-hot floats ->
+        # list-of-strings -> the collator crashes with "excessive nesting").
         split = split.map(
             lambda ex: encode_labels(
                 ex, label_column, problem_type, label2id, num_labels, ints_are_indices
-            )
+            ),
+            remove_columns=[label_column],
         )
+        split = split.rename_column("encoded_labels", "labels")
         split = split.map(tokenize, batched=True)
         return split.remove_columns([c for c in split.column_names if c not in keep])
 
