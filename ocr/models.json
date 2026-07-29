@@ -129,6 +129,17 @@
     "notes": "Server-mode sibling of ovis-ocr2.py: ~1.7x its inference throughput, per-request failure isolation. See SERVING.md.",
     "languages": { "evidence": "not-stated" }
   },
+  "ovis-ocr2-saturate.py": {
+    "model_id": "ATH-MaaS/OvisOCR2",
+    "params": "0.9B",
+    "backend": "saturate (in-job vllm serve + saturate pump)",
+    "image": "vllm/vllm-openai:latest",
+    "task": "ocr",
+    "output": "markdown + LaTeX + HTML tables",
+    "license": "apache-2.0",
+    "notes": "saturate companion of ovis-ocr2-server.py: same model/prompt/sampling/post-processing; the driver half (adaptive concurrency, retries, resumable parquet output, durable error rows) is the saturate library. SERVING dict at the top of the script is the machine-readable tuning prior.",
+    "languages": { "evidence": "not-stated" }
+  },
   "lighton-ocr.py": {
     "model_id": "lightonai/LightOnOCR-1B-1025",
     "params": "1B",
@@ -163,6 +174,21 @@
     "task": "ocr",
     "output": "markdown",
     "notes": "Server-mode sibling of lighton-ocr2.py (the model card's own documented path): ~1.8x its inference throughput. See SERVING.md.",
+    "languages": {
+      "evidence": "named-list",
+      "count": 11,
+      "named": ["en", "fr", "de", "es", "it", "nl", "pt", "sv", "da", "zh", "ja"],
+      "notes": "Adds zh/ja over v1; declared, not benchmarked per language."
+    }
+  },
+  "lighton-ocr2-saturate.py": {
+    "model_id": "lightonai/LightOnOCR-2-1B",
+    "params": "1B",
+    "backend": "saturate (in-job vllm serve + saturate pump)",
+    "image": "vllm/vllm-openai:latest",
+    "task": "ocr",
+    "output": "markdown",
+    "notes": "saturate companion of lighton-ocr2-server.py: same model/message shape/sampling; the driver half (adaptive concurrency, retries, resumable parquet output, durable error rows) is the saturate library. SERVING dict at the top of the script is the machine-readable tuning prior.",
     "languages": {
       "evidence": "named-list",
       "count": 11,
