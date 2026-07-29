@@ -78,6 +78,7 @@ A self-contained, pinned script is easy to run and reuse, for a few reasons:
 | **ocr** ⭐ | OCR / document → text & structured data — GLM, PaddleOCR-VL, Nanonets, olmOCR, dots, … (30+ models) | [`uv-scripts/ocr`](https://huggingface.co/datasets/uv-scripts/ocr) |
 | **vision** | Zero-shot detection & segmentation over image datasets | [`sam3`](https://huggingface.co/datasets/uv-scripts/sam3) · [`object-detection`](https://huggingface.co/datasets/uv-scripts/object-detection) · [`vlm-object-detection`](https://huggingface.co/datasets/uv-scripts/vlm-object-detection) |
 | **audio** | Transcription, speaker diarization & speech translation | [`transcription`](https://huggingface.co/datasets/uv-scripts/transcription) |
+| **video** | Caption videos with timestamped events + temporal grounding (Marlin-2B, chunked for long films) | [`video`](https://huggingface.co/datasets/uv-scripts/video) |
 | **embeddings** | Embed text/images (auto-batch, prompt-aware); build a searchable Lance vector DB on the Hub | [`embeddings`](https://huggingface.co/datasets/uv-scripts/embeddings) |
 | **embeddings & atlas** | Embed a dataset; build an interactive map | [`build-atlas`](https://huggingface.co/datasets/uv-scripts/build-atlas) |
 | **data processing** | Filter / dedup / stats over large datasets | [`dataset-stats`](https://huggingface.co/datasets/uv-scripts/dataset-stats) · [`deduplication`](https://huggingface.co/datasets/uv-scripts/deduplication) · [`classification`](https://huggingface.co/datasets/uv-scripts/classification) |
