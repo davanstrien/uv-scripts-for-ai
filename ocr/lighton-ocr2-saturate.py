@@ -54,14 +54,20 @@ import base64
 import io
 import sys
 
-# Serving starting values for lightonai/LightOnOCR-2-1B.
-# Provenance: model card serve command + lighton-ocr2-server.py SERVE_ARGS;
-# throughput receipts (a10g-small): 0.955 img/s at 1k pages incl. streaming.
-# OCR never reuses images, so prefix/processor caches only cost memory.
+# Serving starting values for lightonai/LightOnOCR-2-1B. Per-value provenance:
+# - serve_args: the model card's own `vllm serve` command, verbatim (the three
+#   cache/mm flags; OCR never reuses images, so those caches only cost memory).
+# - max_model_len 8192: NOT in the card's serve command (card default = native
+#   16384). House choice inherited from lighton-ocr2-server.py: halves the KV
+#   allocation on 24GB and still fits a 1540px page (~2.5k image tokens) + 4096
+#   output with headroom.
+# - max_tokens/temperature/top_p: card's sampling example, verbatim.
+# - target_size 1540: card's stated training resolution (200 DPI longest side).
+# Throughput receipt (a10g-small): 0.955 img/s at 1k pages incl. streaming.
 SERVING = {
     "model": "lightonai/LightOnOCR-2-1B",
     "image": "vllm/vllm-openai:latest",
-    "max_model_len": 8192,  # native ctx 16384; 8192 fits a 1540px page + output
+    "max_model_len": 8192,
     "serve_args": [
         "--limit-mm-per-prompt", '{"image": 1}',
         "--mm-processor-cache-gb", "0",

@@ -59,14 +59,22 @@ import io
 import math
 import sys
 
-# Serving starting values for ATH-MaaS/OvisOCR2.
-# Provenance: model card serve command + ovis-ocr2-server.py SERVE_ARGS;
-# throughput receipt (a10g-small, 20 pages): 4,057 tok/s, window ramped to 32.
-# OCR never reuses images, so prefix/processor caches only cost memory.
+# Serving starting values for ATH-MaaS/OvisOCR2. Per-value provenance:
+# - The card documents OFFLINE inference only — no `vllm serve` command exists
+#   upstream. The whole server arrangement here (incl. serve_args) is the
+#   uv-scripts construction inherited from ovis-ocr2-server.py.
+# - max_model_len 32768: house choice (card sets none; native ctx is 262144 —
+#   NEVER boot without a cap on 24GB, the full-context KV profile kills boot).
+# - cache/mm flags: house OCR defaults (OCR never reuses images, so prefix/
+#   processor caches only cost memory).
+# - mm-processor-kwargs pixel bounds: card's offline example, verbatim
+#   (min 448*448=200704, max 2880*2880=8294400), moved to the engine flag.
+# - max_tokens 16384 / temperature 0.0: card's sampling, verbatim.
+# Throughput receipt (a10g-small, 20 pages): 4,057 tok/s, window ramped to 32.
 SERVING = {
     "model": "ATH-MaaS/OvisOCR2",
     "image": "vllm/vllm-openai:latest",
-    "max_model_len": 32768,  # native ctx 262144: NEVER boot without this cap on 24GB
+    "max_model_len": 32768,
     "serve_args": [
         "--limit-mm-per-prompt", '{"image": 1}',
         "--mm-processor-cache-gb", "0",
