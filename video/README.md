@@ -12,6 +12,10 @@ tags:
 
 Scripts for captioning and temporally grounding video files using HF Buckets and Jobs.
 
+What the output looks like — a frame from *Joan Avoids a Cold* (1947, Prelinger Archives) with the event Marlin-2B produced for that moment:
+
+![Example: film frame with its timestamped event caption](example-card.jpg)
+
 ## Quick Start
 
 Scripts run directly from their Hub URL — no clone or local checkout needed:
