@@ -1,0 +1,13 @@
+# .github/workflows/sync-video.yml
+name: Sync video → HF
+on:
+  push:
+    branches: [main]
+    paths: ['video/**', '.github/workflows/sync-video.yml']
+jobs:
+  sync:
+    uses: ./.github/workflows/_sync-folder.yml
+    with:
+      folder: video
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
