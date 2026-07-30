@@ -273,6 +273,16 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
 
 ## Change log
 
+- **2026-07-29** — added the first two **`-saturate.py` companions**: `lighton-ocr2-saturate.py` and
+  `ovis-ocr2-saturate.py`. Same model/prompt/sampling/post-processing as their `-server.py` siblings;
+  the driver half (concurrency, retries, output, resume) is the `saturate` package (pinned `>=0.1.1`,
+  the allowed *package*-dep pattern — no local imports). Each carries a `SERVING` dict at the top
+  (serve flags + client sampling + context-math assert) as the machine-readable tuning prior — the
+  runtime-consumed successor to the dropped `[tool.serving]` header idea. Output shape differs from
+  `-server.py`: a NEW dataset repo of `{id, markdown, …, error}` parquet rows keyed by input id
+  (resume = anti-join on id), not input+column push; failed pages become durable error rows
+  (`--retry-errors` heals), NOT `[OCR ERROR]` sentinels — the first recipes closing the
+  error-signalling gap noted in Conventions.
 - **2026-07-14** — added `ovis-ocr2.py` (`ATH-MaaS/OvisOCR2`, 0.9B Qwen3.5, 96.58 OmniDocBench v1.6,
   Apache-2.0; stable vLLM ≥0.22.1, `gdn_prefill_backend="triton"`, card-exact prompt/postprocessing).
   Smoke-tested green on the default uv image, a10g-small, resolved vLLM 0.25.1 (5/5 pages, tags filtered,
