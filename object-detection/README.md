@@ -5,7 +5,9 @@ tags: [uv-script, object-detection]
 
 # Object Detection Dataset Scripts
 
-5 scripts to convert, validate, inspect, diff, and sample object detection datasets on the Hub. Supports 6 bbox formats — no setup required.
+7 scripts to **create**, convert, validate, inspect, diff, and sample object detection datasets on the Hub. Supports 6 bbox formats — no setup required.
+
+Start from nothing: `falcon-perception.py` generates a first-pass detection dataset for any class you can name, zero-shot, with no labelling and no training. The other six then convert, check, and measure it.
 This repository is inspired by [panlabel](https://github.com/strickvl/panlabel)
 
 ## Quick Start
@@ -29,6 +31,8 @@ That's it! The script will:
 
 | Script | Description |
 |--------|-------------|
+| `falcon-perception.py` | **Create** a detection dataset zero-shot from any image dataset — name a class, get boxes + masks (runs on Apple Silicon too) |
+| `falcon-perception-bucket.py` | Same, reading images from an HF bucket, resumable across restarts |
 | `convert-hf-dataset.py` | Convert between 6 bbox formats and push to Hub |
 | `validate-hf-dataset.py` | Check annotations for errors (invalid bboxes, duplicates, bounds) |
 | `stats-hf-dataset.py` | Compute statistics (counts, label histogram, area, co-occurrence) |
@@ -242,3 +246,74 @@ uv run https://huggingface.co/datasets/uv-scripts/panlabel/raw/main/convert-hf-d
 ```
 
 Works with any Hugging Face dataset containing object detection annotations — COCO, YOLO, VOC, TFOD, or Label Studio format.
+
+## Making a dataset from scratch
+
+The other scripts assume you already have annotations. `falcon-perception.py` is where they can come from — [Falcon-Perception](https://huggingface.co/tiiuae/Falcon-Perception) finds every instance of a class you name, with no label set and no training:
+
+```bash
+# 1. does the model do the thing? (your laptop — no GPU needed)
+uv run falcon-perception.py --image page.jpg --query illustration --preview
+
+# 2. does it work on YOUR data? (first rows of the real corpus)
+uv run falcon-perception.py --dataset biglam/british-library-book-images \
+    --config plates --limit 3 --preview
+
+# 3. the whole corpus, on a GPU
+hf jobs uv run --flavor a10g-large --secrets HF_TOKEN falcon-perception.py -- \
+    --dataset biglam/british-library-book-images --config plates \
+    --id-col fname --query illustration --out you/plates-illustrations
+
+# 4. it is already in `yolo` format — the rest of this directory just works
+uv run validate-hf-dataset.py you/plates-illustrations --bbox-format yolo
+uv run stats-hf-dataset.py    you/plates-illustrations --bbox-format yolo
+```
+
+Falcon emits boxes as normalised centre x,y + w,h, which *is* the `yolo` format above, so no conversion step is needed.
+
+**The correction loop.** A zero-shot first pass is a starting point, not ground truth. Convert it for human review, correct it, then diff the two to find out how good the first pass actually was:
+
+```bash
+uv run convert-hf-dataset.py you/plates-illustrations you/for-review --from yolo --to label_studio
+#  ... correct in Label Studio, push as you/corrected ...
+uv run diff-hf-datasets.py you/plates-illustrations you/corrected   # IoU match = zero-shot accuracy
+```
+
+**Runs without a CUDA GPU.** Unlike most recipes in this repo, `falcon-perception.py` selects the MLX backend on Apple Silicon automatically. It is slower there (~6 s/img vs ~0.4 on an A10G), which is the right trade for step 1 and 2 above — checking your class name works before spending GPU hours.
+
+### Known limits
+
+Measured, not guessed — see the script docstrings for the failure each one came from.
+
+| Limit | What to do |
+|---|---|
+| `--query` is a **class name**, not an instruction | `illustration` works; `the illustration, excluding captions` returns nothing |
+| **One class per run** | A combined query returned 6 instances where three single-class runs found 24. N classes = N runs, then concatenate |
+| **No confidence scores** — the model has no score token | Sort review by the emitted `rectangularity` (mask area ÷ bbox area, measured 0.34–1.00) and apply an area floor |
+| `a10g-small` gets OOMKilled | The engine's auto-config sizes from the GPU and ignores host RAM — use `a10g-large` |
+
+### Just want the numbers?
+
+`--out` takes a file path as readily as a repo id — no Hub push, nothing to clean up:
+
+```bash
+uv run falcon-perception.py --image page.jpg --query illustration --out results.json
+uv run falcon-perception.py --image "scans/*.jpg" --query illustration --out results.jsonl
+uv run falcon-perception.py --image page.jpg --query illustration --json | jq '.[0].objects.bbox'
+```
+
+Anything ending `.json`, `.jsonl` or `.parquet` is written locally; anything else is treated as a Hub dataset repo id.
+
+### Bucket runs
+
+`falcon-perception-bucket.py` reads images from an HF bucket and writes resumable parquet parts back to a bucket — kill it and re-run the same command, done keys are skipped. Publish once at the end to use the rest of this directory:
+
+```python
+from datasets import load_dataset
+load_dataset("parquet", data_files=["hf://buckets/you/bl-masks/part-000000.parquet", ...],
+             split="train").push_to_hub("you/bl-masks")
+```
+
+### Output columns
+
+`objects.bbox` (`yolo`), `objects.category`, `objects.area`, `objects.rectangularity`, plus `image`, `image_id`, `width`, `height`, `n_instances`, and `masks_rle` (COCO RLE — segmentation rides along; the bbox scripts ignore it).
