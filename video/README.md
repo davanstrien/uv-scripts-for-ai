@@ -38,6 +38,34 @@ hf jobs uv run --image vllm/vllm-openai:latest --flavor a10g-small \
 
 ## Scripts
 
+### qwen38-caption.py
+
+Runs [Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) (27B dense VLM,
+Apache 2.0, not gated) over a directory of videos via vLLM — **whole videos, no
+chunking**. The model ingests video natively at hour scale: an 11-minute film is
+one request. Output is a resumable parquet dataset, one row per video with
+`caption` (and, with `--timestamps`, an `events` column of `<start - end>`
+descriptions in global seconds).
+
+`--timestamps` asks for a full event timeline instead of a prose caption. The
+model reads times off per-frame time tags rather than estimating, so timestamps
+are accurate to the frame-sampling interval (~2s at the default `--fps 2`;
+verified against extracted frames on an 11-minute film — 96 events, on-screen
+text quoted verbatim).
+
+Thinking mode is off by default; `--thinking` re-enables it with the model
+card's thinking sampling params and a larger token budget.
+
+**Hardware**: bf16 weights are ~52 GB — `a100-large` minimum; `h200` generates
+~2.3x faster.
+
+**vs marlin-caption.py**: Marlin is ~13x smaller and cheaper per minute of
+footage, but must chunk at 60s (with per-chunk timestamp offsetting) and returns
+grounding candidates rather than reliable timelines. Qwen3.8 handles the whole
+film in one pass with verbatim on-screen-text reading. Rough guide: bulk
+captioning of large collections → Marlin; rich timelines, text-heavy or
+long-form material → Qwen3.8.
+
 ### marlin-caption.py
 
 Runs [NemoStation/Marlin-2B](https://huggingface.co/NemoStation/Marlin-2B) (2B video
