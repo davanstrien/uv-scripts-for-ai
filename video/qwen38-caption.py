@@ -39,9 +39,10 @@ Examples:
   # Local machine with a CUDA GPU (needs ~60 GB VRAM)
   uv run qwen38-caption.py ./videos ./captions-out
 
-Thinking mode is OFF by default (captioning gains little from it and it
-multiplies latency); --thinking turns it back on with a generous budget and
-the model card's thinking-mode sampling params.
+Thinking mode defaults off for captions (little gain, big latency) but ON for
+--timestamps: measured on the 11-min film, the non-thinking model may answer a
+timeline request with a one-line summary, while thinking mode produced a
+frame-verified 96-event timeline. --thinking / --no-thinking overrides.
 
 Model: Qwen/Qwen3.8-27B (27B dense, hybrid GDN linear attention, vision tower).
 bf16 weights are ~52 GB — a100-large is the smallest sensible Jobs flavor;
@@ -69,13 +70,25 @@ CAPTION_PROMPT = (
 )
 TIMESTAMPS_PROMPT = (
     "Watch this video and produce a timeline of events covering the WHOLE video "
-    "from start to finish. For each event give the time range as <start - end> "
-    "in seconds (e.g. <95.0 - 112.5>) and a one-sentence description. "
-    "Include title cards, on-screen text (quoted), and scene changes."
+    "from start to finish. Output ONLY the timeline, one event per line. For "
+    "each event give the time range as <start - end> in decimal seconds "
+    "(e.g. <95.0 - 112.5>) followed by a one-sentence description. "
+    "Include title cards, on-screen text (quoted), and scene changes. "
+    "Do not summarize; cover the full duration."
 )
 
 THINK = re.compile(r"<think>.*?</think>\s*|^.*?</think>\s*", re.DOTALL)
-EVENT_LINE = re.compile(r"<(\d+\.?\d*)\s*-\s*(\d+\.?\d*)>\s*[:–\-]?\s*(.+)")
+# accepts decimal seconds (<95.0 - 112.5>) and clock forms (<01:35 - 01:52>)
+EVENT_LINE = re.compile(
+    r"<(\d+(?::\d{2}){0,2}(?:\.\d+)?)\s*-\s*(\d+(?::\d{2}){0,2}(?:\.\d+)?)>\s*[:–\-]?\s*(.+)")
+
+
+def to_seconds(ts: str) -> float:
+    parts = [float(x) for x in ts.split(":")]
+    out = 0.0
+    for part in parts:
+        out = out * 60 + part
+    return round(out, 2)
 
 
 def probe_duration(path: Path) -> float | None:
@@ -90,7 +103,7 @@ def probe_duration(path: Path) -> float | None:
 
 
 def parse_events(text: str) -> list[dict]:
-    return [{"start": float(a), "end": float(b), "text": d.strip()}
+    return [{"start": to_seconds(a), "end": to_seconds(b), "text": d.strip()}
             for a, b, d in EVENT_LINE.findall(text)]
 
 
@@ -102,8 +115,9 @@ def main():
     parser.add_argument("--timestamps", action="store_true",
                         help="Return a <start - end> event timeline per video instead of a prose caption")
     parser.add_argument("--prompt", help="Override the built-in prompt")
-    parser.add_argument("--thinking", action="store_true",
-                        help="Enable thinking mode (slower; uses the model card's thinking sampling params)")
+    parser.add_argument("--thinking", action=argparse.BooleanOptionalAction, default=None,
+                        help="Thinking mode. Default: on for --timestamps (measured: without it the "
+                             "model may summarize instead of covering the video), off otherwise")
     parser.add_argument("--fps", type=float, default=2.0,
                         help="Frame sampling rate passed to the processor (default 2)")
     parser.add_argument("--max-videos", type=int, help="Only process the first N videos (testing)")
@@ -132,10 +146,11 @@ def main():
             for p in videos]
 
     prompt = args.prompt or (TIMESTAMPS_PROMPT if args.timestamps else CAPTION_PROMPT)
+    thinking = args.timestamps if args.thinking is None else args.thinking
     # Timeline output scales with video length; measured 9.6K tokens for an
     # 11-min film — leave generous headroom. Thinking needs its own budget on top.
     max_tokens = 16384 if args.timestamps else 4096
-    if args.thinking:
+    if thinking:
         max_tokens += 32768
 
     def to_request(row: dict) -> dict:
@@ -146,7 +161,7 @@ def main():
             ]}],
             "max_tokens": max_tokens,
         }
-        if args.thinking:  # model-card sampling params per mode
+        if thinking:  # model-card sampling params per mode
             req.update({"temperature": 1.0, "top_p": 0.95, "top_k": 20})
         else:
             req.update({"temperature": 0.7, "top_p": 0.8, "top_k": 20,
