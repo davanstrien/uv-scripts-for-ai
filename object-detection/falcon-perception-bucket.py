@@ -1,0 +1,239 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "falcon-perception>=1.0.0",
+#   # tarball not git+: some GPU images have no `git` for uv to shell out to
+#   "bucketbag @ https://github.com/davanstrien/bucketbag/archive/refs/tags/v0.3.0.tar.gz",
+#   "pyarrow>=18",
+#   "pycocotools>=2.0.11",
+# ]
+# ///
+"""Falcon-Perception over a whole HF bucket, resumable.
+
+    hf jobs uv run --flavor a10g-large --secrets HF_TOKEN falcon-bucket.py -- \
+        --src biglam/bl-images --include 'full/embellishments/**/*.jpg' \
+        --out davanstrien/bl-masks --query illustration
+
+Input  : bucketbag batched_files — bounded scratch, files deleted as the loop advances
+Engine : PagedInferenceEngine (CUDA, continuous batching)
+Output : one parquet per batch -> out bucket; resume via completed_keys(__source_key)
+
+Kill it at any point and re-run the same command. Done keys are skipped.
+
+Output is parquet parts in a BUCKET, not a dataset repo — that is what makes the
+run resumable (`completed_keys` reads the done-set back from `__source_key`).
+To hand the result to the rest of this directory, publish it once at the end:
+
+    from datasets import load_dataset
+    load_dataset("parquet", data_files=[
+        "hf://buckets/you/bl-masks/part-000000.parquet", ...
+    ], split="train").push_to_hub("you/bl-masks")
+
+    uv run validate-hf-dataset.py you/bl-masks --bbox-format yolo
+
+Note the parts carry `width`/`height` but no `image` column (the images stay in
+the source bucket), so pass --image-column accordingly if a downstream script
+wants to decode them.
+
+GOTCHAS (all measured, none in the model card):
+  * --query is a CLASS NAME. "illustration" works; "the illustration, excluding
+    captions" returns nothing.
+  * torch.compile breaks on per-image dynamic shapes -> compile is OFF here.
+  * engine_config_for_gpu() sizes from the GPU and ignores host RAM; on
+    a10g-small it gets OOMKilled (exit 137) before processing anything.
+    cudagraph is off by default here for the same reason.
+  * xy in the output is the NORMALISED CENTRE, not a corner.
+"""
+
+import argparse
+import io
+import json
+import time
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+from bucketbag import batched_files, boost, completed_keys, iter_keys, put_files
+from pycocotools import mask as mask_utils
+
+# Same YOLO column layout as falcon-perception.py, so both outputs validate with
+# `validate-hf-dataset.py --bbox-format yolo` and can be concatenated.
+# `__source_key` is bucketbag's resume column — the name is load-bearing.
+SCHEMA = pa.schema([
+    ("__source_key", pa.string()),
+    ("image_id", pa.string()),
+    ("width", pa.int32()),
+    ("height", pa.int32()),
+    ("objects", pa.struct([
+        ("bbox", pa.list_(pa.list_(pa.float32()))),   # yolo: cx, cy, w, h normalised
+        ("category", pa.list_(pa.int64())),           # single class per run, by design
+        ("area", pa.list_(pa.float32())),
+        ("rectangularity", pa.list_(pa.float32())),   # triage proxy — no confidence score exists
+    ])),
+    ("n_instances", pa.int32()),
+    ("masks_rle", pa.string()),
+    ("query", pa.string()),
+    ("gen_seconds", pa.float32()),
+    ("error", pa.string()),
+])
+
+
+def pair_bboxes(raw):
+    boxes, cur = [], {}
+    for e in raw:
+        if not isinstance(e, dict):
+            continue
+        cur.update(e)
+        if all(k in cur for k in ("x", "y", "h", "w")):
+            boxes.append(dict(cur)); cur = {}
+    return boxes
+
+
+def serialise(rows, fmt):
+    if fmt == "jsonl":
+        return "\n".join(json.dumps(r) for r in rows) + "\n"
+    buf = io.BytesIO()
+    pq.write_table(pa.Table.from_pylist(rows, schema=SCHEMA), buf, compression="zstd")
+    return buf.getvalue()
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--src", required=True, help="source bucket, e.g. biglam/bl-images")
+    p.add_argument("--prefix", default=None, help="bucket prefix, e.g. full/embellishments")
+    p.add_argument("--out", required=True, help="output bucket")
+    p.add_argument("--query", default="illustration", help="a CLASS NAME, not an instruction")
+    p.add_argument("--task", default="segmentation", choices=["segmentation", "detection"])
+    p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--max-dim", type=int, default=1024)
+    p.add_argument("--max-new-tokens", type=int, default=200)
+    p.add_argument("--batch-n", type=int, default=32, help="files per bucketbag batch")
+    p.add_argument("--max-bytes", type=int, default=2 * 2**30)
+    p.add_argument("--cudagraph", action="store_true", help="opt IN; off by default (host OOM)")
+    p.add_argument("--format", default="parquet", choices=["parquet", "jsonl"])
+    p.add_argument("--no-resume", action="store_true")
+    args = p.parse_args()
+
+    boost()  # raise xet small-file concurrency — the whole point on many small objects
+
+    done = set() if args.no_resume else completed_keys(args.out)
+    print(f"{len(done)} keys already done", flush=True)
+
+    # objects=True yields BucketFile (with .size), so max_bytes is honoured.
+    # Needs bucketbag >= 0.3.0: before that, string keys made batched_files drop
+    # max_bytes silently and run unbounded against RAM-tmpfs scratch.
+    keys = [
+        f for f in iter_keys(args.src, prefix=args.prefix, objects=True)
+        if f.path.lower().endswith((".jpg", ".jpeg", ".png")) and f.path not in done
+    ]
+    if args.limit:
+        keys = keys[: args.limit]
+    print(f"{len(keys)} keys to process", flush=True)
+    if not keys:
+        return
+
+    import torch  # noqa: F401
+    from falcon_perception import PERCEPTION_MODEL_ID, build_prompt_for_task, load_and_prepare_model, setup_torch_config
+    from falcon_perception.data import ImageProcessor
+    from falcon_perception.paged_inference import (
+        PagedInferenceEngine, SamplingParams, Sequence, engine_config_for_gpu,
+    )
+
+    setup_torch_config()
+    t = time.perf_counter()
+    model, tokenizer, _ = load_and_prepare_model(
+        hf_model_id=PERCEPTION_MODEL_ID, dtype="bfloat16", compile=False,  # compile breaks on dynamic shapes
+    )
+    print(f"model loaded in {time.perf_counter() - t:.1f}s", flush=True)
+
+    cfg = engine_config_for_gpu(max_image_size=args.max_dim, dtype=model.dtype)
+    print(f"paged config: {cfg}", flush=True)
+    engine = PagedInferenceEngine(
+        model, tokenizer, ImageProcessor(patch_size=16, merge_size=1),
+        max_seq_length=8192, capture_cudagraph=args.cudagraph, **cfg,
+    )
+    sp = SamplingParams(
+        args.max_new_tokens,
+        stop_token_ids=[tokenizer.eos_token_id, tokenizer.end_of_query_token_id],
+        coord_dedup_threshold=0.01,
+    )
+    prompt = build_prompt_for_task(args.query, args.task)
+
+    n, gen_total, t_all, batch_i = 0, 0.0, time.perf_counter(), 0
+    for batch in batched_files(args.src, keys=keys, n=args.batch_n, max_bytes=args.max_bytes):
+        # NOTE: never hold a LoadedItem past its batch — convert eagerly.
+        pairs = []
+        for it in batch:
+            try:
+                img = it.image.convert("RGB")  # convert() forces the load off disk
+                if max(img.size) > args.max_dim * 2:
+                    img.thumbnail((args.max_dim * 2, args.max_dim * 2))
+                pairs.append((str(it.key), img))
+            except Exception as e:
+                pairs.append((str(it.key), e))
+
+        good = [(k, im) for k, im in pairs if not isinstance(im, Exception)]
+        seqs = [
+            Sequence(text=prompt, image=im, min_image_size=256,
+                     max_image_size=args.max_dim, request_idx=i, task=args.task)
+            for i, (_, im) in enumerate(good)
+        ]
+        t0 = time.perf_counter()
+        if seqs:
+            engine.generate(seqs, sampling_params=sp)
+        dt = time.perf_counter() - t0
+        gen_total += dt
+
+        rows = []
+        for (key, im), seq in zip(good, seqs):
+            aux = seq.output_aux
+            boxes = pair_bboxes(aux.bboxes_raw)
+            masks = list(aux.masks_rle)
+            for m in masks:
+                if isinstance(m.get("counts"), bytes):
+                    m["counts"] = m["counts"].decode()
+            W, H = im.size
+            bbox, area, rect = [], [], []
+            for i, b in enumerate(boxes):
+                bbox.append([b["x"], b["y"], b["w"], b["h"]])  # yolo: cx, cy, w, h normalised
+                a = b["w"] * b["h"]
+                area.append(a)
+                r = 0.0
+                if i < len(masks):  # rectangularity — the only triage signal; no score exists
+                    try:
+                        m = masks[i]
+                        if isinstance(m.get("counts"), str):
+                            m = {**m, "counts": m["counts"].encode()}
+                        r = min(float(mask_utils.area(m)) / max(a * W * H, 1.0), 1.0)
+                    except Exception:
+                        r = 0.0
+                rect.append(r)
+            rows.append({
+                "__source_key": key, "image_id": key, "width": W, "height": H,
+                "objects": {"bbox": bbox, "category": [0] * len(bbox),
+                            "area": area, "rectangularity": rect},
+                "n_instances": len(bbox), "masks_rle": json.dumps(masks),
+                "query": args.query, "gen_seconds": dt / max(len(seqs), 1), "error": None,
+            })
+        for key, err in [(k, v) for k, v in pairs if isinstance(v, Exception)]:
+            # a durable error row, never a gap — and it counts as done so it is
+            # not retried forever on every re-run
+            rows.append({k: None for k in SCHEMA.names} | {
+                "__source_key": key, "image_id": key, "query": args.query,
+                "error": f"{type(err).__name__}: {err}",
+            })
+
+        ext = "jsonl" if args.format == "jsonl" else "parquet"
+        put_files([(f"part-{batch_i:06d}.{ext}", serialise(rows, args.format))], args.out)
+        n += len(rows); batch_i += 1
+        rate = n / (time.perf_counter() - t_all)
+        print(f"batch {batch_i}: {len(rows)} rows ({dt / max(len(seqs), 1):.2f}s/img)  "
+              f"total {n}  {rate:.2f} img/s", flush=True)
+
+    wall = time.perf_counter() - t_all
+    print(f"\n{n} images in {wall:.1f}s ({gen_total:.1f}s generation) | {n / wall:.2f} img/s", flush=True)
+    if n:
+        print(f"extrapolation: 100k images ≈ {wall / n * 100_000 / 3600:.1f} GPU-hours end-to-end", flush=True)
+
+
+main()
