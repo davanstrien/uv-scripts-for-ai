@@ -106,6 +106,12 @@ mAP eval, Hub persistence) — install it with `hf skills add huggingface-vision
 have it, and follow its object-detection path with the `<USER>/<NAME>-coco` dataset from step 4.
 Before training, split off a held-out slice (e.g. 10% of images) and never train on it.
 
+Other trainers work too — the dataset is plain COCO. [RF-DETR](https://github.com/roboflow/rf-detr)
+(Apache-2.0, DINOv2 backbone) is a good starter, and its Seg variant can learn from the teacher's
+`masks_rle` masks (decode each RLE in its own `size` frame, not the recorded width/height — they
+never match). Pin the package version — the API is young — and if the segmentation training path
+resists, ship detection-only and say so rather than burning the day on it.
+
 ## 6. Evaluate honestly
 
 - Report mAP on the held-out slice. Be clear about what it measures: **agreement with the teacher**,
