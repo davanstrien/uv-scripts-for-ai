@@ -252,24 +252,22 @@ Works with any Hugging Face dataset containing object detection annotations — 
 The other scripts assume you already have annotations. `falcon-perception.py` is where they can come from — [Falcon-Perception](https://huggingface.co/tiiuae/Falcon-Perception) finds every instance of a class you name, with no label set and no training:
 
 ```bash
-RAW=https://huggingface.co/datasets/uv-scripts/object-detection/raw/main
-
 # 1. does the model do the thing? (your laptop — no GPU needed)
-uv run $RAW/falcon-perception.py --image page.jpg --query illustration --preview
+uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/falcon-perception.py --image page.jpg --query illustration --preview
 
 # 2. does it work on YOUR data? (first rows of the real corpus)
-uv run $RAW/falcon-perception.py --dataset biglam/british-library-book-images \
+uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/falcon-perception.py --dataset biglam/british-library-book-images \
     --config plates --limit 3 --preview
 
 # 3. the whole corpus, on a GPU
 hf jobs uv run --flavor a10g-large --secrets HF_TOKEN \
-    $RAW/falcon-perception.py \
+    https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/falcon-perception.py \
     --dataset biglam/british-library-book-images --config plates \
     --id-col fname --query illustration --out you/plates-illustrations
 
 # 4. it is already in `yolo` format — the rest of this directory just works
-uv run $RAW/validate-hf-dataset.py you/plates-illustrations --bbox-format yolo
-uv run $RAW/stats-hf-dataset.py    you/plates-illustrations --bbox-format yolo
+uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/validate-hf-dataset.py you/plates-illustrations --bbox-format yolo
+uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/stats-hf-dataset.py    you/plates-illustrations --bbox-format yolo
 ```
 
 Falcon emits boxes as normalised centre x,y + w,h, which *is* the `yolo` format above, so no conversion step is needed.
@@ -277,9 +275,9 @@ Falcon emits boxes as normalised centre x,y + w,h, which *is* the `yolo` format 
 **The correction loop.** A zero-shot first pass is a starting point, not ground truth. Convert it for human review, correct it, then diff the two to find out how good the first pass actually was:
 
 ```bash
-uv run $RAW/convert-hf-dataset.py you/plates-illustrations you/for-review --from yolo --to label_studio
+uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/convert-hf-dataset.py you/plates-illustrations you/for-review --from yolo --to label_studio
 #  ... correct in Label Studio, push as you/corrected ...
-uv run $RAW/diff-hf-datasets.py you/plates-illustrations you/corrected   # IoU match = zero-shot accuracy
+uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/diff-hf-datasets.py you/plates-illustrations you/corrected   # IoU match = zero-shot accuracy
 ```
 
 **Runs without a CUDA GPU.** Unlike most recipes in this repo, `falcon-perception.py` selects the MLX backend on Apple Silicon automatically. It is slower there (~6 s/img vs ~0.4 on an A10G), which is the right trade for step 1 and 2 above — checking your class name works before spending GPU hours.
@@ -300,9 +298,9 @@ Measured, not guessed — see the script docstrings for the failure each one cam
 `--out` takes a file path as readily as a repo id — no Hub push, nothing to clean up:
 
 ```bash
-uv run $RAW/falcon-perception.py --image page.jpg --query illustration --out results.json
-uv run $RAW/falcon-perception.py --image "scans/*.jpg" --query illustration --out results.jsonl
-uv run $RAW/falcon-perception.py --image page.jpg --query illustration --json | jq '.[0].objects.bbox'
+uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/falcon-perception.py --image page.jpg --query illustration --out results.json
+uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/falcon-perception.py --image "scans/*.jpg" --query illustration --out results.jsonl
+uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/falcon-perception.py --image page.jpg --query illustration --json | jq '.[0].objects.bbox'
 ```
 
 Anything ending `.json`, `.jsonl` or `.parquet` is written locally; anything else is treated as a Hub dataset repo id.
@@ -326,5 +324,5 @@ load_dataset("parquet", data_files="hf://buckets/you/bl-masks/part-*.parquet",
 Convert to COCO pixel boxes, then fine-tune a compact Apache-2.0 detector (D-FINE, RT-DETRv2 — not ultralytics/YOLO, which is AGPL). The [`SKILL.md`](SKILL.md) in this directory walks an agent (or you) through the whole loop — teacher labels → validate → convert → train → honest eval:
 
 ```bash
-uv run $RAW/convert-hf-dataset.py you/plates-illustrations you/plates-coco --from yolo --to coco_xywh
+uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/convert-hf-dataset.py you/plates-illustrations you/plates-coco --from yolo --to coco_xywh
 ```

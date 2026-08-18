@@ -472,10 +472,12 @@ def main():
                         "rectangularity": SeqFeat(Value("float32"))},
             "n_instances": Value("int32"), "masks_rle": Value("string"),
         })
-        # Stream through an ArrowWriter (not Dataset.from_list/from_generator): from_list
-        # holds every decoded image in RAM; from_generator dill-fingerprints the callable
-        # and chokes on the live generator it closes over. The writer flushes to disk per
-        # batch, and from_file memory-maps it back for the push.
+        # Stream through an ArrowWriter. The documented alternatives both fail here:
+        # Dataset.from_list holds every decoded image in RAM until the push, and BOTH
+        # Dataset.from_generator and IterableDataset.from_generator pickle the callable
+        # (tested), which raises on the live generator it closes over -- and would try
+        # to hash the loaded model if the generator were constructed inside. The writer
+        # flushes to disk per batch, and from_file memory-maps it back for the push.
         import tempfile
 
         from datasets.arrow_writer import ArrowWriter
