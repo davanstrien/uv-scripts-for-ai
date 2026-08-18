@@ -22,8 +22,8 @@ The loop runs both ways — decide before you start:
   re-run the teacher). Then train on a small slice first (~500–1k images, ~$1) and show ~20 rendered
   predictions before spending on the full corpus. If corrections are worth collecting at volume, build a
   minimal review UI — image + predicted boxes, accept/edit, corrections written back to a Hub dataset —
-  fold them in and retrain (~$1). The `convert-hf-dataset.py --to label_studio` → correct →
-  `diff-hf-datasets.py` loop in this repo's README is the packaged version of that.
+  fold them in and retrain (~$1). Diff the corrected set against the first pass
+  (`$RAW/diff-hf-datasets.py`) to measure how good the zero-shot pass actually was.
 - **Autonomously** (headless): never pause for review — judge by the numeric proxies each step provides,
   and carry the obligation to the end instead: the final report and the model card must say the model is
   **unreviewed**.
