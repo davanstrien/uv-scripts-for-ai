@@ -5,7 +5,7 @@ tags: [uv-script, object-detection]
 
 # Object Detection Dataset Scripts
 
-7 scripts to **create**, convert, validate, inspect, diff, and sample object detection datasets on the Hub. Supports 6 bbox formats — no setup required.
+8 scripts to **create**, convert, review, validate, inspect, diff, and sample object detection datasets on the Hub. Supports 6 bbox formats — no setup required.
 
 Start from nothing: `falcon-perception.py` generates a first-pass detection dataset for any class you can name, zero-shot, with no labelling and no training. The other six then convert, check, and measure it.
 This repository is inspired by [panlabel](https://github.com/strickvl/panlabel)
@@ -33,6 +33,7 @@ That's it! The script will:
 |--------|-------------|
 | `falcon-perception.py` | **Create** a detection dataset zero-shot from any image dataset — name a class, get boxes + masks (runs on Apple Silicon too) |
 | `falcon-perception-bucket.py` | Same, reading images from an HF bucket, resumable across restarts |
+| `review-detections.py` | **Review** a detection dataset in your browser — keyboard accept/reject per image or per box, acceptance + missed rates, pushes a `review` column |
 | `convert-hf-dataset.py` | Convert between 6 bbox formats and push to Hub |
 | `validate-hf-dataset.py` | Check annotations for errors (invalid bboxes, duplicates, bounds) |
 | `stats-hf-dataset.py` | Compute statistics (counts, label histogram, area, co-occurrence) |

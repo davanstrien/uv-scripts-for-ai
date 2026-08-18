@@ -21,8 +21,9 @@ The loop runs both ways — decide before you start:
   the right things?" is the highest-value question, and its fix is the cheapest (a better query, ~$2 to
   re-run the teacher). Then train on a small slice first (~500–1k images, ~$1) and show ~20 rendered
   predictions before spending on the full corpus. If corrections are worth collecting at volume, build a
-  minimal review UI — image + predicted boxes, accept/edit, corrections written back to a Hub dataset —
-  fold them in and retrain (~$1). Diff the corrected set against the first pass
+  review pass with `$RAW/review-detections.py` (keyboard accept/reject in the browser, per image or
+  per box; prints the quotable acceptance + missed rates and pushes a `review` column) — fold
+  corrections in and retrain (~$1). Diff the corrected set against the first pass
   (`$RAW/diff-hf-datasets.py`) to measure how good the zero-shot pass actually was.
 - **Autonomously** (headless): never pause for review — judge by the numeric proxies each step provides,
   and carry the obligation to the end instead: the final report and the model card must say the model is

@@ -3,42 +3,46 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #   "gradio>=6,<7",
+#   "fastapi",
 #   "datasets>=4.5.0",
 #   "pillow",
 # ]
 # ///
-"""Human triage for a detection dataset -> an accepted/rejected verdict per image or per box.
+"""Human triage for a detection dataset -> an accept/reject verdict per image or per box.
 
-A minimal keyboard-first review UI for the datasets the other scripts in this
-directory produce (zero-shot teacher labels are suggestions, not ground truth).
-Runs locally, opens your browser, writes every decision to a crash-safe journal,
-and pushes the reviewed dataset back to the Hub when you finish.
+A minimal keyboard-first review UI for datasets in THIS DIRECTORY'S schema
+(yolo-normalized `objects.bbox` + `image`, `image_id`, `width`, `height` -- what
+falcon-perception.py pushes; run convert-hf-dataset.py first for anything else).
+Zero-shot teacher labels are suggestions, not ground truth: this is where a
+human turns them into something you can quote. Runs locally, opens your
+browser, journals every decision, pushes the reviewed rows back to the Hub.
 
     # quick first pass: accept/reject whole images (A / R keys) on a random sample
     uv run review-detections.py you/plates-illustrations --limit 200 \
         --out you/plates-illustrations-reviewed
 
-    # detail pass: click boxes to reject them, M flags a missed instance,
-    # hardest (least rectangular) images first
+    # detail pass: click boxes to reject them individually
     uv run review-detections.py you/plates-illustrations --mode boxes \
         --out you/plates-illustrations-reviewed
 
 Modes:
-  quick  whole-image verdict. A=accept  R=reject  M=missed  arrows=skip/back.
-         Defaults to RANDOM order so the printed acceptance rate is an unbiased
-         sample statistic you can quote ("N% human-accepted, n=200").
-  boxes  click a box to toggle it rejected; same keys advance. Defaults to
-         rectangularity-ASCENDING order (irregular instances first), which is
-         where review effort pays best -- but is a biased sample: do not quote
-         this mode's acceptance rate.
+  quick  whole-image verdict. A=accept  R=reject  M=accept-but-teacher-missed-something
+         F=finish  arrows=skip/back. Defaults to RANDOM order, so the summary's
+         acceptance rate is an unbiased sample statistic you can quote.
+  boxes  click a box to toggle it rejected; A keeps the rest, R rejects the whole
+         image (all boxes). Defaults to rectangularity-ASCENDING order (irregular
+         instances first) -- best use of effort, but a biased sample: the summary
+         says so and its rate should not be quoted.
 
-The journal (./review-journal.jsonl) is appended per decision; re-running with
-the same --journal resumes where you stopped. --out pushes rows that received a
-verdict, with a `review` column ({verdict, box_keep, missed}) alongside the
-original schema, so diff/retrain steps consume it unchanged.
+Two numbers come out, measuring two different things: the ACCEPTANCE rate (are
+the boxes that were drawn correct?) and the MISSED rate (how often did the
+teacher skip an instance? -- the M key). Quote them separately; neither implies
+the other.
 
-Needs an `image` column. Bucket outputs (falcon-perception-bucket.py) carry no
-images -- publish them joined to their source images first.
+The journal (default ./review-<dataset>-<split>.jsonl) is appended per decision
+and tolerates a torn final line; re-running resumes at the first undecided image.
+--out pushes decided rows with a `review` column ({verdict, missed, box_keep,
+mode}) alongside the original schema.
 """
 
 import argparse
@@ -46,6 +50,7 @@ import io
 import json
 import os
 import random
+import signal
 import threading
 
 from fastapi.responses import HTMLResponse, Response
@@ -64,24 +69,26 @@ PAGE = """<!doctype html>
   .box.rej { border-color:#f33; border-style:dashed; }
   #flash { position:fixed; inset:0; display:none; align-items:center; justify-content:center;
            font-size:80px; pointer-events:none; }
+  #err { display:none; padding:6px 14px; background:#611; color:#fbb; }
 </style>
 <div id=bar><b id=pos></b><span id=stats></span><span id=verdict></span><span id=keys></span></div>
+<div id=err></div>
 <div id=stage><img id=img><div id=boxes></div></div>
 <div id=flash></div>
 <script>
 const MODE = "__MODE__";  // substituted by the server
 document.getElementById("keys").textContent =
   MODE === "quick" ? "A accept · R reject · M missed · ←/→ move · F finish"
-                   : "click box = toggle reject · A accept rest · R reject all · M missed · ←/→ · F finish";
-let idx = 0, total = 0, meta = null, rejected = new Set();
+                   : "click box = reject it · A accept rest · R reject all · M missed · ←/→ · F finish";
+let idx = 0, meta = null, rejected = new Set();
 
 async function load(i) {
   const r = await fetch(`/meta/${i}`);
   if (!r.ok) return;
   meta = await r.json();
-  idx = meta.idx; total = meta.total; rejected = new Set(meta.rejected_boxes);
+  idx = meta.idx; rejected = new Set(meta.rejected_boxes);
   document.getElementById("img").src = `/img/${idx}`;
-  document.getElementById("pos").textContent = `${idx + 1} / ${total}`;
+  document.getElementById("pos").textContent = `${idx + 1} / ${meta.total}`;
   document.getElementById("stats").textContent = meta.stats;
   document.getElementById("verdict").textContent = meta.verdict ? `decided: ${meta.verdict}` : "";
   const holder = document.getElementById("boxes");
@@ -102,11 +109,20 @@ function flash(t, c) {
   setTimeout(() => f.style.display = "none", 180);
 }
 async function decide(verdict, missed) {
-  const box_keep = meta.boxes.map((_, j) => !rejected.has(j));
-  await fetch("/decide", {method: "POST", headers: {"Content-Type": "application/json"},
+  if (!meta) return;
+  const box_keep = verdict === "reject" ? meta.boxes.map(() => false)
+                                        : meta.boxes.map((_, j) => !rejected.has(j));
+  const r = await fetch("/decide", {method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({idx, verdict, missed, box_keep, mode: MODE})});
-  flash(verdict === "accept" ? "✓" : verdict === "reject" ? "✗" : "?",
-        verdict === "accept" ? "#3c3" : "#f33");
+  if (!r.ok) {  // do NOT advance on failure -- the journal write did not happen
+    const e = document.getElementById("err");
+    e.textContent = `decision NOT saved (server error ${r.status}) — fix the problem and retry`;
+    e.style.display = "block";
+    return;
+  }
+  document.getElementById("err").style.display = "none";
+  flash(verdict === "accept" ? (missed ? "＋?" : "✓") : "✗",
+        verdict === "accept" ? (missed ? "#fa3" : "#3c3") : "#f33");
   load(idx + 1);
 }
 document.addEventListener("keydown", (e) => {
@@ -120,7 +136,7 @@ document.addEventListener("keydown", (e) => {
     document.getElementById("keys").textContent = "finished — see the terminal; you can close this tab";
   }
 });
-load(0);
+fetch("/start").then(r => r.json()).then(d => load(d.start));
 </script>
 """
 
@@ -143,36 +159,58 @@ def main():
                    help="default: random in quick mode (unbiased rate), rect in boxes mode")
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--journal", default="./review-journal.jsonl")
+    p.add_argument("--journal", default=None,
+                   help="default: ./review-<dataset>-<split>.jsonl (scoped so runs don't mix)")
     p.add_argument("--out", default=None, help="Hub repo id for the reviewed dataset")
     p.add_argument("--private", action="store_true")
     p.add_argument("--port", type=int, default=7860)
     args = p.parse_args()
     order = args.order or ("random" if args.mode == "quick" else "rect")
+    journal_path = args.journal or f"./review-{args.dataset.replace('/', '--')}-{args.split}.jsonl"
 
-    from datasets import load_dataset
+    from datasets import Sequence, Value, load_dataset
 
     ds = load_dataset(args.dataset, split=args.split)
 
-    def min_rect(i):
-        r = ds[i]["objects"]["rectangularity"]
-        return min(r) if r else 2.0  # boxless images last
+    missing = [c for c in ("image", "image_id", "width", "height", "objects") if c not in ds.column_names]
+    if missing:
+        raise SystemExit(f"dataset is missing column(s) {missing} -- this tool reads the schema "
+                         "falcon-perception.py pushes; see the docstring.")
+
+    # a lightweight view for sorting and sniffing that never decodes the image column
+    meta_rows = ds.select_columns(["objects"])[:]["objects"]
+    for objects in meta_rows[: min(50, len(meta_rows))]:
+        if any(not (0 <= v <= 1.5) for box in objects["bbox"] for v in box):
+            raise SystemExit("objects.bbox does not look yolo-normalized (values outside [0,1]) -- "
+                             "run convert-hf-dataset.py --to yolo first.")
 
     ids = list(range(len(ds)))
     if order == "random":
         random.Random(args.seed).shuffle(ids)
+    elif "rectangularity" not in meta_rows[0]:
+        print("no rectangularity column -- falling back to random order", flush=True)
+        random.Random(args.seed).shuffle(ids)
     else:
-        ids.sort(key=min_rect)
+        ids.sort(key=lambda i: min(meta_rows[i]["rectangularity"]) if meta_rows[i]["rectangularity"] else 2.0)
     if args.limit:
         ids = ids[: args.limit]
 
-    decisions = {}  # image_id -> journal record
-    if os.path.exists(args.journal):
-        with open(args.journal) as f:
+    # decisions are keyed by DATASET ROW INDEX -- image_id repeats across
+    # concatenated per-class runs, so it cannot key a decision
+    decisions = {}
+    if os.path.exists(journal_path):
+        with open(journal_path) as f:
             for line in f:
-                rec = json.loads(line)
-                decisions[rec["image_id"]] = rec
-        print(f"resumed {len(decisions)} decisions from {args.journal}", flush=True)
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:  # torn final line from a crash mid-append
+                    print("journal: skipped one torn line (crash recovery)", flush=True)
+                    continue
+                decisions[rec["row"]] = rec
+        print(f"resumed {len(decisions)} decisions from {journal_path}", flush=True)
 
     img_cache = {}
 
@@ -189,6 +227,14 @@ def main():
                 img_cache.pop(next(iter(img_cache)))
         return img_cache[i]
 
+    def stats_line():
+        n = len(decisions)
+        if not n:
+            return ""
+        acc = sum(1 for d in decisions.values() if d["verdict"] == "accept")
+        mis = sum(1 for d in decisions.values() if d["missed"])
+        return f"{n} decided · {acc / n:.0%} accepted · {mis} missed-flagged"
+
     import gradio as gr
 
     app = gr.Server(title="review-detections")
@@ -198,38 +244,49 @@ def main():
     def page() -> str:
         return PAGE.replace("__MODE__", args.mode)
 
+    @app.get("/start")
+    def start() -> dict:
+        first = next((i for i in range(len(ids)) if ids[i] not in decisions), 0)
+        return {"start": first}
+
     @app.get("/img/{i}")
     def img(i: int) -> Response:
+        if not 0 <= i < len(ids):
+            return Response(status_code=404)
         return Response(content=render(i)[0], media_type="image/jpeg")
 
     @app.get("/meta/{i}")
-    def meta(i: int) -> dict:
+    def meta(i: int) -> Response:
         if not 0 <= i < len(ids):
             return Response(status_code=404)
         row = ds[ids[i]]
         _, scale = render(i)
-        prior = decisions.get(row["image_id"])
-        n = len(decisions)
-        acc = sum(1 for d in decisions.values() if d["verdict"] == "accept")
-        return {
+        prior = decisions.get(ids[i])
+        payload = {
             "idx": i, "total": len(ids),
             "boxes": to_display_boxes(row["objects"], row["width"], row["height"], scale),
             "verdict": prior["verdict"] if prior else None,
             "rejected_boxes": [j for j, k in enumerate(prior["box_keep"]) if not k] if prior else [],
-            "stats": f"{n} decided · {acc / n:.0%} accepted" if n else "",
+            "stats": stats_line(),
         }
+        return Response(content=json.dumps(payload), media_type="application/json")
 
     @app.post("/decide")
     def decide(body: dict) -> dict:
-        row = ds[ids[body["idx"]]]
+        if not 0 <= body.get("idx", -1) < len(ids):
+            return Response(status_code=400)
+        row_idx = ids[body["idx"]]
         rec = {
-            "image_id": row["image_id"],
-            "mode": body["mode"], "verdict": body["verdict"],
-            "missed": bool(body.get("missed")), "box_keep": body.get("box_keep", []),
+            "row": row_idx, "image_id": ds[row_idx]["image_id"],
+            "dataset": args.dataset, "split": args.split,
+            "mode": body["mode"], "order": order, "verdict": body["verdict"],
+            "missed": bool(body.get("missed")), "box_keep": [bool(b) for b in body.get("box_keep", [])],
         }
-        decisions[rec["image_id"]] = rec
-        with open(args.journal, "a") as f:
+        with open(journal_path, "a") as f:  # journal FIRST -- only report saved if it is
             f.write(json.dumps(rec) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        decisions[row_idx] = rec
         return {"n": len(decisions)}
 
     @app.post("/finish")
@@ -239,23 +296,33 @@ def main():
 
     print(f"open http://127.0.0.1:{args.port}/   (F in the browser, or Ctrl-C here, to finish)", flush=True)
     app.launch(server_port=args.port, inbrowser=True, quiet=True, prevent_thread_lock=True)
-    import signal
-
     signal.signal(signal.SIGINT, lambda *_: done.set())  # gradio installs its own handler; override AFTER launch
     done.wait()  # review happens in the browser
+    signal.signal(signal.SIGINT, signal.default_int_handler)  # Ctrl-C must work again (e.g. to abort the push)
 
     n = len(decisions)
     if not n:
         print("no decisions made", flush=True)
         return
     acc = sum(1 for d in decisions.values() if d["verdict"] == "accept")
-    print(f"\n{n} decided · {acc} accepted ({acc / n:.0%})"
-          + (" -- random-order sample, quotable" if order == "random" else " -- rect-ordered, biased sample"),
+    mis = sum(1 for d in decisions.values() if d["missed"])
+    quotable = order == "random" and all(d["order"] == "random" for d in decisions.values())
+    print(f"\n{n} decided · {acc} accepted ({acc / n:.0%}) · {mis} with missed instances ({mis / n:.0%})",
+          flush=True)
+    print("acceptance rate is " + ("an unbiased random-order sample -- quotable"
+                                   if quotable else "from a non-random or mixed-order queue -- NOT quotable"),
           flush=True)
 
     if args.out:
-        reviewed = ds.filter(lambda r: r["image_id"] in decisions)
-        reviewed = reviewed.map(lambda r: {"review": decisions[r["image_id"]]})
+        rows = sorted(decisions)
+        reviewed = ds.select(rows)
+        feats = reviewed.features.copy()
+        feats["review"] = {"verdict": Value("string"), "missed": Value("bool"),
+                           "mode": Value("string"), "box_keep": Sequence(Value("bool"))}
+        reviewed = reviewed.map(
+            lambda r, i: {"review": {k: decisions[rows[i]][k] for k in ("verdict", "missed", "mode", "box_keep")}},
+            with_indices=True, features=feats,
+        )
         reviewed.push_to_hub(args.out, private=args.private)
         print(f"{len(reviewed)} reviewed rows -> {args.out}", flush=True)
 
