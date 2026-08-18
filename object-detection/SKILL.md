@@ -108,9 +108,22 @@ Before training, split off a held-out slice (e.g. 10% of images) and never train
 
 Other trainers work too — the dataset is plain COCO. [RF-DETR](https://github.com/roboflow/rf-detr)
 (Apache-2.0, DINOv2 backbone) is a good starter, and its Seg variant can learn from the teacher's
-`masks_rle` masks (decode each RLE in its own `size` frame, not the recorded width/height — they
-never match). Pin the package version — the API is young — and if the segmentation training path
-resists, ship detection-only and say so rather than burning the day on it.
+`masks_rle` masks. Decode them like this — each RLE lives in its own frame, which never matches the
+recorded width/height:
+
+```python
+import json, numpy as np
+from PIL import Image
+from pycocotools import mask as mask_utils
+
+for rle in json.loads(row["masks_rle"]):
+    seg = mask_utils.decode({**rle, "counts": rle["counts"].encode()})  # frame = rle["size"]
+    if seg.shape != (row["height"], row["width"]):
+        seg = np.asarray(Image.fromarray(seg).resize((row["width"], row["height"]), Image.NEAREST))
+```
+
+Pin the package version — the API is young — and if the segmentation training path resists, ship
+detection-only and say so rather than burning the day on it.
 
 ## 6. Evaluate honestly
 
