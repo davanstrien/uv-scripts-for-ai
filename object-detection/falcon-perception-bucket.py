@@ -140,6 +140,12 @@ def main():
 
     boost()  # raise xet small-file concurrency — the whole point on many small objects
 
+    from huggingface_hub import HfApi
+
+    # first run: the out bucket may not exist yet — completed_keys 404s on a
+    # missing bucket, killing the job before anything happens
+    HfApi().create_bucket(args.out, private=True, exist_ok=True)
+
     done = set() if args.no_resume else completed_keys(args.out)
     print(f"{len(done)} keys already done", flush=True)
 
