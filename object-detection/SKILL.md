@@ -1,6 +1,6 @@
 ---
 name: detection-bootstrap
-description: Bootstrap an object-detection dataset and a small trained detector from images that have NO labels — zero-shot label with Falcon-Perception, validate, convert, then fine-tune a compact Apache-licensed model, all on Hugging Face Jobs. Use when you have an image collection and want a detector but no annotations exist.
+description: Bootstrap an object-detection dataset and a small trained detector from images that have NO labels — zero-shot label with Falcon-Perception, validate, convert, then fine-tune a compact Apache-licensed model, all on Hugging Face Jobs. Runs fully autonomously or with human review checkpoints. Use when you have an image collection and want a detector but no annotations exist.
 ---
 
 # Bootstrap a detector from unlabeled images
@@ -12,6 +12,21 @@ Every step is a self-contained UV script from `uv-scripts/object-detection` on t
 ```
 RAW=https://huggingface.co/datasets/uv-scripts/object-detection/raw/main
 ```
+
+## First: with or without a human?
+
+The loop runs both ways — decide before you start:
+
+- **With a human in the loop** (better models): show them the step-1 previews — "is the teacher boxing
+  the right things?" is the highest-value question, and its fix is the cheapest (a better query, ~$2 to
+  re-run the teacher). Then train on a small slice first (~500–1k images, ~$1) and show ~20 rendered
+  predictions before spending on the full corpus. If corrections are worth collecting at volume, build a
+  minimal review UI — image + predicted boxes, accept/edit, corrections written back to a Hub dataset —
+  fold them in and retrain (~$1). The `convert-hf-dataset.py --to label_studio` → correct →
+  `diff-hf-datasets.py` loop in this repo's README is the packaged version of that.
+- **Autonomously** (headless): never pause for review — judge by the numeric proxies each step provides,
+  and carry the obligation to the end instead: the final report and the model card must say the model is
+  **unreviewed**.
 
 ## 1. Sense-check the class name before spending GPU money (~free)
 
@@ -132,7 +147,8 @@ detection-only and say so rather than burning the day on it.
 - The student can at best match its teacher (measured on a comparable loop: student 97.4% vs teacher
   95.0% human-acceptable on the same sample). The point of distilling is **throughput and cost**
   (~10–100× cheaper per image than the teacher), not accuracy gains.
-- Spot-check ~20 predictions visually before calling it done.
+- Spot-check ~20 predictions visually before calling it done — or, if running without a human and you
+  cannot view images, state prominently in the report that the model is **unreviewed**.
 
 ## 7. Publish with honest provenance
 
