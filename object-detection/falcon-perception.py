@@ -33,7 +33,8 @@ your class name works on your images before spending GPU hours on the corpus.
         --config plates --limit 3 --preview
 
     # 3. the whole corpus, on a GPU
-    hf jobs uv run --flavor a10g-large --secrets HF_TOKEN falcon-perception.py -- \
+    hf jobs uv run --flavor a10g-large --secrets HF_TOKEN \
+        https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/falcon-perception.py \
         --dataset biglam/british-library-book-images --config plates \
         --id-col fname --query illustration --out you/plates-illustrations
 
@@ -70,6 +71,7 @@ MEASURED LIMITS -- not guesses; each one cost a failed run:
 
 import argparse
 import glob as globlib
+import hashlib
 import io
 import itertools
 import json
@@ -78,6 +80,17 @@ import pathlib
 import platform
 import sys
 import time
+
+
+def stable_id(key):
+    """Deterministic int64 image_id from the source key.
+
+    COCO-style consumers (transformers RT-DETR / D-FINE annotation prep) require an
+    INTEGER image_id -- a string crashes them with "ValueError: too many dimensions
+    'str'". A content hash (not a running index) keeps ids identical across separate
+    runs over the same source, so per-class runs merge on image_id cleanly.
+    """
+    return int.from_bytes(hashlib.blake2b(str(key).encode(), digest_size=8).digest(), "big") >> 1
 
 # ── backend / engine selection ──────────────────────────────────────────────
 # The MLX and torch APIs match parameter-for-parameter, but are NOT drop-in:
@@ -210,6 +223,50 @@ def batched(it, n):
             buf = []
     if buf:
         yield buf
+
+
+SCRIPT_URL = "https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/falcon-perception.py"
+
+
+def push_card(repo_id, query, counters):
+    """Dataset card with the repo's canonical provenance stamp (see AGENTS.md)."""
+    from huggingface_hub import DatasetCard
+
+    on_jobs = os.environ.get("JOB_ID") is not None  # set by HF Jobs in-container
+    hw = os.environ.get("ACCELERATOR") or ""  # e.g. "a10g-large"; empty on CPU
+    origin = (
+        f"Produced on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs)"
+        + (f" (`{hw}`)" if hw else "")
+    ) if on_jobs else "Generated"
+    tags = "\n".join(f"- {t}" for t in (["uv-script", "hf-jobs"] if on_jobs else ["uv-script"]))
+    args_summary = " ".join(sys.argv[1:])
+    card = DatasetCard(f"""---
+tags:
+{tags}
+---
+
+# Zero-shot detection: `{query}`
+
+{counters["images"]} images, {counters["instances"]} instances. Labels are **zero-shot weak
+labels** from [Falcon-Perception](https://huggingface.co/tiiuae/Falcon-Perception) -- no human
+annotated anything, and recall against human truth is unmeasured. `objects.bbox` is `yolo`
+format (normalised centre x, y, w, h); `objects.rectangularity` (mask area / box area) is the
+triage proxy -- the model emits no confidence scores.
+
+## Reproduction
+
+{origin} with the [`falcon-perception.py`]({SCRIPT_URL}) recipe from [uv-scripts](https://huggingface.co/uv-scripts). Run it yourself:
+
+```bash
+hf jobs uv run --flavor a10g-large --secrets HF_TOKEN \\
+    {SCRIPT_URL} \\
+    {args_summary}
+```
+""")
+    try:
+        card.push_to_hub(repo_id)
+    except Exception as e:
+        print(f"WARNING: could not push dataset card ({e})", flush=True)
 
 
 # ── the two generation paths ────────────────────────────────────────────────
@@ -348,33 +405,44 @@ def main():
     gen = (run_paged(model, tokenizer, items, prompt, args) if use_paged
            else run_batch(model, tokenizer, items, prompt, args, backend, model_args.max_seq_len))
 
-    records, n, t0 = [], 0, time.perf_counter()
-    for key, im, aux, dt in gen:
-        W, H = im.size
-        boxes = pair_bboxes(aux.bboxes_raw)
-        rles = list(aux.masks_rle)
-        bbox, area, rect = [], [], []
-        for i, b in enumerate(boxes):
-            bbox.append([b["x"], b["y"], b["w"], b["h"]])  # yolo: cx, cy, w, h normalised
-            a = b["w"] * b["h"]
-            area.append(a)
-            r = 0.0
-            if i < len(rles):  # rectangularity -- the only triage signal available
-                try:
-                    m = rles[i]
-                    if isinstance(m.get("counts"), str):
-                        m = {**m, "counts": m["counts"].encode()}
-                    r = min(float(mask_utils.area(m)) / max(a * W * H, 1.0), 1.0)
-                except Exception:
-                    r = 0.0
-            rect.append(r)
-        n += 1
-        print(f"[{n}] {key[:55]:55s} {len(bbox):2d} inst  {dt:.2f}s", flush=True)
-        if args.preview:
-            print(f"     -> {save_preview(key, im, boxes, rles, args.preview_dir)}", flush=True)
-        if args.out or args.json:
-            records.append({
-                "image": im, "image_id": key, "width": W, "height": H,
+    # Records are STREAMED, never accumulated: a whole-corpus run used to hold every
+    # decoded PIL image in a list until the final push (~3-12 MB each -> tens of GB
+    # RSS -> OOM-killed before anything was pushed).
+    counters = {"images": 0, "instances": 0}
+    json_rows = []  # populated only when --json; records here are image-free
+    t0 = time.perf_counter()
+
+    def iter_records():
+        for key, im, aux, dt in gen:
+            W, H = im.size
+            boxes = pair_bboxes(aux.bboxes_raw)
+            rles = list(aux.masks_rle)
+            bbox, area, rect = [], [], []
+            for i, b in enumerate(boxes):
+                bbox.append([b["x"], b["y"], b["w"], b["h"]])  # yolo: cx, cy, w, h normalised
+                a = b["w"] * b["h"]
+                area.append(a)
+                r = 0.0
+                if i < len(rles):  # rectangularity -- the only triage signal available
+                    try:
+                        m = rles[i]
+                        if isinstance(m.get("counts"), str):
+                            m = {**m, "counts": m["counts"].encode()}
+                        # measure box area in the MASK's own frame (rle size), not the
+                        # fitted image's -- the two never match, and mixing frames skews r
+                        mh, mw = (m.get("size") or [H, W])[:2]
+                        r = min(float(mask_utils.area(m)) / max(a * mw * mh, 1.0), 1.0)
+                    except Exception:
+                        r = 0.0
+                rect.append(r)
+            counters["images"] += 1
+            counters["instances"] += len(bbox)
+            print(f"[{counters['images']}] {key[:55]:55s} {len(bbox):2d} inst  {dt:.2f}s", flush=True)
+            if args.preview:
+                print(f"     -> {save_preview(key, im, boxes, rles, args.preview_dir)}", flush=True)
+            rec = {
+                "image": im, "image_id": stable_id(key), "source_id": key,
+                "width": W, "height": H,
                 "objects": {"bbox": bbox, "category": [0] * len(bbox),
                             "area": area, "rectangularity": rect},
                 "n_instances": len(bbox),
@@ -382,38 +450,21 @@ def main():
                     {**m, "counts": m["counts"].decode() if isinstance(m.get("counts"), bytes) else m.get("counts")}
                     for m in rles
                 ]),
-            })
+            }
+            if args.json:
+                json_rows.append(plain(rec))
+            yield rec
 
-    wall = time.perf_counter() - t0
-    print(f"\n{n} images in {wall:.1f}s ({n / max(wall, 1e-9):.2f} img/s)", flush=True)
+    def plain(r):  # everything except the PIL image, which is not serialisable
+        return {k: v for k, v in r.items() if k != "image"}
 
-    # --- local file output: everything except the PIL image, which is not serialisable
-    def plain(recs):
-        return [{k: v for k, v in r.items() if k != "image"} for r in recs]
+    hub_out = args.out and not args.out.endswith((".json", ".jsonl", ".parquet"))
 
-    if args.json:
-        print(json.dumps(plain(records), indent=2), flush=True)
-
-    if args.out and args.out.endswith((".json", ".jsonl", ".parquet")):
-        rows = plain(records)
-        if args.out.endswith(".json"):
-            pathlib.Path(args.out).write_text(json.dumps(rows, indent=2))
-        elif args.out.endswith(".jsonl"):
-            pathlib.Path(args.out).write_text("".join(json.dumps(r) + "\n" for r in rows))
-        else:
-            import pyarrow as pa
-            import pyarrow.parquet as pq
-
-            pq.write_table(pa.Table.from_pylist(rows), args.out, compression="zstd")
-        total = sum(r["n_instances"] for r in rows)
-        print(f"{total} instances -> {args.out}", flush=True)
-        return
-
-    if args.out:
+    if hub_out:
         from datasets import Dataset, Features, Image as ImageFeat, Sequence as SeqFeat, Value
 
         feats = Features({
-            "image": ImageFeat(), "image_id": Value("string"),
+            "image": ImageFeat(), "image_id": Value("int64"), "source_id": Value("string"),
             "width": Value("int32"), "height": Value("int32"),
             "objects": {"bbox": SeqFeat(SeqFeat(Value("float32"))),
                         "category": SeqFeat(Value("int64")),
@@ -421,8 +472,44 @@ def main():
                         "rectangularity": SeqFeat(Value("float32"))},
             "n_instances": Value("int32"), "masks_rle": Value("string"),
         })
-        Dataset.from_list(records, features=feats).push_to_hub(args.out, private=args.private)
-        print(f"{sum(r['n_instances'] for r in records)} instances -> {args.out}", flush=True)
+        # Stream through an ArrowWriter (not Dataset.from_list/from_generator): from_list
+        # holds every decoded image in RAM; from_generator dill-fingerprints the callable
+        # and chokes on the live generator it closes over. The writer flushes to disk per
+        # batch, and from_file memory-maps it back for the push.
+        import tempfile
+
+        from datasets.arrow_writer import ArrowWriter
+
+        arrow_path = os.path.join(tempfile.mkdtemp(prefix="falcon-out-"), "data.arrow")
+        with ArrowWriter(features=feats, path=arrow_path, writer_batch_size=100) as writer:
+            for rec in iter_records():
+                writer.write(feats.encode_example(rec))
+            writer.finalize()
+        ds = Dataset.from_file(arrow_path)
+        ds.push_to_hub(args.out, private=args.private)
+        push_card(args.out, args.query, counters)
+        if args.json:
+            print(json.dumps(json_rows, indent=2), flush=True)
+    else:
+        rows = [plain(r) for r in iter_records()]
+        if args.json:
+            print(json.dumps(rows, indent=2), flush=True)
+        if args.out and args.out.endswith(".json"):
+            pathlib.Path(args.out).write_text(json.dumps(rows, indent=2))
+        elif args.out and args.out.endswith(".jsonl"):
+            pathlib.Path(args.out).write_text("".join(json.dumps(r) + "\n" for r in rows))
+        elif args.out:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+
+            pq.write_table(pa.Table.from_pylist(rows), args.out, compression="zstd")
+
+    wall = time.perf_counter() - t0
+    n = counters["images"]
+    print(f"\n{n} images in {wall:.1f}s ({n / max(wall, 1e-9):.2f} img/s)", flush=True)
+    if args.out:
+        print(f"{counters['instances']} instances -> {args.out}", flush=True)
+    if hub_out:
         print(f"\nNEXT: validate-hf-dataset.py {args.out} --bbox-format yolo", flush=True)
 
 

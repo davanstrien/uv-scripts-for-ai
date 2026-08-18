@@ -11,8 +11,9 @@
 # ///
 """Falcon-Perception over a whole HF bucket, resumable.
 
-    hf jobs uv run --flavor a10g-large --secrets HF_TOKEN falcon-bucket.py -- \
-        --src biglam/bl-images --include 'full/embellishments/**/*.jpg' \
+    hf jobs uv run --flavor a10g-large --secrets HF_TOKEN \
+        https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/falcon-perception-bucket.py \
+        --src biglam/bl-images --prefix full/embellishments \
         --out davanstrien/bl-masks --query illustration
 
 Input  : bucketbag batched_files — bounded scratch, files deleted as the loop advances
@@ -26,9 +27,8 @@ run resumable (`completed_keys` reads the done-set back from `__source_key`).
 To hand the result to the rest of this directory, publish it once at the end:
 
     from datasets import load_dataset
-    load_dataset("parquet", data_files=[
-        "hf://buckets/you/bl-masks/part-000000.parquet", ...
-    ], split="train").push_to_hub("you/bl-masks")
+    load_dataset("parquet", data_files="hf://buckets/you/bl-masks/part-*.parquet",
+                 split="train").push_to_hub("you/bl-masks")
 
     uv run validate-hf-dataset.py you/bl-masks --bbox-format yolo
 
@@ -47,6 +47,7 @@ GOTCHAS (all measured, none in the model card):
 """
 
 import argparse
+import hashlib
 import io
 import json
 import time
@@ -56,12 +57,18 @@ import pyarrow.parquet as pq
 from bucketbag import batched_files, boost, completed_keys, iter_keys, put_files
 from pycocotools import mask as mask_utils
 
+
+def stable_id(key):
+    """Deterministic int64 image_id from the source key (COCO consumers need an int;
+    a hash, not a running index, keeps ids identical across resumed runs)."""
+    return int.from_bytes(hashlib.blake2b(str(key).encode(), digest_size=8).digest(), "big") >> 1
+
 # Same YOLO column layout as falcon-perception.py, so both outputs validate with
 # `validate-hf-dataset.py --bbox-format yolo` and can be concatenated.
 # `__source_key` is bucketbag's resume column — the name is load-bearing.
 SCHEMA = pa.schema([
     ("__source_key", pa.string()),
-    ("image_id", pa.string()),
+    ("image_id", pa.int64()),  # int, not str: COCO-style trainers tensorise it
     ("width", pa.int32()),
     ("height", pa.int32()),
     ("objects", pa.struct([
@@ -114,6 +121,18 @@ def main():
     p.add_argument("--no-resume", action="store_true")
     args = p.parse_args()
 
+    import torch
+
+    if not torch.cuda.is_available():
+        raise SystemExit(
+            "This script needs a CUDA GPU (PagedInferenceEngine). "
+            "For MLX/CPU-capable runs use falcon-perception.py instead."
+        )
+    if args.format == "jsonl" and not args.no_resume:
+        # completed_keys only reads the done-set back from .parquet parts, so jsonl
+        # output silently reprocesses EVERYTHING on every re-run.
+        raise SystemExit("--format jsonl is not resumable; pass --no-resume to run it anyway.")
+
     boost()  # raise xet small-file concurrency — the whole point on many small objects
 
     done = set() if args.no_resume else completed_keys(args.out)
@@ -132,7 +151,6 @@ def main():
     if not keys:
         return
 
-    import torch  # noqa: F401
     from falcon_perception import PERCEPTION_MODEL_ID, build_prompt_for_task, load_and_prepare_model, setup_torch_config
     from falcon_perception.data import ImageProcessor
     from falcon_perception.paged_inference import (
@@ -166,17 +184,18 @@ def main():
         for it in batch:
             try:
                 img = it.image.convert("RGB")  # convert() forces the load off disk
+                orig_size = img.size  # SOURCE dims -- the images downstream tools decode
                 if max(img.size) > args.max_dim * 2:
                     img.thumbnail((args.max_dim * 2, args.max_dim * 2))
-                pairs.append((str(it.key), img))
+                pairs.append((str(it.key), img, orig_size))
             except Exception as e:
-                pairs.append((str(it.key), e))
+                pairs.append((str(it.key), e, None))
 
-        good = [(k, im) for k, im in pairs if not isinstance(im, Exception)]
+        good = [(k, im, sz) for k, im, sz in pairs if not isinstance(im, Exception)]
         seqs = [
             Sequence(text=prompt, image=im, min_image_size=256,
                      max_image_size=args.max_dim, request_idx=i, task=args.task)
-            for i, (_, im) in enumerate(good)
+            for i, (_, im, _) in enumerate(good)
         ]
         t0 = time.perf_counter()
         if seqs:
@@ -185,14 +204,16 @@ def main():
         gen_total += dt
 
         rows = []
-        for (key, im), seq in zip(good, seqs):
+        for (key, im, orig_size), seq in zip(good, seqs):
             aux = seq.output_aux
             boxes = pair_bboxes(aux.bboxes_raw)
             masks = list(aux.masks_rle)
             for m in masks:
                 if isinstance(m.get("counts"), bytes):
                     m["counts"] = m["counts"].decode()
-            W, H = im.size
+            # width/height are the SOURCE image's dims: boxes are normalised (frame-free),
+            # and downstream pixel conversions run against the untouched bucket images.
+            W, H = orig_size
             bbox, area, rect = [], [], []
             for i, b in enumerate(boxes):
                 bbox.append([b["x"], b["y"], b["w"], b["h"]])  # yolo: cx, cy, w, h normalised
@@ -204,27 +225,38 @@ def main():
                         m = masks[i]
                         if isinstance(m.get("counts"), str):
                             m = {**m, "counts": m["counts"].encode()}
-                        r = min(float(mask_utils.area(m)) / max(a * W * H, 1.0), 1.0)
+                        # box area measured in the MASK's own frame (rle size) — mixing
+                        # frames skews r
+                        mh, mw = (m.get("size") or [H, W])[:2]
+                        r = min(float(mask_utils.area(m)) / max(a * mw * mh, 1.0), 1.0)
                     except Exception:
                         r = 0.0
                 rect.append(r)
             rows.append({
-                "__source_key": key, "image_id": key, "width": W, "height": H,
+                "__source_key": key, "image_id": stable_id(key), "width": W, "height": H,
                 "objects": {"bbox": bbox, "category": [0] * len(bbox),
                             "area": area, "rectangularity": rect},
                 "n_instances": len(bbox), "masks_rle": json.dumps(masks),
                 "query": args.query, "gen_seconds": dt / max(len(seqs), 1), "error": None,
             })
-        for key, err in [(k, v) for k, v in pairs if isinstance(v, Exception)]:
+        for key, err, _ in [(k, v, s) for k, v, s in pairs if isinstance(v, Exception)]:
             # a durable error row, never a gap — and it counts as done so it is
-            # not retried forever on every re-run
+            # not retried forever on every re-run. objects is EMPTY, not null:
+            # a null struct crashes validate-hf-dataset.py after publish.
             rows.append({k: None for k in SCHEMA.names} | {
-                "__source_key": key, "image_id": key, "query": args.query,
+                "__source_key": key, "image_id": stable_id(key), "query": args.query,
+                "objects": {"bbox": [], "category": [], "area": [], "rectangularity": []},
+                "n_instances": 0, "masks_rle": "[]",
                 "error": f"{type(err).__name__}: {err}",
             })
 
+        # part name derives from batch CONTENT, not a run-local counter: a resumed run's
+        # counter restarts at 0 and put_files overwrites, silently destroying the first
+        # run's parts. A content-derived name is stable per batch and collision-free
+        # across resumes (a re-run of the same batch overwrites its own part, idempotent).
         ext = "jsonl" if args.format == "jsonl" else "parquet"
-        put_files([(f"part-{batch_i:06d}.{ext}", serialise(rows, args.format))], args.out)
+        part = hashlib.blake2b(rows[0]["__source_key"].encode(), digest_size=6).hexdigest()
+        put_files([(f"part-{part}.{ext}", serialise(rows, args.format))], args.out)
         n += len(rows); batch_i += 1
         rate = n / (time.perf_counter() - t_all)
         print(f"batch {batch_i}: {len(rows)} rows ({dt / max(len(seqs), 1):.2f}s/img)  "
