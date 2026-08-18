@@ -121,17 +121,22 @@ def main():
     p.add_argument("--no-resume", action="store_true")
     args = p.parse_args()
 
-    import torch
-
-    if not torch.cuda.is_available():
-        raise SystemExit(
-            "This script needs a CUDA GPU (PagedInferenceEngine). "
-            "For MLX/CPU-capable runs use falcon-perception.py instead."
-        )
     if args.format == "jsonl" and not args.no_resume:
         # completed_keys only reads the done-set back from .parquet parts, so jsonl
         # output silently reprocesses EVERYTHING on every re-run.
         raise SystemExit("--format jsonl is not resumable; pass --no-resume to run it anyway.")
+
+    try:
+        import torch
+
+        has_cuda = torch.cuda.is_available()
+    except ImportError:  # falcon-perception pins torch off-darwin, so it may be absent
+        has_cuda = False
+    if not has_cuda:
+        raise SystemExit(
+            "This script needs a CUDA GPU (PagedInferenceEngine). "
+            "For MLX/CPU-capable runs use falcon-perception.py instead."
+        )
 
     boost()  # raise xet small-file concurrency — the whole point on many small objects
 
