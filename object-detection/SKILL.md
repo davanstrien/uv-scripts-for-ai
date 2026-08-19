@@ -15,24 +15,24 @@ Hugging Face Hub, or a `hf jobs` command. `--help` works on every script.
 You can use the approach outlined in this skill with or without a human in the loop.
 
 - **With a human in the loop** (better models): show them the step-1 previews — "is the teacher boxing
-  the right things?" is the highest-value question, and its fix is the cheapest (a better query, ~$2 to
-  re-run the teacher). Then train on a small slice first (~500–1k images, ~$1) and show ~20 rendered
+  the right things?" is the highest-value question, and its fix is the cheapest (a better query, about $2 to
+  re-run the teacher). Then train on a small slice first (500–1k images, about $1) and show 20 rendered
   predictions before spending on the full corpus. If corrections are worth collecting at volume, run a
   review pass with `review-detections.py` (keyboard accept/reject in the browser, per image or per box;
   prints the quotable acceptance + missed rates and pushes a `review` column), fold corrections in and
-  retrain (~$1). Diff the corrected set against the first pass (`diff-hf-datasets.py`) to measure how
+  retrain (about $1). Diff the corrected set against the first pass (`diff-hf-datasets.py`) to measure how
   good the zero-shot pass actually was.
 - **Autonomously** (headless): don't pause for review — use the numeric proxies, and say **unreviewed**
   in the final report and model card.
 
-## 1. Sense-check the class name before spending GPU money (~free)
+## 1. Sense-check the class name before spending GPU money (free)
 
 Falcon-Perception queries are **class names, not instructions** ("photograph" works; "the photographs,
 excluding captions" returns nothing), and **one class per run** (combined queries collapse — run per
 class and merge on `image_id`). Model details: `hf models card tiiuae/Falcon-Perception`.
 
 Check cheaply on 3 images before any full pass. The teacher (Falcon-Perception) is a **0.6B model,
-~1.3 GB download** — it runs on a CUDA GPU (fast), Apple Silicon (MLX backend auto-selected, ~6 s/image),
+1.3 GB download** — it runs on a CUDA GPU (fast), Apple Silicon (MLX backend auto-selected, about 6 s/image),
 or plain CPU (slow, but fine for 3 images). Run the check wherever is practical for you:
 
 ```
@@ -50,8 +50,8 @@ Judge the result before scaling up:
 - **If you can view images**, look at the rendered previews (or the pushed check dataset) — are the
   right things boxed?
 - **If you can't**, compare instance counts across candidate queries (`stats-hf-dataset.py` below works
-  on a pushed check dataset): ~0 instances/image means the class name is wrong for this material —
-  try a synonym (`photograph` / `illustration` / `figure` / `cartoon`). Suspiciously many (> ~10/image)
+  on a pushed check dataset): near-zero instances/image means the class name is wrong for this material —
+  try a synonym (`photograph` / `illustration` / `figure` / `cartoon`). Suspiciously many (more than about 10/image)
   usually means the query is matching layout blocks, not pictures.
 - **No vision at all?** A vision-capable subagent can judge the previews if you can spawn one;
   otherwise tell the user the check ran unviewed.
@@ -76,7 +76,7 @@ hf jobs uv run --flavor a10g-large --secrets HF_TOKEN --timeout 2h \
 - Output schema: `objects.bbox` in **YOLO format** (normalized center x, y, w, h), `objects.category`,
   `objects.area`, `objects.rectangularity`, plus `image`, `image_id`, `width`, `height`.
 - There are **no confidence scores** (the model has none). `rectangularity` (mask area ÷ box area) is the
-  triage proxy: values near 0 are usually junk, ~0.785 is a circle, ~1.0 a full rectangle.
+  triage proxy: values near 0 are usually junk, 0.785 is a circle, 1.0 a full rectangle.
 - Submit with `--detach` (returns the job id immediately), then block on completion with
   `hf jobs wait <id> [<id> ...] --timeout 2h` — it exits 0 only if every job succeeded, so it
   chains cleanly into the next step. `hf jobs logs <id>` / `hf jobs inspect <id>` for progress and errors.
@@ -146,8 +146,8 @@ for rle in json.loads(row["masks_rle"]):
   not accuracy against human truth — no human labels exist in this loop.
 - The student can at best match its teacher (measured on a comparable loop: student 97.4% vs teacher
   95.0% human-acceptable on the same sample). The point of distilling is **throughput and cost**
-  (~10–100× cheaper per image than the teacher), not accuracy gains.
-- Spot-check ~20 predictions visually before calling it done — or, if running without a human and you
+  (10–100× cheaper per image than the teacher), not accuracy gains.
+- Spot-check 20 or so predictions visually before calling it done — or, if running without a human and you
   cannot view images, state prominently in the report that the model is **unreviewed**.
 - It can make sense to run this process in a loop: predict → review (a human, or a vision-capable
   agent, via `review-detections.py`) → retrain on the corrections → review again, until the acceptance
