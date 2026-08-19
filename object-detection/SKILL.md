@@ -40,8 +40,9 @@ or plain CPU (slow, but fine for 3 images). Run the check wherever is practical 
 uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/falcon-perception.py \
   --dataset <USER>/<IMAGES> --limit 3 --query photograph --preview
 
-# or the same check as a small job (previews don't persist on Jobs — push a tiny dataset instead):
-hf jobs uv run --flavor t4-small --secrets HF_TOKEN \
+# or the same check as a small job (previews don't persist on Jobs — push a tiny dataset instead).
+# l4x1 is the cheapest flavor that fits the engine (see step 2's flavor rule):
+hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/falcon-perception.py \
   --dataset <USER>/<IMAGES> --limit 3 --query photograph --out <USER>/<NAME>-check --private
 ```
@@ -69,12 +70,40 @@ hf jobs uv run --flavor a10g-large --secrets HF_TOKEN --timeout 2h \
   --dataset <USER>/<IMAGES> --query photograph --out <USER>/<NAME>-photograph --private
 ```
 
-- Avoid `a10g-small` — the engine sizes itself from the GPU and ignores host RAM, so it gets
-  OOM-killed. `hf jobs hardware` lists current options and prices.
-- One job per class (step 1's rule). Merge per-class outputs by concatenating the `objects` entries of
-  rows with the same `image_id`.
-- Output schema: `objects.bbox` in **YOLO format** (normalized center x, y, w, h), `objects.category`,
-  `objects.area`, `objects.rectangularity`, plus `image`, `image_id`, `width`, `height`.
+- Flavor rule (all three failures measured): the engine needs a **24 GB-VRAM GPU** (16 GB T4s
+  CUDA-OOM during prefill) and **more than 15 GB host RAM** (the engine sizes itself from the GPU
+  and ignores host RAM, so `t4-small` and `a10g-small` are OOMKilled before the first image).
+  `hf jobs hardware --json` lists every flavor's `ram`, accelerator and price — `l4x1` is the
+  cheapest fit (fine for the step-1 check); `a10g-large` is faster for a corpus pass.
+- One job per class (step 1's rule). Every run labels its boxes `category` 0 in a single-name
+  `ClassLabel`, so a naive concat collapses the classes — renumber each run to its index in a
+  combined `ClassLabel` when merging. Rows align on `image_id` (every run contains every image):
+
+  ```python
+  from datasets import ClassLabel, Sequence, load_dataset
+
+  names = ["illustration", "map"]
+  parts = [load_dataset(f"<USER>/<NAME>-{n}", split="train") for n in names]
+  extra = [dict(zip(ds["image_id"], ds["objects"])) for ds in parts[1:]]
+
+  def merge(row):
+      o = {k: list(v) for k, v in row["objects"].items()}
+      for i, run in enumerate(extra, start=1):
+          r = run[row["image_id"]]
+          o["bbox"] += r["bbox"]; o["area"] += r["area"]
+          o["rectangularity"] += r["rectangularity"]
+          o["category"] += [i] * len(r["bbox"])
+      return {"objects": o, "n_instances": len(o["bbox"])}
+
+  feats = parts[0].features.copy()
+  feats["objects"]["category"] = Sequence(ClassLabel(names=names))
+  merged = parts[0].map(merge, features=feats)
+  ```
+
+  (`masks_rle` concatenates the same way if you need the masks.)
+- Output schema: `objects.bbox` in **YOLO format** (normalized center x, y, w, h), `objects.category`
+  (a `ClassLabel` named after the query), `objects.area`, `objects.rectangularity`, plus `image`,
+  `image_id`, `width`, `height`.
 - There are **no confidence scores** (the model has none). `rectangularity` (mask area ÷ box area) is the
   triage proxy: values near 0 are usually junk, 0.785 is a circle, 1.0 a full rectangle.
 - Submit with `--detach` (returns the job id immediately), then block on completion with
