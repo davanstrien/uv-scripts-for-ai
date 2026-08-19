@@ -27,13 +27,13 @@ run resumable (`completed_keys` reads the done-set back from `__source_key`).
 To hand the result to the rest of this directory, publish it once at the end:
 
     from datasets import ClassLabel, Sequence, load_dataset
-    ds = load_dataset("parquet", data_files="hf://buckets/you/bl-masks/part-*.parquet",
+    ds = load_dataset("parquet", data_files="hf://buckets/<namespace>/<bucket>/part-*.parquet",
                       split="train")
     feats = ds.features.copy()  # parquet stores category as bare ints; name the class
     feats["objects"]["category"] = Sequence(ClassLabel(names=[ds[0]["query"]]))
-    ds.cast(feats).push_to_hub("you/bl-masks")
+    ds.cast(feats).push_to_hub("<namespace>/<dataset>")  # a dataset repo, distinct from the bucket
 
-    uv run validate-hf-dataset.py you/bl-masks --bbox-format yolo
+    uv run validate-hf-dataset.py <namespace>/<dataset> --bbox-format yolo
 
 Note the parts carry `width`/`height` but no `image` column (the images stay in
 the source bucket), so pass --image-column accordingly if a downstream script
