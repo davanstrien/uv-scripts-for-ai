@@ -26,11 +26,14 @@ Output is parquet parts in a BUCKET, not a dataset repo — that is what makes t
 run resumable (`completed_keys` reads the done-set back from `__source_key`).
 To hand the result to the rest of this directory, publish it once at the end:
 
-    from datasets import load_dataset
-    load_dataset("parquet", data_files="hf://buckets/you/bl-masks/part-*.parquet",
-                 split="train").push_to_hub("you/bl-masks")
+    from datasets import ClassLabel, Sequence, load_dataset
+    ds = load_dataset("parquet", data_files="hf://buckets/<namespace>/<bucket>/part-*.parquet",
+                      split="train")
+    feats = ds.features.copy()  # parquet stores category as bare ints; name the class
+    feats["objects"]["category"] = Sequence(ClassLabel(names=[ds[0]["query"]]))
+    ds.cast(feats).push_to_hub("<namespace>/<dataset>")  # a dataset repo, distinct from the bucket
 
-    uv run validate-hf-dataset.py you/bl-masks --bbox-format yolo
+    uv run validate-hf-dataset.py <namespace>/<dataset> --bbox-format yolo
 
 Note the parts carry `width`/`height` but no `image` column (the images stay in
 the source bucket), so pass --image-column accordingly if a downstream script
@@ -40,8 +43,9 @@ GOTCHAS (all measured, none in the model card):
   * --query is a CLASS NAME. "illustration" works; "the illustration, excluding
     captions" returns nothing.
   * torch.compile breaks on per-image dynamic shapes -> compile is OFF here.
-  * engine_config_for_gpu() sizes from the GPU and ignores host RAM; on
-    a10g-small it gets OOMKilled (exit 137) before processing anything.
+  * engine_config_for_gpu() sizes from the GPU and ignores host RAM; the 15 GB
+    flavors (t4-small, a10g-small) get OOMKilled (exit 137) before processing
+    anything -- pick >15 GB `ram` from `hf jobs hardware --json`.
     cudagraph is off by default here for the same reason.
   * xy in the output is the NORMALISED CENTRE, not a corner.
 """
@@ -73,7 +77,9 @@ SCHEMA = pa.schema([
     ("height", pa.int32()),
     ("objects", pa.struct([
         ("bbox", pa.list_(pa.list_(pa.float32()))),   # yolo: cx, cy, w, h normalised
-        ("category", pa.list_(pa.int64())),           # single class per run, by design
+        ("category", pa.list_(pa.int64())),           # single class per run; the class NAME
+                                                      # is the `query` column — cast to
+                                                      # ClassLabel at publish (see docstring)
         ("area", pa.list_(pa.float32())),
         ("rectangularity", pa.list_(pa.float32())),   # triage proxy — no confidence score exists
     ])),

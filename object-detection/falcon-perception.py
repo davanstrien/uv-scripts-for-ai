@@ -65,8 +65,10 @@ MEASURED LIMITS -- not guesses; each one cost a failed run:
   * torch.compile is OFF. Per-image dynamic shapes break Inductor
     ("ValueError: Exponent must be non-negative" after symbolic-shape recursion).
   * CUDA graphs are OFF by default. engine_config_for_gpu() sizes itself from the
-    GPU and ignores host RAM; on a10g-small the container is OOMKilled (exit 137)
-    before one image is processed. Use a10g-large, or pass --cudagraph knowingly.
+    GPU and ignores host RAM; on the 15 GB-host-RAM flavors (t4-small, a10g-small
+    -- both measured) the container is OOMKilled (exit 137) before one image is
+    processed. Pick a flavor with >15 GB `ram` from `hf jobs hardware --json`,
+    or pass --cudagraph knowingly.
 """
 
 import argparse
@@ -250,8 +252,9 @@ tags:
 {counters["images"]} images, {counters["instances"]} instances. Labels are **zero-shot weak
 labels** from [Falcon-Perception](https://huggingface.co/tiiuae/Falcon-Perception) -- no human
 annotated anything, and recall against human truth is unmeasured. `objects.bbox` is `yolo`
-format (normalised centre x, y, w, h); `objects.rectangularity` (mask area / box area) is the
-triage proxy -- the model emits no confidence scores.
+format (normalised centre x, y, w, h); `objects.category` is a `ClassLabel` named `{query}`;
+`objects.rectangularity` (mask area / box area) is the triage proxy -- the model emits no
+confidence scores.
 
 ## Reproduction
 
@@ -461,13 +464,15 @@ def main():
     hub_out = args.out and not args.out.endswith((".json", ".jsonl", ".parquet"))
 
     if hub_out:
-        from datasets import Dataset, Features, Image as ImageFeat, Sequence as SeqFeat, Value
+        from datasets import ClassLabel, Dataset, Features, Image as ImageFeat, Sequence as SeqFeat, Value
 
         feats = Features({
             "image": ImageFeat(), "image_id": Value("int64"), "source_id": Value("string"),
             "width": Value("int32"), "height": Value("int32"),
+            # category is a ClassLabel named after the query, so the class name travels
+            # with the dataset (viewer, trainers, id2label) instead of a bare 0.
             "objects": {"bbox": SeqFeat(SeqFeat(Value("float32"))),
-                        "category": SeqFeat(Value("int64")),
+                        "category": SeqFeat(ClassLabel(names=[args.query])),
                         "area": SeqFeat(Value("float32")),
                         "rectangularity": SeqFeat(Value("float32"))},
             "n_instances": Value("int32"), "masks_rle": Value("string"),

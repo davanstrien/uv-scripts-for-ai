@@ -311,14 +311,17 @@ Anything ending `.json`, `.jsonl` or `.parquet` is written locally; anything els
 `falcon-perception-bucket.py` reads images from an HF bucket and writes resumable parquet parts back to a bucket — kill it and re-run the same command, done keys are skipped. Publish once at the end to use the rest of this directory:
 
 ```python
-from datasets import load_dataset
-load_dataset("parquet", data_files="hf://buckets/you/bl-masks/part-*.parquet",
-             split="train").push_to_hub("you/bl-masks")
+from datasets import ClassLabel, Sequence, load_dataset
+ds = load_dataset("parquet", data_files="hf://buckets/<namespace>/<bucket>/part-*.parquet",
+                  split="train")
+feats = ds.features.copy()  # parquet stores category as bare ints; name the class
+feats["objects"]["category"] = Sequence(ClassLabel(names=[ds[0]["query"]]))
+ds.cast(feats).push_to_hub("<namespace>/<dataset>")  # a dataset repo, distinct from the bucket
 ```
 
 ### Output columns
 
-`objects.bbox` (`yolo`), `objects.category`, `objects.area`, `objects.rectangularity`, plus `image`, `image_id` (int64 — COCO-style trainers require an integer id), `source_id` (the original key), `width`, `height`, `n_instances`, and `masks_rle` (COCO RLE — segmentation rides along; the bbox scripts ignore it).
+`objects.bbox` (`yolo`), `objects.category` (a `ClassLabel` named after the query), `objects.area`, `objects.rectangularity`, plus `image`, `image_id` (int64 — COCO-style trainers require an integer id), `source_id` (the original key), `width`, `height`, `n_instances`, and `masks_rle` (COCO RLE — segmentation rides along; the bbox scripts ignore it).
 
 ### Train on the output
 
