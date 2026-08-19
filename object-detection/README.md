@@ -281,7 +281,7 @@ uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/conv
 uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/diff-hf-datasets.py you/plates-illustrations you/corrected   # IoU match = zero-shot accuracy
 ```
 
-**Runs without a CUDA GPU.** Unlike most recipes in this repo, `falcon-perception.py` selects the MLX backend on Apple Silicon automatically. It is slower there (~6 s/img vs ~0.4 on an A10G), which is the right trade for step 1 and 2 above — checking your class name works before spending GPU hours.
+**Runs without a CUDA GPU.** Unlike most recipes in this repo, `falcon-perception.py` selects the MLX backend on Apple Silicon automatically. It is slower there (about 6 s/img vs 0.4 on an A10G), which is the right trade for step 1 and 2 above — checking your class name works before spending GPU hours.
 
 ### Known limits
 
