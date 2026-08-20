@@ -18,9 +18,9 @@ You can use the approach outlined in this skill with or without a human in the l
   the right things?" is the highest-value question, and its fix is the cheapest (a better query, about $2 to
   re-run the teacher). Then train on a small slice first (500–1k images, about $1) and show 20 rendered
   predictions before spending on the full corpus. If corrections are worth collecting at volume, run a
-  review pass with `review-detections.py` (keyboard accept/reject in the browser, per image or per box;
-  prints the quotable acceptance + missed rates and pushes a `review` column), fold corrections in and
-  retrain (about $1). Diff the corrected set against the first pass (`diff-hf-datasets.py`) to measure how
+  review pass with `review-detections.py` (Judge mode: keyboard accept/reject per image in the browser;
+  Annotate mode for per-box verify and draw; prints the quotable acceptance + missed rates and pushes a
+  `review` column), fold corrections in and retrain (about $1). Diff the corrected set against the first pass (`diff-hf-datasets.py`) to measure how
   good the zero-shot pass actually was.
 - **Autonomously** (headless): don't pause for review — use the numeric proxies, and say **unreviewed**
   in the final report and model card.
@@ -170,10 +170,8 @@ uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/conv
 The measured default (a clean-context validation run of this skill): fine-tune
 [`ustc-community/dfine-small-coco`](https://huggingface.co/ustc-community/dfine-small-coco)
 (D-FINE small, 10.4M params, Apache-2.0, in `transformers`) on the step-4 COCO dataset.
-On an 800-image corpus, 30 epochs on a `t4-medium` Job took 48 min and about $0.35, and scored
-mAP 0.75 against held-out teacher labels (0.44 mAP@50 against withheld human gold — see step 6
-for why those are different numbers). Training needs only a T4: step 2's 24 GB-VRAM rule is the
-teacher's engine, not the student's.
+On an 800-image corpus, 30 epochs on a `t4-medium` Job took 48 min and about $0.35. Training
+needs only a T4: step 2's 24 GB-VRAM rule is the teacher's engine, not the student's.
 
 The **`huggingface-vision-trainer`** skill runs the training end to end (dataset validation,
 augmentation, mAP eval, Hub persistence) — install it with `hf skills add huggingface-vision-trainer`
@@ -181,16 +179,15 @@ if you don't have it, and follow its object-detection path with the `<USER>/<NAM
 the settings above. Hold out the validation split — and the step-6 gold slice — BEFORE training,
 and never train on either.
 
-Other choices work — the dataset is plain COCO. [RT-DETRv2](https://huggingface.co/PekingU/rtdetr_v2_r18vd)
-is a comparable compact Apache-2.0 pick. Check the license fits the use — `hf models card <id>` shows
-it; flag restrictive licenses (e.g. ultralytics/YOLO is AGPL) to the user rather than deciding for
-them. Explore further:
+Other trainers work — the dataset is plain COCO. [RT-DETRv2](https://huggingface.co/PekingU/rtdetr_v2_r18vd)
+is a comparable compact Apache-2.0 pick; [RF-DETR](https://github.com/roboflow/rf-detr) (Apache-2.0,
+DINOv2 backbone) is a good starter, and its Seg variant can learn from the teacher's `masks_rle`
+masks. Check the license fits the use — `hf models card <id>` shows it; flag restrictive licenses
+(e.g. ultralytics/YOLO is AGPL) to the user rather than deciding for them. Explore further:
 [transformers object-detection models](https://huggingface.co/models?pipeline_tag=object-detection&library=transformers&sort=trending) ·
 [ultralytics-library models](https://huggingface.co/models?library=ultralytics).
 
-Other trainers work too — the dataset is plain COCO. [RF-DETR](https://github.com/roboflow/rf-detr)
-(Apache-2.0, DINOv2 backbone) is a good starter, and its Seg variant can learn from the teacher's
-`masks_rle` masks. Decode them like this — each RLE lives in its own frame, which never matches the
+Decode `masks_rle` like this — each RLE lives in its own frame, which never matches the
 recorded width/height:
 
 ```python
@@ -210,10 +207,11 @@ for rle in json.loads(row["masks_rle"]):
   not accuracy against human truth — no human labels exist in this loop unless you make some (next
   bullet).
 - **Gold slice** (with a human in the loop): hold out about 100 random images BEFORE training, and have
-  the human verify every box on them with `review-detections.py` (random order). Then report TWO
-  numbers: mAP vs teacher labels AND mAP vs the human gold. They differ, and the gap is the finding —
-  the validation run of this skill measured 0.75 vs teacher but 0.44 mAP@50 vs human gold: the
-  teacher's systematic divergence from human annotators, which teacher-agreement alone cannot see.
+  the human verify every box on them with `review-detections.py` (Annotate mode with `--emit-gold`,
+  random order). Then report TWO numbers: mAP vs teacher labels AND mAP vs the human gold. They
+  differ, and the gap is the finding — in the validation run of this skill: 0.84 vs teacher labels
+  but 0.44 vs human gold, both mAP@50 on held-out pages. That gap is the teacher's systematic
+  divergence from human annotators, which teacher-agreement alone cannot see.
 - The student can at best match its teacher (measured on a comparable loop: student 97.4% vs teacher
   95.0% human-acceptable on the same sample). The point of distilling is **throughput and cost**
   (10–100× cheaper per image than the teacher), not accuracy gains.
@@ -225,8 +223,8 @@ for rle in json.loads(row["masks_rle"]):
 - Spot-check 20 or so predictions visually before calling it done — or, if running without a human and you
   cannot view images, state prominently in the report that the model is **unreviewed**.
 - It can make sense to run this process in a loop: predict → review (a human, or a vision-capable
-  agent, via `review-detections.py`) → retrain on the corrections → review again, until the acceptance
-  rate stops improving.
+  agent, via `review-detections.py` Judge mode) → retrain on the corrections → review again, until
+  the acceptance rate stops improving.
 
 ## 7. Publish with honest provenance
 
