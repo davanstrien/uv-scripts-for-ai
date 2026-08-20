@@ -18,8 +18,8 @@ You can use the approach outlined in this skill with or without a human in the l
   the right things?" is the highest-value question, and its fix is the cheapest (a better query, about $2 to
   re-run the teacher). Then train on a small slice first (500–1k images, about $1) and show 20 rendered
   predictions before spending on the full corpus. If corrections are worth collecting at volume, run a
-  review pass with `review-detections.py` (Judge mode: keyboard accept/reject per image in the browser;
-  Annotate mode for per-box verify and draw; prints the quotable acceptance + missed rates and pushes a
+  review pass with `review-detections.py` (keyboard accept/reject in the browser — quick mode for
+  whole-image verdicts in random order with quotable rates, boxes mode for per-box rejects; pushes a
   `review` column), fold corrections in and retrain (about $1). Diff the corrected set against the first pass (`diff-hf-datasets.py`) to measure how
   good the zero-shot pass actually was.
 - **Autonomously** (headless): don't pause for review — use the numeric proxies, and say **unreviewed**
@@ -207,8 +207,9 @@ for rle in json.loads(row["masks_rle"]):
   not accuracy against human truth — no human labels exist in this loop unless you make some (next
   bullet).
 - **Gold slice** (with a human in the loop): hold out about 100 random images BEFORE training, and have
-  the human verify every box on them with `review-detections.py` (Annotate mode with `--emit-gold`,
-  random order). Then report TWO numbers: mAP vs teacher labels AND mAP vs the human gold. They
+  the human verify every box on them with `review-detections.py --mode boxes --order random`, then
+  correct any misses (the tool flags them with M; drawing the missing boxes is manual for now).
+  Then report TWO numbers: mAP vs teacher labels AND mAP vs the human gold. They
   differ, and the gap is the finding — in the validation run of this skill: 0.84 vs teacher labels
   but 0.44 vs human gold, both mAP@50 on held-out pages. That gap is the teacher's systematic
   divergence from human annotators, which teacher-agreement alone cannot see.
@@ -223,7 +224,7 @@ for rle in json.loads(row["masks_rle"]):
 - Spot-check 20 or so predictions visually before calling it done — or, if running without a human and you
   cannot view images, state prominently in the report that the model is **unreviewed**.
 - It can make sense to run this process in a loop: predict → review (a human, or a vision-capable
-  agent, via `review-detections.py` Judge mode) → retrain on the corrections → review again, until
+  agent, via `review-detections.py`) → retrain on the corrections → review again, until
   the acceptance rate stops improving.
 
 ## 7. Publish with honest provenance
