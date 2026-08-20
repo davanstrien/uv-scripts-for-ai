@@ -224,8 +224,8 @@ for rle in json.loads(row["masks_rle"]):
 - Spot-check 20 or so predictions visually before calling it done — or, if running without a human and you
   cannot view images, state prominently in the report that the model is **unreviewed**.
 - It can make sense to run this process in a loop: predict → review (a human, or a vision-capable
-  agent, via `review-detections.py`) → retrain on the corrections → review again, until
-  the acceptance rate stops improving.
+  agent, via `review-detections.py`) → retrain on the corrections → review again, until the acceptance
+  rate stops improving.
 
 ## 7. Publish with honest provenance
 
