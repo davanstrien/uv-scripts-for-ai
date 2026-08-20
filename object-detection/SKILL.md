@@ -53,8 +53,8 @@ Judge the result before scaling up:
 - **If you can't**, compare instance counts across candidate queries (`stats-hf-dataset.py` below works
   on a pushed check dataset): near-zero instances/image means the class name is wrong for this material —
   try a synonym (`photograph` / `illustration` / `figure` / `cartoon`). Suspiciously many (more than about 10/image)
-  *can* mean the query is matching layout blocks — but dense plates genuinely carry 10–20 figures
-  (measured on encyclopaedia plates), so counts are a fallback signal only; previews are the judge.
+  *can* mean the query is matching layout blocks — but dense plates genuinely carry 10–20 figures,
+  so counts are a fallback signal only; previews are the judge.
 - Measured on real material, previews judged:
 
   | material | worked | partial | dud |
@@ -167,13 +167,14 @@ uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/conv
 
 ## 5. Train a small detector
 
-The measured default (a clean-context validation run of this skill): fine-tune
+A known-good default: fine-tune
 [`ustc-community/dfine-small-coco`](https://huggingface.co/ustc-community/dfine-small-coco)
-(D-FINE small, 10.4M params, Apache-2.0, in `transformers`) on the step-4 COCO dataset.
-On an 800-image corpus, 30 epochs on a `t4-medium` Job took 48 min and about $0.35. Training
-needs only a T4: step 2's 24 GB-VRAM rule is the teacher's engine, not the student's.
+(D-FINE small, 10.4M params, Apache-2.0, in `transformers`) on the step-4 COCO dataset —
+800 images, 30 epochs, `t4-medium`, about 48 min and $0.35. Training needs only a T4:
+step 2's 24 GB-VRAM rule is the teacher's engine, not the student's.
 
-The **`huggingface-vision-trainer`** skill runs the training end to end (dataset validation,
+The [**`huggingface-vision-trainer`**](https://github.com/huggingface/skills/tree/main/skills/huggingface-vision-trainer)
+skill runs the training end to end (dataset validation,
 augmentation, mAP eval, Hub persistence) — install it with `hf skills add huggingface-vision-trainer`
 if you don't have it, and follow its object-detection path with the `<USER>/<NAME>-coco` dataset and
 the settings above. Hold out the validation split — and the step-6 gold slice — BEFORE training,
