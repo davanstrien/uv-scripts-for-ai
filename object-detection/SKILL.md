@@ -18,9 +18,9 @@ You can use the approach outlined in this skill with or without a human in the l
   the right things?" is the highest-value question, and its fix is the cheapest (a better query, about $2 to
   re-run the teacher). Then train on a small slice first (500–1k images, about $1) and show 20 rendered
   predictions before spending on the full corpus. If corrections are worth collecting at volume, run a
-  review pass with `review-detections.py` (keyboard accept/reject in the browser, per image or per box;
-  prints the quotable acceptance + missed rates and pushes a `review` column), fold corrections in and
-  retrain (about $1). Diff the corrected set against the first pass (`diff-hf-datasets.py`) to measure how
+  review pass with `review-detections.py` (keyboard accept/reject in the browser — quick mode for
+  whole-image verdicts in random order with quotable rates, boxes mode for per-box rejects; pushes a
+  `review` column), fold corrections in and retrain (about $1). Diff the corrected set against the first pass (`diff-hf-datasets.py`) to measure how
   good the zero-shot pass actually was.
 - **Autonomously** (headless): don't pause for review — use the numeric proxies, and say **unreviewed**
   in the final report and model card.
@@ -53,7 +53,14 @@ Judge the result before scaling up:
 - **If you can't**, compare instance counts across candidate queries (`stats-hf-dataset.py` below works
   on a pushed check dataset): near-zero instances/image means the class name is wrong for this material —
   try a synonym (`photograph` / `illustration` / `figure` / `cartoon`). Suspiciously many (more than about 10/image)
-  usually means the query is matching layout blocks, not pictures.
+  *can* mean the query is matching layout blocks — but dense plates genuinely carry 10–20 figures,
+  so counts are a fallback signal only; previews are the judge.
+- Measured on real material, previews judged:
+
+  | material | worked | partial | dud |
+  |---|---|---|---|
+  | historic newspaper pages (b/w scans) | `photograph`, `illustration` | | |
+  | book / encyclopaedia plates | `illustration` (incl. dense multi-figure plates) | `caption` (good on true plates, grabs whole text columns on text-heavy pages) | `figure` (0 hits on the same pages) |
 - **No vision at all?** A vision-capable subagent can judge the previews if you can spawn one;
   otherwise tell the user the check ran unviewed.
 
@@ -113,7 +120,27 @@ hf jobs uv run --flavor a10g-large --secrets HF_TOKEN --timeout 2h \
   **Don't resubmit**: a second copy racing to the same `--out` just doubles the bill. If you do
   switch (`hf jobs hardware` for alternatives), cancel the queued copy first (`hf jobs cancel <id>`).
 - For images in a [storage bucket](https://huggingface.co/docs/hub/storage-buckets) instead of a
-  dataset, use `falcon-perception-bucket.py` from the same repo (resumable).
+  dataset, use `falcon-perception-bucket.py` — it writes resumable parquet parts back to a bucket
+  (kill and re-run the same command; done keys are skipped):
+
+  ```
+  hf jobs uv run --flavor a10g-large --secrets HF_TOKEN --timeout 2h --detach \
+    https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/falcon-perception-bucket.py \
+    --src <namespace>/<bucket> --prefix <path/under/bucket> \
+    --out <namespace>/<out-bucket> --query illustration
+  ```
+
+  Publish once at the end so the parts feed the rest of this loop (parquet stores `category` as
+  bare ints; the cast attaches the class name):
+
+  ```python
+  from datasets import ClassLabel, Sequence, load_dataset
+  ds = load_dataset("parquet", data_files="hf://buckets/<namespace>/<out-bucket>/part-*.parquet",
+                    split="train")
+  feats = ds.features.copy()
+  feats["objects"]["category"] = Sequence(ClassLabel(names=[ds[0]["query"]]))
+  ds.cast(feats).push_to_hub("<namespace>/<dataset>")
+  ```
 
 ## 3. Validate the labels (free, local)
 
@@ -140,22 +167,28 @@ uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/conv
 
 ## 5. Train a small detector
 
-Good starting points: [D-FINE](https://huggingface.co/ustc-community/dfine-small-coco) or
-[RT-DETRv2](https://huggingface.co/PekingU/rtdetr_v2_r18vd) — compact, Apache-2.0, in `transformers`
-(boxes only; for masks see the RF-DETR note below). Check the license fits the use —
-`hf models card <id>` shows it; flag restrictive licenses (e.g. ultralytics/YOLO is AGPL) to the user
-rather than deciding for them. Explore further:
+A known-good default: fine-tune
+[`ustc-community/dfine-small-coco`](https://huggingface.co/ustc-community/dfine-small-coco)
+(D-FINE small, 10.4M params, Apache-2.0, in `transformers`) on the step-4 COCO dataset —
+800 images, 30 epochs, `t4-medium`, about 48 min and $0.35. Training needs only a T4:
+step 2's 24 GB-VRAM rule is the teacher's engine, not the student's.
+
+The [**`huggingface-vision-trainer`**](https://github.com/huggingface/skills/tree/main/skills/huggingface-vision-trainer)
+skill runs the training end to end (dataset validation,
+augmentation, mAP eval, Hub persistence) — install it with `hf skills add huggingface-vision-trainer`
+if you don't have it, and follow its object-detection path with the `<USER>/<NAME>-coco` dataset and
+the settings above. Hold out the validation split — and the step-6 gold slice — BEFORE training,
+and never train on either.
+
+Other trainers work — the dataset is plain COCO. [RT-DETRv2](https://huggingface.co/PekingU/rtdetr_v2_r18vd)
+is a comparable compact Apache-2.0 pick; [RF-DETR](https://github.com/roboflow/rf-detr) (Apache-2.0,
+DINOv2 backbone) is a good starter, and its Seg variant can learn from the teacher's `masks_rle`
+masks. Check the license fits the use — `hf models card <id>` shows it; flag restrictive licenses
+(e.g. ultralytics/YOLO is AGPL) to the user rather than deciding for them. Explore further:
 [transformers object-detection models](https://huggingface.co/models?pipeline_tag=object-detection&library=transformers&sort=trending) ·
 [ultralytics-library models](https://huggingface.co/models?library=ultralytics).
 
-The **`huggingface-vision-trainer`** skill covers the training end to end (dataset validation,
-augmentation, mAP eval, Hub persistence) — install it with `hf skills add huggingface-vision-trainer`
-if you don't have it, and follow its object-detection path with the `<USER>/<NAME>-coco` dataset from
-step 4. Before training, decide a pragmatic validation split and never train on it.
-
-Other trainers work too — the dataset is plain COCO. [RF-DETR](https://github.com/roboflow/rf-detr)
-(Apache-2.0, DINOv2 backbone) is a good starter, and its Seg variant can learn from the teacher's
-`masks_rle` masks. Decode them like this — each RLE lives in its own frame, which never matches the
+Decode `masks_rle` like this — each RLE lives in its own frame, which never matches the
 recorded width/height:
 
 ```python
@@ -172,10 +205,23 @@ for rle in json.loads(row["masks_rle"]):
 ## 6. Evaluate honestly
 
 - Report mAP on the held-out slice. Be clear about what it measures: **agreement with the teacher**,
-  not accuracy against human truth — no human labels exist in this loop.
+  not accuracy against human truth — no human labels exist in this loop unless you make some (next
+  bullet).
+- **Gold slice** (with a human in the loop): hold out about 100 random images BEFORE training, and have
+  the human verify every box on them with `review-detections.py --mode boxes --order random`, then
+  correct any misses (the tool flags them with M; drawing the missing boxes is manual for now).
+  Then report TWO numbers: mAP vs teacher labels AND mAP vs the human gold. They
+  differ, and the gap is the finding — in the validation run of this skill: 0.84 vs teacher labels
+  but 0.44 vs human gold, both mAP@50 on held-out pages. That gap is the teacher's systematic
+  divergence from human annotators, which teacher-agreement alone cannot see.
 - The student can at best match its teacher (measured on a comparable loop: student 97.4% vs teacher
   95.0% human-acceptable on the same sample). The point of distilling is **throughput and cost**
   (10–100× cheaper per image than the teacher), not accuracy gains.
+- Evaluate with the model card's decode contract, and write that contract INTO the card (input
+  padding, score handling — with one class use the raw logit/sigmoid, never softmax). This is
+  load-bearing: a standard decode against a padded-square model measured 0.03 mAP where the
+  documented decode measured 10× higher. (Evaluating locally on Apple Silicon: pass the trainer's
+  eval a CPU device — the COCO eval path uses float64, which MPS lacks.)
 - Spot-check 20 or so predictions visually before calling it done — or, if running without a human and you
   cannot view images, state prominently in the report that the model is **unreviewed**.
 - It can make sense to run this process in a loop: predict → review (a human, or a vision-capable
