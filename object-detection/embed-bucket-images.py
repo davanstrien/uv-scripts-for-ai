@@ -9,6 +9,9 @@
 # ///
 """Build the canonical training parquet from a bucket teacher pass -> ONE final-schema push.
 
+All image bytes are held in RAM while building (fine to ~10k typical page scans; for much
+bigger corpora run in chunks with --limit or on a high-RAM Jobs flavor).
+
 Takes the annotations-only parquet parts that falcon-perception-bucket.py wrote, joins the
 image bytes back in from the source bucket, excludes (and ASSERTS the exclusion of) a gold
 slice, splits train/validation, and pushes everything in a single final-schema write --
@@ -81,12 +84,22 @@ def main():
     p.add_argument("--private", action="store_true")
     args = p.parse_args()
 
-    ds = load_dataset("parquet", data_files=args.parts, split="train")
+    try:
+        ds = load_dataset("parquet", data_files=args.parts, split="train")
+    except FileNotFoundError:
+        raise SystemExit(
+            f"no parquet files match {args.parts!r} — check the glob and bucket path"
+        )
     total = len(ds)
+    if total == 0:
+        raise SystemExit(f"{args.parts!r} matched files but they contain 0 rows")
     if args.drop_errors:
         ds = ds.filter(lambda r: not r["error"])
     if not isinstance(ds.features["objects"]["category"].feature, ClassLabel):
         feats = ds.features.copy()
+        feats["objects"] = dict(
+            feats["objects"]
+        )  # copy() is shallow; don't mutate ds.features
         feats["objects"]["category"] = Sequence(ClassLabel(names=[ds[0]["query"]]))
         ds = ds.cast(feats)
 

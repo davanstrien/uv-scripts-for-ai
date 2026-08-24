@@ -4,7 +4,7 @@
 #     "datasets>=3.1.0",
 #     "huggingface-hub",
 #     "tqdm",
-#     "Pillow",
+#     "Pillow", 
 # ]
 # ///
 
@@ -48,9 +48,7 @@ logger = logging.getLogger(__name__)
 BBOX_FORMATS = ["coco_xywh", "xyxy", "voc", "yolo", "tfod", "label_studio"]
 
 
-def to_xyxy(
-    bbox: list[float], fmt: str, img_w: float = 1.0, img_h: float = 1.0
-) -> tuple[float, float, float, float]:
+def to_xyxy(bbox: list[float], fmt: str, img_w: float = 1.0, img_h: float = 1.0) -> tuple[float, float, float, float]:
     if fmt == "coco_xywh":
         x, y, w, h = bbox
         return (x, y, x + w, y + h)
@@ -58,12 +56,7 @@ def to_xyxy(
         return tuple(bbox[:4])
     elif fmt == "yolo":
         cx, cy, w, h = bbox
-        return (
-            (cx - w / 2) * img_w,
-            (cy - h / 2) * img_h,
-            (cx + w / 2) * img_w,
-            (cy + h / 2) * img_h,
-        )
+        return (cx - w / 2) * img_w, (cy - h / 2) * img_h, (cx + w / 2) * img_w, (cy + h / 2) * img_h
     elif fmt == "tfod":
         xmin_n, ymin_n, xmax_n, ymax_n = bbox
         return (xmin_n * img_w, ymin_n * img_h, xmax_n * img_w, ymax_n * img_h)
@@ -240,21 +233,15 @@ def main(
         ex_a = index_a[key]
         ex_b = index_b[key]
 
-        anns_a = extract_annotations(
-            ex_a, bbox_column, category_column, bbox_format, width_column, height_column
-        )
-        anns_b = extract_annotations(
-            ex_b, bbox_column, category_column, bbox_format, width_column, height_column
-        )
+        anns_a = extract_annotations(ex_a, bbox_column, category_column, bbox_format, width_column, height_column)
+        anns_b = extract_annotations(ex_b, bbox_column, category_column, bbox_format, width_column, height_column)
 
         for a in anns_a:
             cats_a.add(a["category"])
         for b in anns_b:
             cats_b.add(b["category"])
 
-        matches, unmatched_a, unmatched_b = match_annotations_iou(
-            anns_a, anns_b, iou_threshold
-        )
+        matches, unmatched_a, unmatched_b = match_annotations_iou(anns_a, anns_b, iou_threshold)
 
         total_matched += len(matches)
         total_removed += len(unmatched_a)
@@ -265,61 +252,41 @@ def main(
             if anns_a[i]["category"] != anns_b[j]["category"]:
                 total_modified += 1
                 if detail:
-                    detail_records.append(
-                        {
-                            "image": key,
-                            "type": "modified",
-                            "from_category": anns_a[i]["category"],
-                            "to_category": anns_b[j]["category"],
-                            "iou": round(iou, 3),
-                        }
-                    )
+                    detail_records.append({
+                        "image": key,
+                        "type": "modified",
+                        "from_category": anns_a[i]["category"],
+                        "to_category": anns_b[j]["category"],
+                        "iou": round(iou, 3),
+                    })
 
         if detail:
             for idx in unmatched_a:
-                detail_records.append(
-                    {
-                        "image": key,
-                        "type": "removed",
-                        "category": anns_a[idx]["category"],
-                        "bbox": list(anns_a[idx]["bbox_xyxy"]),
-                    }
-                )
+                detail_records.append({
+                    "image": key,
+                    "type": "removed",
+                    "category": anns_a[idx]["category"],
+                    "bbox": list(anns_a[idx]["bbox_xyxy"]),
+                })
             for idx in unmatched_b:
-                detail_records.append(
-                    {
-                        "image": key,
-                        "type": "added",
-                        "category": anns_b[idx]["category"],
-                        "bbox": list(anns_b[idx]["bbox_xyxy"]),
-                    }
-                )
+                detail_records.append({
+                    "image": key,
+                    "type": "added",
+                    "category": anns_b[idx]["category"],
+                    "bbox": list(anns_b[idx]["bbox_xyxy"]),
+                })
 
     # Count annotations in only-A and only-B images
     anns_only_a = 0
     for key in only_a_keys:
-        anns = extract_annotations(
-            index_a[key],
-            bbox_column,
-            category_column,
-            bbox_format,
-            width_column,
-            height_column,
-        )
+        anns = extract_annotations(index_a[key], bbox_column, category_column, bbox_format, width_column, height_column)
         anns_only_a += len(anns)
         for a in anns:
             cats_a.add(a["category"])
 
     anns_only_b = 0
     for key in only_b_keys:
-        anns = extract_annotations(
-            index_b[key],
-            bbox_column,
-            category_column,
-            bbox_format,
-            width_column,
-            height_column,
-        )
+        anns = extract_annotations(index_b[key], bbox_column, category_column, bbox_format, width_column, height_column)
         anns_only_b += len(anns)
         for b in anns:
             cats_b.add(b["category"])
@@ -402,9 +369,7 @@ def main(
             print(f"\n  Detail ({len(detail_records)} changes):")
             for rec in detail_records[:20]:
                 if rec["type"] == "modified":
-                    print(
-                        f"    [{rec['image']}] {rec['from_category']} -> {rec['to_category']} (IoU={rec['iou']})"
-                    )
+                    print(f"    [{rec['image']}] {rec['from_category']} -> {rec['to_category']} (IoU={rec['iou']})")
                 elif rec["type"] == "added":
                     print(f"    [{rec['image']}] + {rec['category']}")
                 elif rec["type"] == "removed":
@@ -430,54 +395,17 @@ Examples:
 
     parser.add_argument("dataset_a", help="First dataset ID (A)")
     parser.add_argument("dataset_b", help="Second dataset ID (B)")
-    parser.add_argument(
-        "--bbox-column", default="bbox", help="Column containing bboxes (default: bbox)"
-    )
-    parser.add_argument(
-        "--category-column",
-        default="category",
-        help="Column containing categories (default: category)",
-    )
-    parser.add_argument(
-        "--bbox-format",
-        choices=BBOX_FORMATS,
-        default="coco_xywh",
-        help="Bbox format (default: coco_xywh)",
-    )
-    parser.add_argument(
-        "--id-column",
-        default="image_id",
-        help="Column to match images by (default: image_id)",
-    )
-    parser.add_argument(
-        "--width-column",
-        default="width",
-        help="Column for image width (default: width)",
-    )
-    parser.add_argument(
-        "--height-column",
-        default="height",
-        help="Column for image height (default: height)",
-    )
-    parser.add_argument(
-        "--split", default="train", help="Dataset split (default: train)"
-    )
+    parser.add_argument("--bbox-column", default="bbox", help="Column containing bboxes (default: bbox)")
+    parser.add_argument("--category-column", default="category", help="Column containing categories (default: category)")
+    parser.add_argument("--bbox-format", choices=BBOX_FORMATS, default="coco_xywh", help="Bbox format (default: coco_xywh)")
+    parser.add_argument("--id-column", default="image_id", help="Column to match images by (default: image_id)")
+    parser.add_argument("--width-column", default="width", help="Column for image width (default: width)")
+    parser.add_argument("--height-column", default="height", help="Column for image height (default: height)")
+    parser.add_argument("--split", default="train", help="Dataset split (default: train)")
     parser.add_argument("--max-samples", type=int, help="Max samples per dataset")
-    parser.add_argument(
-        "--iou-threshold",
-        type=float,
-        default=0.5,
-        help="IoU threshold for matching (default: 0.5)",
-    )
-    parser.add_argument(
-        "--detail", action="store_true", help="Show per-annotation changes"
-    )
-    parser.add_argument(
-        "--report",
-        choices=["text", "json"],
-        default="text",
-        help="Report format (default: text)",
-    )
+    parser.add_argument("--iou-threshold", type=float, default=0.5, help="IoU threshold for matching (default: 0.5)")
+    parser.add_argument("--detail", action="store_true", help="Show per-annotation changes")
+    parser.add_argument("--report", choices=["text", "json"], default="text", help="Report format (default: text)")
     parser.add_argument("--hf-token", help="HF API token")
 
     args = parser.parse_args()

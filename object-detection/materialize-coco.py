@@ -5,6 +5,8 @@
 #   "datasets>=4.0",
 #   "huggingface_hub>=1.0",
 #   "pillow",
+#   "numpy",
+#   "pycocotools>=2.0.11",
 # ]
 # ///
 """Materialize a COCO directory tree FROM the canonical parquet, in-job, on ephemeral disk.
@@ -30,7 +32,10 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
 from datasets import load_dataset
+from PIL import Image as PILImage
+from pycocotools import mask as mask_utils
 
 SPLIT_DIR = {"train": "train2017", "validation": "val2017"}
 
@@ -81,8 +86,11 @@ def main():
         for row in ds.with_format(None):
             iid = int(row["image_id"])
             fname = f"{iid}.jpg"
-            row["image"].convert("RGB").save(img_dir / fname, "JPEG", quality=95)
-            w, h = int(row["width"]), int(row["height"])
+            im = row["image"].convert("RGB")
+            im.save(img_dir / fname, "JPEG", quality=95)
+            # dims from the DECODED image, never metadata columns: error rows carry
+            # width/height=None, and the saved JPEG is the frame everything must match
+            w, h = im.size
             images.append({"id": iid, "file_name": fname, "width": w, "height": h})
             rles = json.loads(row["masks_rle"]) if row.get("masks_rle") else []
             for i, bbox in enumerate(row["objects"]["bbox"]):
@@ -96,7 +104,19 @@ def main():
                     "iscrowd": 0,
                 }
                 if i < len(rles):
-                    ann["segmentation"] = rles[i]
+                    rle = rles[i]
+                    # masks live in the INFERENCE frame, which diverges from the image
+                    # frame whenever the teacher thumbnailed -- resize before writing
+                    if rle["size"] != [h, w]:
+                        seg = mask_utils.decode(
+                            {**rle, "counts": rle["counts"].encode()}
+                        )
+                        seg = np.asarray(
+                            PILImage.fromarray(seg).resize((w, h), PILImage.NEAREST)
+                        )
+                        enc = mask_utils.encode(np.asfortranarray(seg))
+                        rle = {"size": [h, w], "counts": enc["counts"].decode("ascii")}
+                    ann["segmentation"] = rle
                 annotations.append(ann)
                 ann_id += 1
 

@@ -4,7 +4,7 @@
 #     "datasets>=3.1.0",
 #     "huggingface-hub",
 #     "tqdm",
-#     "Pillow",
+#     "Pillow", 
 # ]
 # ///
 
@@ -55,9 +55,7 @@ logger = logging.getLogger(__name__)
 BBOX_FORMATS = ["coco_xywh", "xyxy", "voc", "yolo", "tfod", "label_studio"]
 
 
-def to_xyxy(
-    bbox: list[float], fmt: str, img_w: float = 1.0, img_h: float = 1.0
-) -> tuple[float, float, float, float]:
+def to_xyxy(bbox: list[float], fmt: str, img_w: float = 1.0, img_h: float = 1.0) -> tuple[float, float, float, float]:
     """Convert any bbox format to (xmin, ymin, xmax, ymax) in pixel space."""
     if fmt == "coco_xywh":
         x, y, w, h = bbox
@@ -145,9 +143,7 @@ def validate_example(
 
     for ann_idx, bbox in enumerate(bboxes):
         if bbox is None or len(bbox) < 4:
-            add_issue(
-                "error", "E002", f"Invalid bbox (need 4 values, got {bbox})", ann_idx
-            )
+            add_issue("error", "E002", f"Invalid bbox (need 4 values, got {bbox})", ann_idx)
             continue
 
         # Check finite
@@ -222,9 +218,7 @@ def main(
     if HF_TOKEN:
         login(token=HF_TOKEN)
 
-    logger.info(
-        f"Loading dataset: {input_dataset} (split={split}, streaming={streaming})"
-    )
+    logger.info(f"Loading dataset: {input_dataset} (split={split}, streaming={streaming})")
     dataset = load_dataset(input_dataset, split=split, streaming=streaming)
 
     all_issues = []
@@ -275,14 +269,12 @@ def main(
     fname_counts = Counter(file_names)
     duplicates = {k: v for k, v in fname_counts.items() if v > 1}
     for fname, count in duplicates.items():
-        all_issues.append(
-            {
-                "level": "warning",
-                "code": "W006",
-                "message": f"Duplicate file name '{fname}' appears {count} times",
-                "example_idx": None,
-            }
-        )
+        all_issues.append({
+            "level": "warning",
+            "code": "W006",
+            "message": f"Duplicate file name '{fname}' appears {count} times",
+            "example_idx": None,
+        })
 
     for issue in all_issues:
         if issue["level"] == "error":
@@ -349,18 +341,16 @@ def main(
     if output_dataset:
         from datasets import Dataset as HFDataset
 
-        report_ds = HFDataset.from_dict(
-            {
-                "report": [json.dumps(report)],
-                "dataset": [input_dataset],
-                "valid": [report["valid"]],
-                "errors": [error_count],
-                "warnings": [warning_count],
-                "total_examples": [total_examples],
-                "total_annotations": [total_annotations],
-                "timestamp": [datetime.now().isoformat()],
-            }
-        )
+        report_ds = HFDataset.from_dict({
+            "report": [json.dumps(report)],
+            "dataset": [input_dataset],
+            "valid": [report["valid"]],
+            "errors": [error_count],
+            "warnings": [warning_count],
+            "total_examples": [total_examples],
+            "total_annotations": [total_annotations],
+            "timestamp": [datetime.now().isoformat()],
+        })
 
         logger.info(f"Pushing validation report to {output_dataset}")
         max_retries = 3
@@ -382,9 +372,7 @@ def main(
                     logger.error("All upload attempts failed.")
                     sys.exit(1)
 
-        logger.info(
-            f"Report pushed to: https://huggingface.co/datasets/{output_dataset}"
-        )
+        logger.info(f"Report pushed to: https://huggingface.co/datasets/{output_dataset}")
 
     if not report["valid"]:
         sys.exit(1 if strict else 0)
@@ -424,64 +412,26 @@ Examples:
     )
 
     parser.add_argument("input_dataset", help="Input dataset ID on HF Hub")
-    parser.add_argument(
-        "--bbox-column", default="bbox", help="Column containing bboxes (default: bbox)"
-    )
-    parser.add_argument(
-        "--category-column",
-        default="category",
-        help="Column containing categories (default: category)",
-    )
+    parser.add_argument("--bbox-column", default="bbox", help="Column containing bboxes (default: bbox)")
+    parser.add_argument("--category-column", default="category", help="Column containing categories (default: category)")
     parser.add_argument(
         "--bbox-format",
         choices=BBOX_FORMATS,
         default="coco_xywh",
         help="Bounding box format (default: coco_xywh)",
     )
-    parser.add_argument(
-        "--image-column",
-        default="image",
-        help="Column containing images (default: image)",
-    )
-    parser.add_argument(
-        "--width-column",
-        default="width",
-        help="Column for image width (default: width)",
-    )
-    parser.add_argument(
-        "--height-column",
-        default="height",
-        help="Column for image height (default: height)",
-    )
-    parser.add_argument(
-        "--split", default="train", help="Dataset split (default: train)"
-    )
+    parser.add_argument("--image-column", default="image", help="Column containing images (default: image)")
+    parser.add_argument("--width-column", default="width", help="Column for image width (default: width)")
+    parser.add_argument("--height-column", default="height", help="Column for image height (default: height)")
+    parser.add_argument("--split", default="train", help="Dataset split (default: train)")
     parser.add_argument("--max-samples", type=int, help="Max samples to validate")
-    parser.add_argument(
-        "--streaming", action="store_true", help="Use streaming mode (no full download)"
-    )
-    parser.add_argument(
-        "--strict", action="store_true", help="Treat warnings as errors"
-    )
-    parser.add_argument(
-        "--report",
-        choices=["text", "json"],
-        default="text",
-        help="Report format (default: text)",
-    )
-    parser.add_argument(
-        "--tolerance",
-        type=float,
-        default=0.5,
-        help="Out-of-bounds tolerance in pixels (default: 0.5)",
-    )
+    parser.add_argument("--streaming", action="store_true", help="Use streaming mode (no full download)")
+    parser.add_argument("--strict", action="store_true", help="Treat warnings as errors")
+    parser.add_argument("--report", choices=["text", "json"], default="text", help="Report format (default: text)")
+    parser.add_argument("--tolerance", type=float, default=0.5, help="Out-of-bounds tolerance in pixels (default: 0.5)")
     parser.add_argument("--hf-token", help="HF API token")
-    parser.add_argument(
-        "--output-dataset", help="Push validation report to this HF dataset"
-    )
-    parser.add_argument(
-        "--private", action="store_true", help="Make output dataset private"
-    )
+    parser.add_argument("--output-dataset", help="Push validation report to this HF dataset")
+    parser.add_argument("--private", action="store_true", help="Make output dataset private")
 
     args = parser.parse_args()
 

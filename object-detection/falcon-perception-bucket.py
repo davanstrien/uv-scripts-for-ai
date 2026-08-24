@@ -65,52 +65,30 @@ from pycocotools import mask as mask_utils
 def stable_id(key):
     """Deterministic int64 image_id from the source key (COCO consumers need an int;
     a hash, not a running index, keeps ids identical across resumed runs)."""
-    return (
-        int.from_bytes(
-            hashlib.blake2b(str(key).encode(), digest_size=8).digest(), "big"
-        )
-        >> 1
-    )
-
+    return int.from_bytes(hashlib.blake2b(str(key).encode(), digest_size=8).digest(), "big") >> 1
 
 # Same YOLO column layout as falcon-perception.py, so both outputs validate with
 # `validate-hf-dataset.py --bbox-format yolo` and can be concatenated.
 # `__source_key` is bucketbag's resume column — the name is load-bearing.
-SCHEMA = pa.schema(
-    [
-        ("__source_key", pa.string()),
-        ("image_id", pa.int64()),  # int, not str: COCO-style trainers tensorise it
-        ("width", pa.int32()),
-        ("height", pa.int32()),
-        (
-            "objects",
-            pa.struct(
-                [
-                    (
-                        "bbox",
-                        pa.list_(pa.list_(pa.float32())),
-                    ),  # yolo: cx, cy, w, h normalised
-                    (
-                        "category",
-                        pa.list_(pa.int64()),
-                    ),  # single class per run; the class NAME
-                    # is the `query` column — cast to
-                    # ClassLabel at publish (see docstring)
-                    ("area", pa.list_(pa.float32())),
-                    (
-                        "rectangularity",
-                        pa.list_(pa.float32()),
-                    ),  # triage proxy — no confidence score exists
-                ]
-            ),
-        ),
-        ("n_instances", pa.int32()),
-        ("masks_rle", pa.string()),
-        ("query", pa.string()),
-        ("gen_seconds", pa.float32()),
-        ("error", pa.string()),
-    ]
-)
+SCHEMA = pa.schema([
+    ("__source_key", pa.string()),
+    ("image_id", pa.int64()),  # int, not str: COCO-style trainers tensorise it
+    ("width", pa.int32()),
+    ("height", pa.int32()),
+    ("objects", pa.struct([
+        ("bbox", pa.list_(pa.list_(pa.float32()))),   # yolo: cx, cy, w, h normalised
+        ("category", pa.list_(pa.int64())),           # single class per run; the class NAME
+                                                      # is the `query` column — cast to
+                                                      # ClassLabel at publish (see docstring)
+        ("area", pa.list_(pa.float32())),
+        ("rectangularity", pa.list_(pa.float32())),   # triage proxy — no confidence score exists
+    ])),
+    ("n_instances", pa.int32()),
+    ("masks_rle", pa.string()),
+    ("query", pa.string()),
+    ("gen_seconds", pa.float32()),
+    ("error", pa.string()),
+])
 
 
 def pair_bboxes(raw):
@@ -120,8 +98,7 @@ def pair_bboxes(raw):
             continue
         cur.update(e)
         if all(k in cur for k in ("x", "y", "h", "w")):
-            boxes.append(dict(cur))
-            cur = {}
+            boxes.append(dict(cur)); cur = {}
     return boxes
 
 
@@ -136,24 +113,16 @@ def serialise(rows, fmt):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--src", required=True, help="source bucket, e.g. biglam/bl-images")
-    p.add_argument(
-        "--prefix", default=None, help="bucket prefix, e.g. full/embellishments"
-    )
+    p.add_argument("--prefix", default=None, help="bucket prefix, e.g. full/embellishments")
     p.add_argument("--out", required=True, help="output bucket")
-    p.add_argument(
-        "--query", default="illustration", help="a CLASS NAME, not an instruction"
-    )
-    p.add_argument(
-        "--task", default="segmentation", choices=["segmentation", "detection"]
-    )
+    p.add_argument("--query", default="illustration", help="a CLASS NAME, not an instruction")
+    p.add_argument("--task", default="segmentation", choices=["segmentation", "detection"])
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--max-dim", type=int, default=1024)
     p.add_argument("--max-new-tokens", type=int, default=200)
     p.add_argument("--batch-n", type=int, default=32, help="files per bucketbag batch")
     p.add_argument("--max-bytes", type=int, default=2 * 2**30)
-    p.add_argument(
-        "--cudagraph", action="store_true", help="opt IN; off by default (host OOM)"
-    )
+    p.add_argument("--cudagraph", action="store_true", help="opt IN; off by default (host OOM)")
     p.add_argument("--format", default="parquet", choices=["parquet", "jsonl"])
     p.add_argument("--no-resume", action="store_true")
     args = p.parse_args()
@@ -161,9 +130,7 @@ def main():
     if args.format == "jsonl" and not args.no_resume:
         # completed_keys only reads the done-set back from .parquet parts, so jsonl
         # output silently reprocesses EVERYTHING on every re-run.
-        raise SystemExit(
-            "--format jsonl is not resumable; pass --no-resume to run it anyway."
-        )
+        raise SystemExit("--format jsonl is not resumable; pass --no-resume to run it anyway.")
 
     try:
         import torch
@@ -192,8 +159,7 @@ def main():
     # Needs bucketbag >= 0.3.0: before that, string keys made batched_files drop
     # max_bytes silently and run unbounded against RAM-tmpfs scratch.
     keys = [
-        f
-        for f in iter_keys(args.src, prefix=args.prefix, objects=True)
+        f for f in iter_keys(args.src, prefix=args.prefix, objects=True)
         if f.path.lower().endswith((".jpg", ".jpeg", ".png")) and f.path not in done
     ]
     if args.limit:
@@ -206,38 +172,24 @@ def main():
             "(pass --no-resume to redo)."
         )
 
-    from falcon_perception import (
-        PERCEPTION_MODEL_ID,
-        build_prompt_for_task,
-        load_and_prepare_model,
-        setup_torch_config,
-    )
+    from falcon_perception import PERCEPTION_MODEL_ID, build_prompt_for_task, load_and_prepare_model, setup_torch_config
     from falcon_perception.data import ImageProcessor
     from falcon_perception.paged_inference import (
-        PagedInferenceEngine,
-        SamplingParams,
-        Sequence,
-        engine_config_for_gpu,
+        PagedInferenceEngine, SamplingParams, Sequence, engine_config_for_gpu,
     )
 
     setup_torch_config()
     t = time.perf_counter()
     model, tokenizer, _ = load_and_prepare_model(
-        hf_model_id=PERCEPTION_MODEL_ID,
-        dtype="bfloat16",
-        compile=False,  # compile breaks on dynamic shapes
+        hf_model_id=PERCEPTION_MODEL_ID, dtype="bfloat16", compile=False,  # compile breaks on dynamic shapes
     )
     print(f"model loaded in {time.perf_counter() - t:.1f}s", flush=True)
 
     cfg = engine_config_for_gpu(max_image_size=args.max_dim, dtype=model.dtype)
     print(f"paged config: {cfg}", flush=True)
     engine = PagedInferenceEngine(
-        model,
-        tokenizer,
-        ImageProcessor(patch_size=16, merge_size=1),
-        max_seq_length=8192,
-        capture_cudagraph=args.cudagraph,
-        **cfg,
+        model, tokenizer, ImageProcessor(patch_size=16, merge_size=1),
+        max_seq_length=8192, capture_cudagraph=args.cudagraph, **cfg,
     )
     sp = SamplingParams(
         args.max_new_tokens,
@@ -247,17 +199,13 @@ def main():
     prompt = build_prompt_for_task(args.query, args.task)
 
     n, gen_total, t_all, batch_i = 0, 0.0, time.perf_counter(), 0
-    for batch in batched_files(
-        args.src, keys=keys, n=args.batch_n, max_bytes=args.max_bytes
-    ):
+    for batch in batched_files(args.src, keys=keys, n=args.batch_n, max_bytes=args.max_bytes):
         # NOTE: never hold a LoadedItem past its batch — convert eagerly.
         pairs = []
         for it in batch:
             try:
                 img = it.image.convert("RGB")  # convert() forces the load off disk
-                orig_size = (
-                    img.size
-                )  # SOURCE dims -- the images downstream tools decode
+                orig_size = img.size  # SOURCE dims -- the images downstream tools decode
                 if max(img.size) > args.max_dim * 2:
                     img.thumbnail((args.max_dim * 2, args.max_dim * 2))
                 pairs.append((str(it.key), img, orig_size))
@@ -266,14 +214,8 @@ def main():
 
         good = [(k, im, sz) for k, im, sz in pairs if not isinstance(im, Exception)]
         seqs = [
-            Sequence(
-                text=prompt,
-                image=im,
-                min_image_size=256,
-                max_image_size=args.max_dim,
-                request_idx=i,
-                task=args.task,
-            )
+            Sequence(text=prompt, image=im, min_image_size=256,
+                     max_image_size=args.max_dim, request_idx=i, task=args.task)
             for i, (_, im, _) in enumerate(good)
         ]
         t0 = time.perf_counter()
@@ -295,15 +237,11 @@ def main():
             W, H = orig_size
             bbox, area, rect = [], [], []
             for i, b in enumerate(boxes):
-                bbox.append(
-                    [b["x"], b["y"], b["w"], b["h"]]
-                )  # yolo: cx, cy, w, h normalised
+                bbox.append([b["x"], b["y"], b["w"], b["h"]])  # yolo: cx, cy, w, h normalised
                 a = b["w"] * b["h"]
                 area.append(a)
                 r = 0.0
-                if i < len(
-                    masks
-                ):  # rectangularity — the only triage signal; no score exists
+                if i < len(masks):  # rectangularity — the only triage signal; no score exists
                     try:
                         m = masks[i]
                         if isinstance(m.get("counts"), str):
@@ -315,75 +253,40 @@ def main():
                     except Exception:
                         r = 0.0
                 rect.append(r)
-            rows.append(
-                {
-                    "__source_key": key,
-                    "image_id": stable_id(key),
-                    "width": W,
-                    "height": H,
-                    "objects": {
-                        "bbox": bbox,
-                        "category": [0] * len(bbox),
-                        "area": area,
-                        "rectangularity": rect,
-                    },
-                    "n_instances": len(bbox),
-                    "masks_rle": json.dumps(masks),
-                    "query": args.query,
-                    "gen_seconds": dt / max(len(seqs), 1),
-                    "error": None,
-                }
-            )
+            rows.append({
+                "__source_key": key, "image_id": stable_id(key), "width": W, "height": H,
+                "objects": {"bbox": bbox, "category": [0] * len(bbox),
+                            "area": area, "rectangularity": rect},
+                "n_instances": len(bbox), "masks_rle": json.dumps(masks),
+                "query": args.query, "gen_seconds": dt / max(len(seqs), 1), "error": None,
+            })
         for key, err, _ in [(k, v, s) for k, v, s in pairs if isinstance(v, Exception)]:
             # a durable error row, never a gap — and it counts as done so it is
             # not retried forever on every re-run. objects is EMPTY, not null:
             # a null struct crashes validate-hf-dataset.py after publish.
-            rows.append(
-                {k: None for k in SCHEMA.names}
-                | {
-                    "__source_key": key,
-                    "image_id": stable_id(key),
-                    "query": args.query,
-                    "objects": {
-                        "bbox": [],
-                        "category": [],
-                        "area": [],
-                        "rectangularity": [],
-                    },
-                    "n_instances": 0,
-                    "masks_rle": "[]",
-                    "error": f"{type(err).__name__}: {err}",
-                }
-            )
+            rows.append({k: None for k in SCHEMA.names} | {
+                "__source_key": key, "image_id": stable_id(key), "query": args.query,
+                "objects": {"bbox": [], "category": [], "area": [], "rectangularity": []},
+                "n_instances": 0, "masks_rle": "[]",
+                "error": f"{type(err).__name__}: {err}",
+            })
 
         # part name derives from batch CONTENT, not a run-local counter: a resumed run's
         # counter restarts at 0 and put_files overwrites, silently destroying the first
         # run's parts. A content-derived name is stable per batch and collision-free
         # across resumes (a re-run of the same batch overwrites its own part, idempotent).
         ext = "jsonl" if args.format == "jsonl" else "parquet"
-        part = hashlib.blake2b(
-            rows[0]["__source_key"].encode(), digest_size=6
-        ).hexdigest()
+        part = hashlib.blake2b(rows[0]["__source_key"].encode(), digest_size=6).hexdigest()
         put_files([(f"part-{part}.{ext}", serialise(rows, args.format))], args.out)
-        n += len(rows)
-        batch_i += 1
+        n += len(rows); batch_i += 1
         rate = n / (time.perf_counter() - t_all)
-        print(
-            f"batch {batch_i}: {len(rows)} rows ({dt / max(len(seqs), 1):.2f}s/img)  "
-            f"total {n}  {rate:.2f} img/s",
-            flush=True,
-        )
+        print(f"batch {batch_i}: {len(rows)} rows ({dt / max(len(seqs), 1):.2f}s/img)  "
+              f"total {n}  {rate:.2f} img/s", flush=True)
 
     wall = time.perf_counter() - t_all
-    print(
-        f"\n{n} images in {wall:.1f}s ({gen_total:.1f}s generation) | {n / wall:.2f} img/s",
-        flush=True,
-    )
+    print(f"\n{n} images in {wall:.1f}s ({gen_total:.1f}s generation) | {n / wall:.2f} img/s", flush=True)
     if n:
-        print(
-            f"extrapolation: 100k images ≈ {wall / n * 100_000 / 3600:.1f} GPU-hours end-to-end",
-            flush=True,
-        )
+        print(f"extrapolation: 100k images ≈ {wall / n * 100_000 / 3600:.1f} GPU-hours end-to-end", flush=True)
 
 
 main()
