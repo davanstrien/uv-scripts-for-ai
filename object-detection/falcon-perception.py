@@ -92,7 +92,13 @@ def stable_id(key):
     'str'". A content hash (not a running index) keeps ids identical across separate
     runs over the same source, so per-class runs merge on image_id cleanly.
     """
-    return int.from_bytes(hashlib.blake2b(str(key).encode(), digest_size=8).digest(), "big") >> 1
+    return (
+        int.from_bytes(
+            hashlib.blake2b(str(key).encode(), digest_size=8).digest(), "big"
+        )
+        >> 1
+    )
+
 
 # ── backend / engine selection ──────────────────────────────────────────────
 # The MLX and torch APIs match parameter-for-parameter, but are NOT drop-in:
@@ -104,7 +110,11 @@ def stable_id(key):
 def pick_backend(requested):
     if requested != "auto":
         return requested
-    return "mlx" if (sys.platform == "darwin" and platform.machine() == "arm64") else "torch"
+    return (
+        "mlx"
+        if (sys.platform == "darwin" and platform.machine() == "arm64")
+        else "torch"
+    )
 
 
 def guard_mlx_memory(frac=0.55):
@@ -122,7 +132,10 @@ def guard_mlx_memory(frac=0.55):
         mx.set_memory_limit(int(total * frac))
         print(f"mlx memory capped at {total * frac / 2**30:.1f} GiB", flush=True)
     except Exception as e:
-        print(f"WARNING: could not cap MLX memory ({e}) -- a large image may hang this machine", flush=True)
+        print(
+            f"WARNING: could not cap MLX memory ({e}) -- a large image may hang this machine",
+            flush=True,
+        )
 
 
 # ── sources: every source yields (key, PIL image) ───────────────────────────
@@ -195,21 +208,31 @@ def save_preview(key, im, boxes, rles, out_dir):
     W, H = im.size
     canvas = np.array(im.convert("RGB"), dtype=np.float32)
     for i, rle in enumerate(rles):
-        m = rle if isinstance(rle.get("counts"), bytes) else {**rle, "counts": str(rle["counts"]).encode()}
+        m = (
+            rle
+            if isinstance(rle.get("counts"), bytes)
+            else {**rle, "counts": str(rle["counts"]).encode()}
+        )
         try:
             dec = mask_utils.decode(m).astype("uint8")
         except Exception:
             continue
         if dec.shape != (H, W):  # mask is at model resolution -- NEAREST only
             dec = np.array(Image.fromarray(dec).resize((W, H), Image.NEAREST))
-        col = np.array([(255, 60, 60), (60, 160, 255), (80, 200, 120)][i % 3], dtype=np.float32)
+        col = np.array(
+            [(255, 60, 60), (60, 160, 255), (80, 200, 120)][i % 3], dtype=np.float32
+        )
         sel = dec > 0
         canvas[sel] = canvas[sel] * 0.65 + col * 0.35
     out = Image.fromarray(canvas.clip(0, 255).astype("uint8"))
     pen = ImageDraw.Draw(out)
     for b in boxes:
         cx, cy, bw, bh = b["x"] * W, b["y"] * H, b["w"] * W, b["h"] * H
-        pen.rectangle([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], outline=(255, 220, 0), width=3)
+        pen.rectangle(
+            [cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2],
+            outline=(255, 220, 0),
+            width=3,
+        )
     safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in key)[:80]
     path = os.path.join(out_dir, f"{safe}.jpg")
     out.save(path)
@@ -237,10 +260,16 @@ def push_card(repo_id, query, counters):
     on_jobs = os.environ.get("JOB_ID") is not None  # set by HF Jobs in-container
     hw = os.environ.get("ACCELERATOR") or ""  # e.g. "a10g-large"; empty on CPU
     origin = (
-        f"Produced on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs)"
-        + (f" (`{hw}`)" if hw else "")
-    ) if on_jobs else "Generated"
-    tags = "\n".join(f"- {t}" for t in (["uv-script", "hf-jobs"] if on_jobs else ["uv-script"]))
+        (
+            f"Produced on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs)"
+            + (f" (`{hw}`)" if hw else "")
+        )
+        if on_jobs
+        else "Generated"
+    )
+    tags = "\n".join(
+        f"- {t}" for t in (["uv-script", "hf-jobs"] if on_jobs else ["uv-script"])
+    )
     args_summary = " ".join(sys.argv[1:])
     card = DatasetCard(f"""---
 tags:
@@ -288,8 +317,12 @@ def run_paged(model, tokenizer, items, prompt, args):
     cfg = engine_config_for_gpu(max_image_size=args.max_dim, dtype=model.dtype)
     print(f"paged config: {cfg}", flush=True)
     engine = PagedInferenceEngine(
-        model, tokenizer, ImageProcessor(patch_size=16, merge_size=1),
-        max_seq_length=8192, capture_cudagraph=args.cudagraph, **cfg,
+        model,
+        tokenizer,
+        ImageProcessor(patch_size=16, merge_size=1),
+        max_seq_length=8192,
+        capture_cudagraph=args.cudagraph,
+        **cfg,
     )
     sp = SamplingParams(
         args.max_new_tokens,
@@ -299,8 +332,14 @@ def run_paged(model, tokenizer, items, prompt, args):
     for chunk in batched(items, args.chunk):
         chunk = [(k, fit(im, args.max_dim, "torch")) for k, im in chunk]
         seqs = [
-            Sequence(text=prompt, image=im, min_image_size=256,
-                     max_image_size=args.max_dim, request_idx=i, task=args.task)
+            Sequence(
+                text=prompt,
+                image=im,
+                min_image_size=256,
+                max_image_size=args.max_dim,
+                request_idx=i,
+                task=args.task,
+            )
             for i, (_, im) in enumerate(chunk)
         ]
         t0 = time.perf_counter()
@@ -313,26 +352,43 @@ def run_paged(model, tokenizer, items, prompt, args):
 def run_batch(model, tokenizer, items, prompt, args, backend, max_seq_len):
     """MLX (and a torch fallback): the readable reference engine. ~6 s/img on an M1 Pro."""
     if backend == "mlx":
-        from falcon_perception.mlx.batch_inference import BatchInferenceEngine, process_batch_and_generate
+        from falcon_perception.mlx.batch_inference import (
+            BatchInferenceEngine,
+            process_batch_and_generate,
+        )
     else:
-        from falcon_perception.batch_inference import BatchInferenceEngine, process_batch_and_generate
+        from falcon_perception.batch_inference import (
+            BatchInferenceEngine,
+            process_batch_and_generate,
+        )
 
     engine = BatchInferenceEngine(model, tokenizer)
     for chunk in batched(items, 1 if backend == "mlx" else args.chunk):
         chunk = [(k, fit(im, args.max_dim, backend)) for k, im in chunk]
         b = process_batch_and_generate(
-            tokenizer, [(im, prompt) for _, im in chunk],
-            max_length=max_seq_len, min_dimension=256, max_dimension=args.max_dim,
+            tokenizer,
+            [(im, prompt) for _, im in chunk],
+            max_length=max_seq_len,
+            min_dimension=256,
+            max_dimension=args.max_dim,
         )
         if backend != "mlx":  # torch needs every tensor on the model's device
             import torch
 
-            b = {k2: (v.to(model.device) if torch.is_tensor(v) else v) for k2, v in b.items()}
+            b = {
+                k2: (v.to(model.device) if torch.is_tensor(v) else v)
+                for k2, v in b.items()
+            }
         t0 = time.perf_counter()
         _, auxes = engine.generate(
-            tokens=b["tokens"], pos_t=b["pos_t"], pos_hw=b["pos_hw"],
-            pixel_values=b["pixel_values"], pixel_mask=b["pixel_mask"],
-            max_new_tokens=args.max_new_tokens, temperature=0.0, task=args.task,
+            tokens=b["tokens"],
+            pos_t=b["pos_t"],
+            pos_hw=b["pos_hw"],
+            pixel_values=b["pixel_values"],
+            pixel_mask=b["pixel_mask"],
+            max_new_tokens=args.max_new_tokens,
+            temperature=0.0,
+            task=args.task,
         )
         dt = (time.perf_counter() - t0) / len(chunk)
         for (k, im), aux in zip(chunk, auxes):
@@ -343,22 +399,34 @@ def run_batch(model, tokenizer, items, prompt, args, backend, max_seq_len):
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     s = p.add_mutually_exclusive_group(required=True)
     s.add_argument("--image", help="path, URL, or glob ('scans/*.jpg')")
     s.add_argument("--dataset", help="Hub dataset repo id (streamed)")
     p.add_argument("--config")
     p.add_argument("--split", default="train")
     p.add_argument("--image-col", default="image")
-    p.add_argument("--id-col", default=None, help="stable id column; falls back to row index")
+    p.add_argument(
+        "--id-col", default=None, help="stable id column; falls back to row index"
+    )
     p.add_argument("--query", required=True, help="a CLASS NAME, not an instruction")
-    p.add_argument("--task", default="segmentation", choices=["segmentation", "detection"])
-    p.add_argument("--out", default=None,
-                   help="where results go. A path ending .json/.jsonl/.parquet writes that file "
-                        "locally; anything else is treated as a Hub dataset repo id. Omit for "
-                        "stdout + previews only.")
-    p.add_argument("--json", action="store_true",
-                   help="also print the records as JSON on stdout (for piping / agents)")
+    p.add_argument(
+        "--task", default="segmentation", choices=["segmentation", "detection"]
+    )
+    p.add_argument(
+        "--out",
+        default=None,
+        help="where results go. A path ending .json/.jsonl/.parquet writes that file "
+        "locally; anything else is treated as a Hub dataset repo id. Omit for "
+        "stdout + previews only.",
+    )
+    p.add_argument(
+        "--json",
+        action="store_true",
+        help="also print the records as JSON on stdout (for piping / agents)",
+    )
     p.add_argument("--private", action="store_true")
     p.add_argument("--limit", type=int, default=None, help="3 for a sense check")
     p.add_argument("--preview", action="store_true", help="save annotated JPEGs")
@@ -368,7 +436,11 @@ def main():
     p.add_argument("--chunk", type=int, default=16)
     p.add_argument("--backend", default="auto", choices=["auto", "mlx", "torch"])
     p.add_argument("--engine", default="auto", choices=["auto", "batch", "paged"])
-    p.add_argument("--cudagraph", action="store_true", help="opt IN -- can OOM the host on small flavors")
+    p.add_argument(
+        "--cudagraph",
+        action="store_true",
+        help="opt IN -- can OOM the host on small flavors",
+    )
     p.add_argument("--mlx-mem-fraction", type=float, default=0.55)
     args = p.parse_args()
 
@@ -379,9 +451,16 @@ def main():
     if use_paged and backend == "mlx":
         print("paged engine is CUDA-only -- using batch", flush=True)
         use_paged = False
-    print(f"backend={backend} engine={'paged' if use_paged else 'batch'} query={args.query!r}", flush=True)
+    print(
+        f"backend={backend} engine={'paged' if use_paged else 'batch'} query={args.query!r}",
+        flush=True,
+    )
 
-    from falcon_perception import PERCEPTION_MODEL_ID, build_prompt_for_task, load_and_prepare_model
+    from falcon_perception import (
+        PERCEPTION_MODEL_ID,
+        build_prompt_for_task,
+        load_and_prepare_model,
+    )
     from pycocotools import mask as mask_utils
 
     kw = {}
@@ -394,19 +473,30 @@ def main():
     model, tokenizer, model_args = load_and_prepare_model(
         hf_model_id=PERCEPTION_MODEL_ID,
         dtype="float16" if backend == "mlx" else "bfloat16",
-        backend=backend, **kw,
+        backend=backend,
+        **kw,
     )
     print(f"model loaded in {time.perf_counter() - t:.1f}s", flush=True)
     prompt = build_prompt_for_task(args.query, args.task)
 
-    items = src_images(args.image) if args.image else src_dataset(
-        args.dataset, args.config, args.split, args.image_col, args.id_col)
+    items = (
+        src_images(args.image)
+        if args.image
+        else src_dataset(
+            args.dataset, args.config, args.split, args.image_col, args.id_col
+        )
+    )
     if args.limit:
         # islice STOPS the iterator; a filter would keep streaming the whole corpus.
         items = itertools.islice(items, args.limit)
 
-    gen = (run_paged(model, tokenizer, items, prompt, args) if use_paged
-           else run_batch(model, tokenizer, items, prompt, args, backend, model_args.max_seq_len))
+    gen = (
+        run_paged(model, tokenizer, items, prompt, args)
+        if use_paged
+        else run_batch(
+            model, tokenizer, items, prompt, args, backend, model_args.max_seq_len
+        )
+    )
 
     # Records are STREAMED, never accumulated: a whole-corpus run used to hold every
     # decoded PIL image in a list until the final push (~3-12 MB each -> tens of GB
@@ -422,7 +512,9 @@ def main():
             rles = list(aux.masks_rle)
             bbox, area, rect = [], [], []
             for i, b in enumerate(boxes):
-                bbox.append([b["x"], b["y"], b["w"], b["h"]])  # yolo: cx, cy, w, h normalised
+                bbox.append(
+                    [b["x"], b["y"], b["w"], b["h"]]
+                )  # yolo: cx, cy, w, h normalised
                 a = b["w"] * b["h"]
                 area.append(a)
                 r = 0.0
@@ -440,19 +532,39 @@ def main():
                 rect.append(r)
             counters["images"] += 1
             counters["instances"] += len(bbox)
-            print(f"[{counters['images']}] {key[:55]:55s} {len(bbox):2d} inst  {dt:.2f}s", flush=True)
+            print(
+                f"[{counters['images']}] {key[:55]:55s} {len(bbox):2d} inst  {dt:.2f}s",
+                flush=True,
+            )
             if args.preview:
-                print(f"     -> {save_preview(key, im, boxes, rles, args.preview_dir)}", flush=True)
+                print(
+                    f"     -> {save_preview(key, im, boxes, rles, args.preview_dir)}",
+                    flush=True,
+                )
             rec = {
-                "image": im, "image_id": stable_id(key), "source_id": key,
-                "width": W, "height": H,
-                "objects": {"bbox": bbox, "category": [0] * len(bbox),
-                            "area": area, "rectangularity": rect},
+                "image": im,
+                "image_id": stable_id(key),
+                "source_id": key,
+                "width": W,
+                "height": H,
+                "objects": {
+                    "bbox": bbox,
+                    "category": [0] * len(bbox),
+                    "area": area,
+                    "rectangularity": rect,
+                },
                 "n_instances": len(bbox),
-                "masks_rle": json.dumps([
-                    {**m, "counts": m["counts"].decode() if isinstance(m.get("counts"), bytes) else m.get("counts")}
-                    for m in rles
-                ]),
+                "masks_rle": json.dumps(
+                    [
+                        {
+                            **m,
+                            "counts": m["counts"].decode()
+                            if isinstance(m.get("counts"), bytes)
+                            else m.get("counts"),
+                        }
+                        for m in rles
+                    ]
+                ),
             }
             if args.json:
                 json_rows.append(plain(rec))
@@ -464,19 +576,34 @@ def main():
     hub_out = args.out and not args.out.endswith((".json", ".jsonl", ".parquet"))
 
     if hub_out:
-        from datasets import ClassLabel, Dataset, Features, Image as ImageFeat, Sequence as SeqFeat, Value
+        from datasets import (
+            ClassLabel,
+            Dataset,
+            Features,
+            Image as ImageFeat,
+            Sequence as SeqFeat,
+            Value,
+        )
 
-        feats = Features({
-            "image": ImageFeat(), "image_id": Value("int64"), "source_id": Value("string"),
-            "width": Value("int32"), "height": Value("int32"),
-            # category is a ClassLabel named after the query, so the class name travels
-            # with the dataset (viewer, trainers, id2label) instead of a bare 0.
-            "objects": {"bbox": SeqFeat(SeqFeat(Value("float32"))),
-                        "category": SeqFeat(ClassLabel(names=[args.query])),
-                        "area": SeqFeat(Value("float32")),
-                        "rectangularity": SeqFeat(Value("float32"))},
-            "n_instances": Value("int32"), "masks_rle": Value("string"),
-        })
+        feats = Features(
+            {
+                "image": ImageFeat(),
+                "image_id": Value("int64"),
+                "source_id": Value("string"),
+                "width": Value("int32"),
+                "height": Value("int32"),
+                # category is a ClassLabel named after the query, so the class name travels
+                # with the dataset (viewer, trainers, id2label) instead of a bare 0.
+                "objects": {
+                    "bbox": SeqFeat(SeqFeat(Value("float32"))),
+                    "category": SeqFeat(ClassLabel(names=[args.query])),
+                    "area": SeqFeat(Value("float32")),
+                    "rectangularity": SeqFeat(Value("float32")),
+                },
+                "n_instances": Value("int32"),
+                "masks_rle": Value("string"),
+            }
+        )
         # Stream through an ArrowWriter: accumulating records in RAM OOMs whole-corpus
         # runs, and the from_generator APIs pickle their callable, which this closure
         # (live generator, loaded model) cannot survive. The writer flushes to disk per
@@ -486,7 +613,9 @@ def main():
         from datasets.arrow_writer import ArrowWriter
 
         arrow_path = os.path.join(tempfile.mkdtemp(prefix="falcon-out-"), "data.arrow")
-        with ArrowWriter(features=feats, path=arrow_path, writer_batch_size=100) as writer:
+        with ArrowWriter(
+            features=feats, path=arrow_path, writer_batch_size=100
+        ) as writer:
             for rec in iter_records():
                 writer.write(feats.encode_example(rec))
             writer.finalize()
@@ -502,7 +631,9 @@ def main():
         if args.out and args.out.endswith(".json"):
             pathlib.Path(args.out).write_text(json.dumps(rows, indent=2))
         elif args.out and args.out.endswith(".jsonl"):
-            pathlib.Path(args.out).write_text("".join(json.dumps(r) + "\n" for r in rows))
+            pathlib.Path(args.out).write_text(
+                "".join(json.dumps(r) + "\n" for r in rows)
+            )
         elif args.out:
             import pyarrow as pa
             import pyarrow.parquet as pq
@@ -515,7 +646,9 @@ def main():
     if args.out:
         print(f"{counters['instances']} instances -> {args.out}", flush=True)
     if hub_out:
-        print(f"\nNEXT: validate-hf-dataset.py {args.out} --bbox-format yolo", flush=True)
+        print(
+            f"\nNEXT: validate-hf-dataset.py {args.out} --bbox-format yolo", flush=True
+        )
 
 
 main()

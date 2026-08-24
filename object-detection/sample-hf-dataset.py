@@ -4,7 +4,7 @@
 #     "datasets>=3.1.0",
 #     "huggingface-hub",
 #     "tqdm",
-#     "Pillow", 
+#     "Pillow",
 # ]
 # ///
 
@@ -68,7 +68,11 @@ def create_dataset_card(
     split: str,
 ) -> str:
     fraction = num_samples / original_size if original_size > 0 else 0
-    filter_str = f"\n- **Category Filter**: {', '.join(categories_filter)}" if categories_filter else ""
+    filter_str = (
+        f"\n- **Category Filter**: {', '.join(categories_filter)}"
+        if categories_filter
+        else ""
+    )
     return f"""---
 tags:
 - object-detection
@@ -307,16 +311,42 @@ Examples:
     parser.add_argument("input_dataset", help="Input dataset ID on HF Hub")
     parser.add_argument("output_dataset", help="Output dataset ID on HF Hub")
     parser.add_argument("-n", type=int, help="Number of samples to select")
-    parser.add_argument("--fraction", type=float, help="Fraction of dataset to select (0.0-1.0)")
-    parser.add_argument("--strategy", choices=["random", "stratified"], default="random", help="Sampling strategy (default: random)")
-    parser.add_argument("--category-column", default="category", help="Column containing categories (default: category)")
-    parser.add_argument("--categories", help="Comma-separated list of categories to filter by")
-    parser.add_argument("--category-mode", choices=["images", "annotations"], default="images", help="How to apply category filter (default: images)")
-    parser.add_argument("--split", default="train", help="Dataset split (default: train)")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
+    parser.add_argument(
+        "--fraction", type=float, help="Fraction of dataset to select (0.0-1.0)"
+    )
+    parser.add_argument(
+        "--strategy",
+        choices=["random", "stratified"],
+        default="random",
+        help="Sampling strategy (default: random)",
+    )
+    parser.add_argument(
+        "--category-column",
+        default="category",
+        help="Column containing categories (default: category)",
+    )
+    parser.add_argument(
+        "--categories", help="Comma-separated list of categories to filter by"
+    )
+    parser.add_argument(
+        "--category-mode",
+        choices=["images", "annotations"],
+        default="images",
+        help="How to apply category filter (default: images)",
+    )
+    parser.add_argument(
+        "--split", default="train", help="Dataset split (default: train)"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed (default: 42)"
+    )
     parser.add_argument("--hf-token", help="HF API token")
-    parser.add_argument("--private", action="store_true", help="Make output dataset private")
-    parser.add_argument("--create-pr", action="store_true", help="Create PR instead of direct push")
+    parser.add_argument(
+        "--private", action="store_true", help="Make output dataset private"
+    )
+    parser.add_argument(
+        "--create-pr", action="store_true", help="Create PR instead of direct push"
+    )
 
     args = parser.parse_args()
 

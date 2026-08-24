@@ -68,7 +68,9 @@ hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
 
 Judge the result before scaling up:
 - **If you can view images**, look at the rendered previews (or the pushed check dataset) — are the
-  right things boxed?
+  right things boxed? `render-detections.py` renders any dataset in this schema and **pixel-verifies
+  its own output** (a page with instances whose render equals the source exits nonzero — silent
+  blank-overlay bugs are real and have been shown to humans as "done").
 - **If you can't**, compare instance counts across candidate queries (`stats-hf-dataset.py` below works
   on a pushed check dataset): near-zero instances/image means the class name is wrong for this material —
   try a synonym (`photograph` / `illustration` / `figure` / `cartoon`). Suspiciously many (more than about 10/image)
@@ -165,10 +167,12 @@ hf jobs uv run --flavor a10g-large --secrets HF_TOKEN --timeout 2h \
   ds.cast(feats).push_to_hub("<namespace>/<dataset>")
   ```
 
-  The bucket path's output is **annotations-only** — there is no `image` column. Join the image bytes
-  back in (from the source bucket, keyed on `image_id`/source key) before step 4: the step-5 trainer
-  and `review-detections.py` both need embedded images. Build that image-bearing dataset as its own
-  final schema and push it once (see step 7).
+  The bucket path's output is **annotations-only** — there is no `image` column, and the step-5
+  trainer and `review-detections.py` both need embedded images. `embed-bucket-images.py` (same repo)
+  joins the bytes back in, excludes and asserts the gold slice, splits train/validation, and writes
+  the final schema exactly once — to a dataset repo, or as `train.parquet`/`validation.parquet` in a
+  bucket. Trainers that want a COCO directory tree get one generated **in-job** from that parquet by
+  `materialize-coco.py` — never hand-assemble or upload directory trees.
 
 ## 3. Validate the labels (free, local)
 

@@ -4,7 +4,7 @@
 #     "datasets>=3.1.0",
 #     "huggingface-hub",
 #     "tqdm",
-#     "Pillow", 
+#     "Pillow",
 # ]
 # ///
 
@@ -53,7 +53,9 @@ logger = logging.getLogger(__name__)
 BBOX_FORMATS = ["coco_xywh", "xyxy", "voc", "yolo", "tfod", "label_studio"]
 
 
-def to_xyxy(bbox: list[float], fmt: str, img_w: float = 1.0, img_h: float = 1.0) -> tuple[float, float, float, float]:
+def to_xyxy(
+    bbox: list[float], fmt: str, img_w: float = 1.0, img_h: float = 1.0
+) -> tuple[float, float, float, float]:
     """Convert any bbox format to (xmin, ymin, xmax, ymax) in pixel space."""
     if fmt == "coco_xywh":
         x, y, w, h = bbox
@@ -62,7 +64,12 @@ def to_xyxy(bbox: list[float], fmt: str, img_w: float = 1.0, img_h: float = 1.0)
         return tuple(bbox[:4])
     elif fmt == "yolo":
         cx, cy, w, h = bbox
-        return (cx - w / 2) * img_w, (cy - h / 2) * img_h, (cx + w / 2) * img_w, (cy + h / 2) * img_h
+        return (
+            (cx - w / 2) * img_w,
+            (cy - h / 2) * img_h,
+            (cx + w / 2) * img_w,
+            (cy + h / 2) * img_h,
+        )
     elif fmt == "tfod":
         xmin_n, ymin_n, xmax_n, ymax_n = bbox
         return (xmin_n * img_w, ymin_n * img_h, xmax_n * img_w, ymax_n * img_h)
@@ -115,7 +122,9 @@ def main(
     if HF_TOKEN:
         login(token=HF_TOKEN)
 
-    logger.info(f"Loading dataset: {input_dataset} (split={split}, streaming={streaming})")
+    logger.info(
+        f"Loading dataset: {input_dataset} (split={split}, streaming={streaming})"
+    )
     dataset = load_dataset(input_dataset, split=split, streaming=streaming)
 
     # Accumulators
@@ -140,7 +149,9 @@ def main(
         else:
             iterable = dataset.select(range(min(max_samples, len(dataset))))
 
-    for idx, example in enumerate(tqdm(iterable, desc="Computing stats", total=max_samples)):
+    for idx, example in enumerate(
+        tqdm(iterable, desc="Computing stats", total=max_samples)
+    ):
         total_images += 1
 
         objects = example.get("objects", example)
@@ -151,9 +162,13 @@ def main(
         img_w = None
         img_h = None
         if width_column:
-            img_w = example.get(width_column) or (objects.get(width_column) if isinstance(objects, dict) else None)
+            img_w = example.get(width_column) or (
+                objects.get(width_column) if isinstance(objects, dict) else None
+            )
         if height_column:
-            img_h = example.get(height_column) or (objects.get(height_column) if isinstance(objects, dict) else None)
+            img_h = example.get(height_column) or (
+                objects.get(height_column) if isinstance(objects, dict) else None
+            )
 
         if img_w is not None and img_h is not None:
             widths.append(img_w)
@@ -182,7 +197,9 @@ def main(
 
             w_for_conv = img_w if img_w else 1.0
             h_for_conv = img_h if img_h else 1.0
-            xmin, ymin, xmax, ymax = to_xyxy(bbox[:4], bbox_format, w_for_conv, h_for_conv)
+            xmin, ymin, xmax, ymax = to_xyxy(
+                bbox[:4], bbox_format, w_for_conv, h_for_conv
+            )
 
             bw = xmax - xmin
             bh = ymax - ymin
@@ -199,7 +216,12 @@ def main(
 
             # Out of bounds check
             if img_w is not None and img_h is not None:
-                if xmin < -tolerance or ymin < -tolerance or xmax > img_w + tolerance or ymax > img_h + tolerance:
+                if (
+                    xmin < -tolerance
+                    or ymin < -tolerance
+                    or xmax > img_w + tolerance
+                    or ymax > img_h + tolerance
+                ):
                     out_of_bounds_count += 1
 
         # Co-occurrence pairs
@@ -217,7 +239,15 @@ def main(
 
     def dist_stats(vals: list[float]) -> dict:
         if not vals:
-            return {"count": 0, "min": 0, "max": 0, "mean": 0, "median": 0, "p25": 0, "p75": 0}
+            return {
+                "count": 0,
+                "min": 0,
+                "max": 0,
+                "mean": 0,
+                "median": 0,
+                "p25": 0,
+                "p75": 0,
+            }
         return {
             "count": len(vals),
             "min": round(vals[0], 2),
@@ -257,9 +287,13 @@ def main(
         "bbox_aspect_ratio": dist_stats(aspect_ratios),
         "image_resolution": {
             "width": dist_stats([float(w) for w in sorted(widths)]) if widths else {},
-            "height": dist_stats([float(h) for h in sorted(heights)]) if heights else {},
+            "height": dist_stats([float(h) for h in sorted(heights)])
+            if heights
+            else {},
         },
-        "per_category_area": {cat: per_cat_stats[cat] for cat in list(per_cat_stats)[:top]},
+        "per_category_area": {
+            cat: per_cat_stats[cat] for cat in list(per_cat_stats)[:top]
+        },
         "co_occurrence_pairs": [
             {"pair": list(pair), "count": count} for pair, count in top_cooccurrences
         ],
@@ -298,12 +332,16 @@ def main(
         a = report["bbox_area"]
         if a["count"]:
             print(f"\n  Bbox Area:")
-            print(f"    min={a['min']}, median={a['median']}, mean={a['mean']}, max={a['max']}")
+            print(
+                f"    min={a['min']}, median={a['median']}, mean={a['mean']}, max={a['max']}"
+            )
 
         ar = report["bbox_aspect_ratio"]
         if ar["count"]:
             print(f"\n  Bbox Aspect Ratio (w/h):")
-            print(f"    min={ar['min']}, median={ar['median']}, mean={ar['mean']}, max={ar['max']}")
+            print(
+                f"    min={ar['min']}, median={ar['median']}, mean={ar['mean']}, max={ar['max']}"
+            )
 
         if top_cooccurrences:
             print(f"\n  Category Co-occurrence (top {top}):")
@@ -317,14 +355,16 @@ def main(
     if output_dataset:
         from datasets import Dataset as HFDataset
 
-        report_ds = HFDataset.from_dict({
-            "report_json": [json.dumps(report)],
-            "dataset": [input_dataset],
-            "total_images": [total_images],
-            "total_annotations": [total_annotations],
-            "unique_categories": [len(category_counts)],
-            "timestamp": [datetime.now().isoformat()],
-        })
+        report_ds = HFDataset.from_dict(
+            {
+                "report_json": [json.dumps(report)],
+                "dataset": [input_dataset],
+                "total_images": [total_images],
+                "total_annotations": [total_annotations],
+                "unique_categories": [len(category_counts)],
+                "timestamp": [datetime.now().isoformat()],
+            }
+        )
 
         logger.info(f"Pushing stats report to {output_dataset}")
         max_retries = 3
@@ -342,7 +382,9 @@ def main(
                     logger.error("All upload attempts failed.")
                     sys.exit(1)
 
-        logger.info(f"Stats pushed to: https://huggingface.co/datasets/{output_dataset}")
+        logger.info(
+            f"Stats pushed to: https://huggingface.co/datasets/{output_dataset}"
+        )
 
 
 if __name__ == "__main__":
@@ -366,20 +408,55 @@ Examples:
     )
 
     parser.add_argument("input_dataset", help="Input dataset ID on HF Hub")
-    parser.add_argument("--bbox-column", default="bbox", help="Column containing bboxes (default: bbox)")
-    parser.add_argument("--category-column", default="category", help="Column containing categories (default: category)")
-    parser.add_argument("--bbox-format", choices=BBOX_FORMATS, default="coco_xywh", help="Bbox format (default: coco_xywh)")
-    parser.add_argument("--width-column", default="width", help="Column for image width (default: width)")
-    parser.add_argument("--height-column", default="height", help="Column for image height (default: height)")
-    parser.add_argument("--split", default="train", help="Dataset split (default: train)")
+    parser.add_argument(
+        "--bbox-column", default="bbox", help="Column containing bboxes (default: bbox)"
+    )
+    parser.add_argument(
+        "--category-column",
+        default="category",
+        help="Column containing categories (default: category)",
+    )
+    parser.add_argument(
+        "--bbox-format",
+        choices=BBOX_FORMATS,
+        default="coco_xywh",
+        help="Bbox format (default: coco_xywh)",
+    )
+    parser.add_argument(
+        "--width-column",
+        default="width",
+        help="Column for image width (default: width)",
+    )
+    parser.add_argument(
+        "--height-column",
+        default="height",
+        help="Column for image height (default: height)",
+    )
+    parser.add_argument(
+        "--split", default="train", help="Dataset split (default: train)"
+    )
     parser.add_argument("--max-samples", type=int, help="Max samples to process")
     parser.add_argument("--streaming", action="store_true", help="Use streaming mode")
-    parser.add_argument("--top", type=int, default=10, help="Top-N items for histograms (default: 10)")
-    parser.add_argument("--report", choices=["text", "json"], default="text", help="Report format (default: text)")
-    parser.add_argument("--tolerance", type=float, default=0.5, help="Out-of-bounds tolerance in pixels (default: 0.5)")
+    parser.add_argument(
+        "--top", type=int, default=10, help="Top-N items for histograms (default: 10)"
+    )
+    parser.add_argument(
+        "--report",
+        choices=["text", "json"],
+        default="text",
+        help="Report format (default: text)",
+    )
+    parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=0.5,
+        help="Out-of-bounds tolerance in pixels (default: 0.5)",
+    )
     parser.add_argument("--hf-token", help="HF API token")
     parser.add_argument("--output-dataset", help="Push stats report to this HF dataset")
-    parser.add_argument("--private", action="store_true", help="Make output dataset private")
+    parser.add_argument(
+        "--private", action="store_true", help="Make output dataset private"
+    )
 
     args = parser.parse_args()
 

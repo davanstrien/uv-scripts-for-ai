@@ -5,7 +5,7 @@
 #     "huggingface-hub",
 #     "tqdm",
 #     "toolz",
-#     "Pillow", 
+#     "Pillow",
 # ]
 # ///
 
@@ -261,13 +261,15 @@ def main(
     processing_time_str = f"{processing_duration.total_seconds():.1f}s"
 
     # Add conversion metadata
-    conversion_info = json.dumps({
-        "source_format": from_fmt,
-        "target_format": to_fmt,
-        "source_dataset": input_dataset,
-        "timestamp": datetime.now().isoformat(),
-        "script": "convert-hf-dataset.py",
-    })
+    conversion_info = json.dumps(
+        {
+            "source_format": from_fmt,
+            "target_format": to_fmt,
+            "source_dataset": input_dataset,
+            "timestamp": datetime.now().isoformat(),
+            "script": "convert-hf-dataset.py",
+        }
+    )
 
     if "conversion_info" not in dataset.column_names:
         dataset = dataset.add_column(
@@ -340,19 +342,56 @@ Examples:
 
     parser.add_argument("input_dataset", help="Input dataset ID on HF Hub")
     parser.add_argument("output_dataset", help="Output dataset ID on HF Hub")
-    parser.add_argument("--from", dest="from_fmt", required=True, choices=BBOX_FORMATS, help="Source bbox format")
-    parser.add_argument("--to", dest="to_fmt", required=True, choices=BBOX_FORMATS, help="Target bbox format")
-    parser.add_argument("--bbox-column", default="bbox", help="Column containing bboxes (default: bbox)")
-    parser.add_argument("--width-column", default="width", help="Column for image width (default: width)")
-    parser.add_argument("--height-column", default="height", help="Column for image height (default: height)")
-    parser.add_argument("--split", default="train", help="Dataset split (default: train)")
+    parser.add_argument(
+        "--from",
+        dest="from_fmt",
+        required=True,
+        choices=BBOX_FORMATS,
+        help="Source bbox format",
+    )
+    parser.add_argument(
+        "--to",
+        dest="to_fmt",
+        required=True,
+        choices=BBOX_FORMATS,
+        help="Target bbox format",
+    )
+    parser.add_argument(
+        "--bbox-column", default="bbox", help="Column containing bboxes (default: bbox)"
+    )
+    parser.add_argument(
+        "--width-column",
+        default="width",
+        help="Column for image width (default: width)",
+    )
+    parser.add_argument(
+        "--height-column",
+        default="height",
+        help="Column for image height (default: height)",
+    )
+    parser.add_argument(
+        "--split", default="train", help="Dataset split (default: train)"
+    )
     parser.add_argument("--max-samples", type=int, help="Max samples to process")
-    parser.add_argument("--batch-size", type=int, default=1000, help="Batch size for map (default: 1000)")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1000,
+        help="Batch size for map (default: 1000)",
+    )
     parser.add_argument("--hf-token", help="HF API token")
-    parser.add_argument("--private", action="store_true", help="Make output dataset private")
-    parser.add_argument("--create-pr", action="store_true", help="Create PR instead of direct push")
-    parser.add_argument("--shuffle", action="store_true", help="Shuffle dataset before processing")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
+    parser.add_argument(
+        "--private", action="store_true", help="Make output dataset private"
+    )
+    parser.add_argument(
+        "--create-pr", action="store_true", help="Create PR instead of direct push"
+    )
+    parser.add_argument(
+        "--shuffle", action="store_true", help="Shuffle dataset before processing"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed (default: 42)"
+    )
 
     args = parser.parse_args()
 

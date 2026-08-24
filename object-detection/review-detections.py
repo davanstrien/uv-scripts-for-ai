@@ -146,7 +146,14 @@ def to_display_boxes(objects, width, height, scale):
     for cx, cy, w, h in objects["bbox"]:
         x0 = (cx - w / 2) * width * scale
         y0 = (cy - h / 2) * height * scale
-        out.append([round(x0), round(y0), round(x0 + w * width * scale), round(y0 + h * height * scale)])
+        out.append(
+            [
+                round(x0),
+                round(y0),
+                round(x0 + w * width * scale),
+                round(y0 + h * height * scale),
+            ]
+        )
     return out
 
 
@@ -155,34 +162,51 @@ def main():
     p.add_argument("dataset")
     p.add_argument("--split", default="train")
     p.add_argument("--mode", default="quick", choices=["quick", "boxes"])
-    p.add_argument("--order", default=None, choices=["random", "rect"],
-                   help="default: random in quick mode (unbiased rate), rect in boxes mode")
+    p.add_argument(
+        "--order",
+        default=None,
+        choices=["random", "rect"],
+        help="default: random in quick mode (unbiased rate), rect in boxes mode",
+    )
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--journal", default=None,
-                   help="default: ./review-<dataset>-<split>.jsonl (scoped so runs don't mix)")
+    p.add_argument(
+        "--journal",
+        default=None,
+        help="default: ./review-<dataset>-<split>.jsonl (scoped so runs don't mix)",
+    )
     p.add_argument("--out", default=None, help="Hub repo id for the reviewed dataset")
     p.add_argument("--private", action="store_true")
     p.add_argument("--port", type=int, default=7860)
     args = p.parse_args()
     order = args.order or ("random" if args.mode == "quick" else "rect")
-    journal_path = args.journal or f"./review-{args.dataset.replace('/', '--')}-{args.split}.jsonl"
+    journal_path = (
+        args.journal or f"./review-{args.dataset.replace('/', '--')}-{args.split}.jsonl"
+    )
 
     from datasets import Sequence, Value, load_dataset
 
     ds = load_dataset(args.dataset, split=args.split)
 
-    missing = [c for c in ("image", "image_id", "width", "height", "objects") if c not in ds.column_names]
+    missing = [
+        c
+        for c in ("image", "image_id", "width", "height", "objects")
+        if c not in ds.column_names
+    ]
     if missing:
-        raise SystemExit(f"dataset is missing column(s) {missing} -- this tool reads the schema "
-                         "falcon-perception.py pushes; see the docstring.")
+        raise SystemExit(
+            f"dataset is missing column(s) {missing} -- this tool reads the schema "
+            "falcon-perception.py pushes; see the docstring."
+        )
 
     # a lightweight view for sorting and sniffing that never decodes the image column
     meta_rows = ds.select_columns(["objects"])[:]["objects"]
     for objects in meta_rows[: min(50, len(meta_rows))]:
         if any(not (0 <= v <= 1.5) for box in objects["bbox"] for v in box):
-            raise SystemExit("objects.bbox does not look yolo-normalized (values outside [0,1]) -- "
-                             "run convert-hf-dataset.py --to yolo first.")
+            raise SystemExit(
+                "objects.bbox does not look yolo-normalized (values outside [0,1]) -- "
+                "run convert-hf-dataset.py --to yolo first."
+            )
 
     ids = list(range(len(ds)))
     if order == "random":
@@ -191,7 +215,13 @@ def main():
         print("no rectangularity column -- falling back to random order", flush=True)
         random.Random(args.seed).shuffle(ids)
     else:
-        ids.sort(key=lambda i: min(meta_rows[i]["rectangularity"]) if meta_rows[i]["rectangularity"] else 2.0)
+        ids.sort(
+            key=lambda i: (
+                min(meta_rows[i]["rectangularity"])
+                if meta_rows[i]["rectangularity"]
+                else 2.0
+            )
+        )
     if args.limit:
         ids = ids[: args.limit]
 
@@ -263,10 +293,15 @@ def main():
         _, scale = render(i)
         prior = decisions.get(ids[i])
         payload = {
-            "idx": i, "total": len(ids),
-            "boxes": to_display_boxes(row["objects"], row["width"], row["height"], scale),
+            "idx": i,
+            "total": len(ids),
+            "boxes": to_display_boxes(
+                row["objects"], row["width"], row["height"], scale
+            ),
             "verdict": prior["verdict"] if prior else None,
-            "rejected_boxes": [j for j, k in enumerate(prior["box_keep"]) if not k] if prior else [],
+            "rejected_boxes": [j for j, k in enumerate(prior["box_keep"]) if not k]
+            if prior
+            else [],
             "stats": stats_line(),
         }
         return Response(content=json.dumps(payload), media_type="application/json")
@@ -277,12 +312,19 @@ def main():
             return Response(status_code=400)
         row_idx = ids[body["idx"]]
         rec = {
-            "row": row_idx, "image_id": ds[row_idx]["image_id"],
-            "dataset": args.dataset, "split": args.split,
-            "mode": body["mode"], "order": order, "verdict": body["verdict"],
-            "missed": bool(body.get("missed")), "box_keep": [bool(b) for b in body.get("box_keep", [])],
+            "row": row_idx,
+            "image_id": ds[row_idx]["image_id"],
+            "dataset": args.dataset,
+            "split": args.split,
+            "mode": body["mode"],
+            "order": order,
+            "verdict": body["verdict"],
+            "missed": bool(body.get("missed")),
+            "box_keep": [bool(b) for b in body.get("box_keep", [])],
         }
-        with open(journal_path, "a") as f:  # journal FIRST -- only report saved if it is
+        with open(
+            journal_path, "a"
+        ) as f:  # journal FIRST -- only report saved if it is
             f.write(json.dumps(rec) + "\n")
             f.flush()
             os.fsync(f.fileno())
@@ -294,11 +336,20 @@ def main():
         done.set()
         return {"ok": True}
 
-    print(f"open http://127.0.0.1:{args.port}/   (F in the browser, or Ctrl-C here, to finish)", flush=True)
-    app.launch(server_port=args.port, inbrowser=True, quiet=True, prevent_thread_lock=True)
-    signal.signal(signal.SIGINT, lambda *_: done.set())  # gradio installs its own handler; override AFTER launch
+    print(
+        f"open http://127.0.0.1:{args.port}/   (F in the browser, or Ctrl-C here, to finish)",
+        flush=True,
+    )
+    app.launch(
+        server_port=args.port, inbrowser=True, quiet=True, prevent_thread_lock=True
+    )
+    signal.signal(
+        signal.SIGINT, lambda *_: done.set()
+    )  # gradio installs its own handler; override AFTER launch
     done.wait()  # review happens in the browser
-    signal.signal(signal.SIGINT, signal.default_int_handler)  # Ctrl-C must work again (e.g. to abort the push)
+    signal.signal(
+        signal.SIGINT, signal.default_int_handler
+    )  # Ctrl-C must work again (e.g. to abort the push)
 
     n = len(decisions)
     if not n:
@@ -306,22 +357,42 @@ def main():
         return
     acc = sum(1 for d in decisions.values() if d["verdict"] == "accept")
     mis = sum(1 for d in decisions.values() if d["missed"])
-    quotable = order == "random" and all(d["order"] == "random" for d in decisions.values())
-    print(f"\n{n} decided · {acc} accepted ({acc / n:.0%}) · {mis} with missed instances ({mis / n:.0%})",
-          flush=True)
-    print("acceptance rate is " + ("an unbiased random-order sample -- quotable"
-                                   if quotable else "from a non-random or mixed-order queue -- NOT quotable"),
-          flush=True)
+    quotable = order == "random" and all(
+        d["order"] == "random" for d in decisions.values()
+    )
+    print(
+        f"\n{n} decided · {acc} accepted ({acc / n:.0%}) · {mis} with missed instances ({mis / n:.0%})",
+        flush=True,
+    )
+    print(
+        "acceptance rate is "
+        + (
+            "an unbiased random-order sample -- quotable"
+            if quotable
+            else "from a non-random or mixed-order queue -- NOT quotable"
+        ),
+        flush=True,
+    )
 
     if args.out:
         rows = sorted(decisions)
         reviewed = ds.select(rows)
         feats = reviewed.features.copy()
-        feats["review"] = {"verdict": Value("string"), "missed": Value("bool"),
-                           "mode": Value("string"), "box_keep": Sequence(Value("bool"))}
+        feats["review"] = {
+            "verdict": Value("string"),
+            "missed": Value("bool"),
+            "mode": Value("string"),
+            "box_keep": Sequence(Value("bool")),
+        }
         reviewed = reviewed.map(
-            lambda r, i: {"review": {k: decisions[rows[i]][k] for k in ("verdict", "missed", "mode", "box_keep")}},
-            with_indices=True, features=feats,
+            lambda r, i: {
+                "review": {
+                    k: decisions[rows[i]][k]
+                    for k in ("verdict", "missed", "mode", "box_keep")
+                }
+            },
+            with_indices=True,
+            features=feats,
         )
         reviewed.push_to_hub(args.out, private=args.private)
         print(f"{len(reviewed)} reviewed rows -> {args.out}", flush=True)

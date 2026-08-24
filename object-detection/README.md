@@ -39,6 +39,9 @@ That's it! The script will:
 | `stats-hf-dataset.py` | Compute statistics (counts, label histogram, area, co-occurrence) |
 | `diff-hf-datasets.py` | Compare two datasets semantically (IoU-based annotation matching) |
 | `sample-hf-dataset.py` | Create subsets (random or stratified) and push to Hub |
+| `embed-bucket-images.py` | Join image bytes back into a bucket teacher pass — gold excluded + asserted, one final-schema write |
+| `materialize-coco.py` | Generate a canonical COCO 2017 directory tree from the parquet, in-job, on ephemeral disk |
+| `render-detections.py` | Render box/mask overlays and pixel-verify they actually drew (blank renders exit nonzero) |
 
 ## Supported Bbox Formats
 
