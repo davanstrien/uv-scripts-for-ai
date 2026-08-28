@@ -54,6 +54,7 @@ Audio already on your machine? Mount the folder directly — `-v ./audio:/input`
 |--------|-------|---------|--------|-------|
 | `cohere-transcribe.py` | Cohere Transcribe (2B) | transformers | `.txt` | 161x RT (A100) |
 | `cohere-transcribe-vllm.py` | Cohere Transcribe (2B) | vLLM nightly | `.txt` | 214x RT (A100) |
+| `granite-turboctc-transcribe.py` | [Granite Speech 5.0 TurboCTC](https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc) (470M, English) | transformers (pinned `main`) | `.txt` (lowercase, no punctuation) | 594x RT wall / ~5000x GPU-only (A100); 504x RT wall (A10G) |
 | `easytranscriber-transcribe.py` | Cohere Transcribe 2B (default) or Whisper variants | [easytranscriber](https://github.com/kb-labb/easytranscriber) | JSON word timestamps (+ optional `.txt` / `.srt`) | 42.9x RT (L4) |
 | `moss-transcribe-diarize.py` | [MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize) (0.9B) | transformers (remote code) | JSON speaker segments `{start, end, speaker, text}` (+ optional `.txt` / `.srt`) | 3.2x RT (A10G, 74-min file) |
 | `moss-transcribe-diarize-server.py` | [MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize) (0.9B) | in-job sgl-omni server | JSON speaker segments (+ optional `.txt`) | 47.4x RT aggregate (A100, 6 streams) |
@@ -61,6 +62,8 @@ Audio already on your machine? Mount the folder directly — `-v ./audio:/input`
 **`cohere-transcribe.py`** (recommended for plain text) — uses `model.transcribe()` with automatic long-form chunking, overlap, and reassembly. Stable dependencies.
 
 **`cohere-transcribe-vllm.py`** — experimental vLLM variant. Faster but requires nightly vLLM and has minor duplication at chunk boundaries.
+
+**`granite-turboctc-transcribe.py`** — when you have **a lot of English audio** and want raw text fast. Encoder-only CTC (one forward pass + argmax, no autoregressive decoding), so it cannot loop or hallucinate and the GPU is essentially idle: 5 hours of 1940s radio ran in 3.2 s of GPU time on an A100 (~30x Cohere), with the job's wall time dominated by mp3 decoding and model load. Output is lowercase without punctuation or casing, and quality is a step below Cohere on hard audio (~8.5% word disagreement with Cohere's transcripts on the same episodes, no ground truth). Files are fed whole by default — block attention makes cost linear in length and a 30-min file needs ~2.5 GB — with `--chunk-seconds 30` for hour-plus files or a 24 GB card. Needs `transformers` from `main` (support landed 2026-08-25, pinned to a commit) until the next release; English only.
 
 **`easytranscriber-transcribe.py`** — when you need **word-level timestamps** (subtitles, search indexing, forced alignment). Runs VAD → ASR → wav2vec2 emissions → forced alignment. Defaults to the Cohere backend so you get the same model as the other scripts with alignment on top; swap to `--backend ct2` + a Whisper model for languages Cohere doesn't cover (e.g. Swedish via `KBLab/kb-whisper-large`).
 
@@ -75,6 +78,15 @@ Audio already on your machine? Mount the folder directly — `-v ./audio:/input`
 | `--language` | required | en, de, fr, it, es, pt, el, nl, pl, ar, vi, zh, ja, ko |
 | `--compile` | off | torch.compile encoder (one-time warmup, faster after) |
 | `--batch-size` | 16 | Batch size for inference |
+| `--max-files` | all | Limit files to process (for testing) |
+
+#### Options — `granite-turboctc-transcribe.py`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--chunk-seconds` | 0 (whole file) | Cut files into N-second windows; use 30 for hour-plus files or 24 GB cards (2.2 GB peak at batch 32 vs 10.3 GB for four 30-min files) |
+| `--batch-size` | 4 | Files (or windows) per forward pass; 32-64 with `--chunk-seconds 30` |
+| `--decode-workers` | CPU count | Threads for mp3/wav decoding, overlapped with model load and inference |
 | `--max-files` | all | Limit files to process (for testing) |
 
 #### Options — `easytranscriber-transcribe.py`
