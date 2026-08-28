@@ -52,7 +52,7 @@ def main():
     p.add_argument(
         "--data",
         required=True,
-        help="dataset repo id, or hf://buckets/... prefix holding <split>.parquet",
+        help="dataset repo id, hf://buckets/... prefix, or local directory holding <split>.parquet",
     )
     p.add_argument(
         "--out", required=True, help="output dir (ephemeral disk, e.g. /tmp/coco)"

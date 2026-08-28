@@ -21,7 +21,8 @@ Five decisions cover most runs; each routes into the numbered steps below.
    datasets read the parquet directly — including straight off a bucket; trainers that want a COCO
    directory tree get one **generated in-job** with `materialize-coco.py` on ephemeral disk. Never
    hand-assemble or upload directory trees: a tree generated from the parquet cannot have
-   missing-image mismatches.
+   missing-image mismatches. Run `smoke-test.py` first (free, local, ~20 s): it proves these
+   plumbing scripts still produce correct output before a paid job depends on them.
 3. **Boxes or masks?** Boxes → the D-FINE default in step 5. Masks → an RF-DETR-Seg-style trainer via
    `materialize-coco.py` (RLE segmentation carried through); downscale mask polygons to the training
    resolution.
