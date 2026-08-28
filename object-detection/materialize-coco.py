@@ -27,8 +27,11 @@ mismatch class outright (it caused three paid job failures in one measured run).
     #   hf jobs run ... -v hf://buckets/<ns>/<training-bucket>:/data ...
     uv run materialize-coco.py --data /data/dataset --out /data/coco
 
-A split whose tree is already complete (annotations file present, image count matches) is
-reused, not regenerated; --force rebuilds it.
+A split is reused, not regenerated, when its tree is complete AND was built from the same
+labels: the annotations file carries a fingerprint of (image ids, boxes), so a corrected
+dataset -- the step-6 loop, same images, new labels -- rebuilds automatically. --force rebuilds
+regardless. Rows whose image cannot be decoded (teacher error rows, truncated files) are skipped
+and counted, never allowed to kill the job.
 
 Boxes are converted yolo-normalized -> COCO xywh pixels (pass --bbox-format coco_xywh if your
 parquet already stores pixels). masks_rle, when present, is carried through as COCO RLE
@@ -36,10 +39,14 @@ segmentation (RF-DETR-class trainers accept RLE natively).
 """
 
 import argparse
+import hashlib
+import io
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
+from datasets import Image as HFImage
 from datasets import load_dataset
 from PIL import Image as PILImage
 from pycocotools import mask as mask_utils
@@ -54,6 +61,53 @@ def to_xywh(bbox, w, h, fmt):
     return [(cx - bw / 2) * w, (cy - bh / 2) * h, bw * w, bh * h]
 
 
+def label_fingerprint(ds):
+    """Hash of (image_id, boxes) for every row -- changes when labels change, not when bytes do."""
+    labels = ds.select_columns(["image_id", "objects"]).with_format(None)
+    items = sorted(
+        (
+            int(row["image_id"]),
+            [[round(float(v), 6) for v in b] for b in row["objects"]["bbox"]],
+        )
+        for row in labels
+    )
+    return hashlib.sha1(json.dumps(items).encode()).hexdigest()
+
+
+def load_split(data, split):
+    if data.startswith("hf://"):
+        return load_dataset(
+            "parquet", data_files=f"{data.rstrip('/')}/{split}.parquet", split="train"
+        )
+    return load_dataset(data, split=split)
+
+
+def tree_is_reusable(jpath, img_dir, fingerprint):
+    if not jpath.exists():
+        return False, "no tree yet"
+    coco = json.loads(jpath.read_text())
+    stamped = coco.get("provenance", {}).get("fingerprint")
+    if stamped != fingerprint:
+        return False, "labels changed since the tree was built"
+    referenced = len(coco["images"])
+    present = len(list(img_dir.glob("*.jpg")))
+    if not referenced or referenced != present:
+        return False, f"tree incomplete ({present} files vs {referenced} referenced)"
+    return True, f"complete tree ({present} images), same labels"
+
+
+def decode_image(raw):
+    """raw is the undecoded {bytes, path} struct (or None for error rows)."""
+    if not raw or not raw.get("bytes"):
+        return None
+    try:
+        im = PILImage.open(io.BytesIO(raw["bytes"]))
+        im.load()
+        return im.convert("RGB")
+    except Exception:  # noqa: BLE001 -- any decode failure means "skip this row"
+        return None
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument(
@@ -62,7 +116,9 @@ def main():
         help="dataset repo id, hf://buckets/... prefix, or local directory holding <split>.parquet",
     )
     p.add_argument(
-        "--out", required=True, help="output dir (ephemeral disk, e.g. /tmp/coco)"
+        "--out",
+        required=True,
+        help="output dir (ephemeral disk, or a bucket mount to reuse across jobs)",
     )
     p.add_argument("--bbox-format", default="yolo", choices=["yolo", "coco_xywh"])
     p.add_argument("--splits", nargs="+", default=["train", "validation"])
@@ -77,41 +133,38 @@ def main():
     (out / "annotations").mkdir(parents=True, exist_ok=True)
 
     for split in args.splits:
-        img_dir = out / SPLIT_DIR.get(split, split)
-        jpath = out / "annotations" / f"instances_{SPLIT_DIR.get(split, split)}.json"
-        if jpath.exists() and not args.force:
-            referenced = len(json.loads(jpath.read_text())["images"])
-            present = len(list(img_dir.glob("*.jpg")))
-            if referenced and referenced == present:
-                print(
-                    f"{split}: reusing complete tree ({present} images) at {img_dir} — pass --force to rebuild"
-                )
-                continue
-            print(
-                f"{split}: tree incomplete ({present} files vs {referenced} referenced) — rebuilding"
-            )
-
-        if args.data.startswith("hf://"):
-            ds = load_dataset(
-                "parquet",
-                data_files=f"{args.data.rstrip('/')}/{split}.parquet",
-                split="train",
-            )
-        else:
-            ds = load_dataset(args.data, split=split)
+        ds = load_split(args.data, split)
         assert "image" in ds.column_names, (
             "no image column — run embed-bucket-images.py first"
         )
+        img_dir = out / SPLIT_DIR.get(split, split)
+        jpath = out / "annotations" / f"instances_{SPLIT_DIR.get(split, split)}.json"
+
+        fingerprint = label_fingerprint(ds)
+        reusable, why = tree_is_reusable(jpath, img_dir, fingerprint)
+        if reusable and not args.force:
+            print(f"{split}: reusing {why} at {img_dir} — pass --force to rebuild")
+            continue
+        print(f"{split}: building ({'--force' if args.force else why})")
+        # a rebuild starts from nothing: stale JPEGs from an older tree would fail the
+        # files == referenced assert below after all the decode work
+        shutil.rmtree(img_dir, ignore_errors=True)
+        jpath.unlink(missing_ok=True)
+        img_dir.mkdir()
 
         cat_feature = ds.features["objects"]["category"].feature
         names = getattr(cat_feature, "names", None) or ["object"]
-        img_dir.mkdir(exist_ok=True)
 
-        images, annotations, ann_id = [], [], 1
-        for row in ds.with_format(None):
+        # undecoded bytes so a corrupt image is OUR decision to skip, not a crash inside datasets
+        rows = ds.cast_column("image", HFImage(decode=False)).with_format(None)
+        images, annotations, ann_id, skipped = [], [], 1, []
+        for row in rows:
             iid = int(row["image_id"])
+            im = None if row.get("error") else decode_image(row["image"])
+            if im is None:
+                skipped.append(iid)
+                continue
             fname = f"{iid}.jpg"
-            im = row["image"].convert("RGB")
             im.save(img_dir / fname, "JPEG", quality=95)
             # dims from the DECODED image, never metadata columns: error rows carry
             # width/height=None, and the saved JPEG is the frame everything must match
@@ -149,6 +202,11 @@ def main():
             "images": images,
             "annotations": annotations,
             "categories": [{"id": i + 1, "name": n} for i, n in enumerate(names)],
+            "provenance": {
+                "source": args.data,
+                "fingerprint": fingerprint,
+                "skipped_image_ids": skipped,
+            },
         }
         jpath.write_text(json.dumps(coco))
 
@@ -156,8 +214,13 @@ def main():
         assert n_files == len(images), (
             f"{split}: {n_files} files != {len(images)} referenced"
         )
+        note = (
+            f" (skipped {len(skipped)} undecodable/error rows, e.g. {skipped[:3]})"
+            if skipped
+            else ""
+        )
         print(
-            f"{split}: {len(images)} images / {len(annotations)} annotations -> {img_dir} + {jpath.name}"
+            f"{split}: {len(images)} images / {len(annotations)} annotations -> {img_dir} + {jpath.name}{note}"
         )
 
 

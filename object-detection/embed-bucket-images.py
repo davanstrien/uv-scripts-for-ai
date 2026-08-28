@@ -51,7 +51,9 @@ from datasets import ClassLabel, Dataset, DatasetDict, Image, Sequence, load_dat
 
 
 def is_local_path(s):
-    return s.startswith(("/", "./", "../", "~")) or Path(s).exists()
+    # explicit prefixes only: a repo id like ns/name must never be mistaken for a directory
+    # that happens to exist in the cwd
+    return s.startswith(("/", "./", "../", "~"))
 
 
 def main():
@@ -83,9 +85,9 @@ def main():
         "--limit", type=int, default=None, help="debug: cap rows AFTER gold exclusion"
     )
     p.add_argument(
-        "--drop-errors",
+        "--keep-errors",
         action="store_true",
-        help="drop rows whose teacher pass errored",
+        help="keep rows whose teacher pass errored (dropped by default: they have no usable image)",
     )
     p.add_argument(
         "--allow-gold-disjoint",
@@ -108,25 +110,32 @@ def main():
     total = len(ds)
     if total == 0:
         raise SystemExit(f"{args.parts!r} matched files but they contain 0 rows")
-    if args.drop_errors:
-        ds = ds.filter(lambda r: not r["error"])
+    if args.src and args.src.startswith("hf://buckets/"):
+        args.src = args.src[len("hf://buckets/") :]
+    if (
+        not (args.out.startswith("hf://buckets/") or is_local_path(args.out))
+        and "/" not in args.out
+    ):
+        raise SystemExit(
+            f"--out {args.out!r}: a dataset repo id needs a namespace (ns/name)"
+        )
+    if "error" in ds.column_names and not args.keep_errors:
+        n_err = sum(1 for e in ds["error"] if e)
+        if n_err:
+            ds = ds.filter(lambda r: not r["error"])
+            print(f"dropped {n_err} teacher error rows (--keep-errors to keep them)")
     if not isinstance(ds.features["objects"]["category"].feature, ClassLabel):
         feats = ds.features.copy()
-        feats["objects"] = dict(
-            feats["objects"]
-        )  # copy() is shallow; don't mutate ds.features
         feats["objects"]["category"] = Sequence(ClassLabel(names=[ds[0]["query"]]))
         ds = ds.cast(feats)
 
     # ---- gold exclusion, asserted on the stable image_id (never on path-shaped keys) ----
     if args.gold:
         if "://" in args.gold or is_local_path(args.gold):
-            gold_files = args.gold
+            gold = load_dataset("parquet", data_files=args.gold, split="train")
         else:
-            gold_files = f"hf://datasets/{args.gold}/data/train-*.parquet"
-        gold_ids = set(
-            load_dataset("parquet", data_files=gold_files, split="train")["image_id"]
-        )
+            gold = load_dataset(args.gold, split="train")
+        gold_ids = set(gold["image_id"])
         before = len(ds)
         ds = ds.filter(lambda r: r["image_id"] not in gold_ids)
         removed = before - len(ds)
@@ -186,11 +195,18 @@ def main():
         ds = Dataset.from_generator(rows_with_images, features=features)
 
     # ---- split, then ONE write ----
-    parts = ds.train_test_split(test_size=args.val_frac, seed=args.seed)
-    out = DatasetDict({"train": parts["train"], "validation": parts["test"]})
-    print(
-        f"rows: {total} read -> {len(ds)} kept -> train {len(out['train'])} / validation {len(out['validation'])}"
-    )
+    if args.val_frac <= 0 or len(ds) < 2:
+        out = DatasetDict({"train": ds})
+        print(
+            f"rows: {total} read -> {len(ds)} kept -> train only (no validation split; "
+            "materialize-coco.py then needs --splits train)"
+        )
+    else:
+        parts = ds.train_test_split(test_size=args.val_frac, seed=args.seed)
+        out = DatasetDict({"train": parts["train"], "validation": parts["test"]})
+        print(
+            f"rows: {total} read -> {len(ds)} kept -> train {len(out['train'])} / validation {len(out['validation'])}"
+        )
 
     if args.out.startswith("hf://buckets/"):
         with tempfile.TemporaryDirectory() as td:
@@ -201,13 +217,13 @@ def main():
                     ["hf", "cp", str(local), f"{args.out.rstrip('/')}/{split}.parquet"],
                     check=True,
                 )
-        print(f"wrote train.parquet + validation.parquet -> {args.out}")
+        print(f"wrote {' + '.join(f'{s}.parquet' for s in out)} -> {args.out}")
     elif is_local_path(args.out):
         out_dir = Path(args.out).expanduser()
         out_dir.mkdir(parents=True, exist_ok=True)
         for split, d in out.items():
             d.to_parquet(out_dir / f"{split}.parquet")
-        print(f"wrote train.parquet + validation.parquet -> {out_dir}")
+        print(f"wrote {' + '.join(f'{s}.parquet' for s in out)} -> {out_dir}")
     else:
         out.push_to_hub(args.out, private=args.private)
         print(f"pushed -> https://huggingface.co/datasets/{args.out}")

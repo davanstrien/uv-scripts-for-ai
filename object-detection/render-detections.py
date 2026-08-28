@@ -22,11 +22,13 @@ human as "done"). Any blank render exits nonzero and names the file.
 """
 
 import argparse
+import io
 import json
 import sys
 from pathlib import Path
 
 import numpy as np
+from datasets import Image as HFImage
 from datasets import load_dataset
 from PIL import Image, ImageDraw
 
@@ -51,10 +53,11 @@ def main():
     p.add_argument("--bbox-format", default="yolo", choices=["yolo", "coco_xywh"])
     p.add_argument("--no-masks", action="store_true")
     p.add_argument(
-        "--min-diff",
-        type=float,
-        default=0.0005,
-        help="min changed-pixel fraction for a page with instances",
+        "--min-pixels",
+        type=int,
+        default=1,
+        help="a page with instances whose render changed fewer pixels than this is BLANK "
+        "(default 1: any drawn pixel proves the overlay; a 50x50 box on a 3000px scan is real)",
     )
     args = p.parse_args()
 
@@ -69,9 +72,21 @@ def main():
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    blank, rendered = [], 0
-    for row in ds.with_format(None):
-        src = row["image"].convert("RGB")
+    blank, rendered, skipped = [], 0, []
+    # undecoded bytes: a corrupt image or an error row is skipped, not a crash inside datasets
+    for row in ds.cast_column("image", HFImage(decode=False)).with_format(None):
+        raw = row["image"]
+        try:
+            src = (
+                Image.open(io.BytesIO(raw["bytes"])).convert("RGB")
+                if raw and raw.get("bytes")
+                else None
+            )
+        except Exception:  # noqa: BLE001 -- any decode failure means "skip this row"
+            src = None
+        if src is None or row.get("error"):
+            skipped.append(row["image_id"])
+            continue
         im = src.copy()
         w, h = im.size
         n = len(row["objects"]["bbox"])
@@ -109,17 +124,21 @@ def main():
         im.save(out / name)
 
         # ---- the point of this script: prove the overlay exists ----
-        diff = np.any(np.asarray(src) != np.asarray(im), axis=-1).mean()
-        if n > 0 and diff < args.min_diff:
+        changed = int(np.any(np.asarray(src) != np.asarray(im), axis=-1).sum())
+        if n > 0 and changed < args.min_pixels:
             blank.append(name)
         elif n > 0:
             rendered += 1
-        print(f"{name}: {n} instances, {diff:.2%} pixels changed")
+        print(
+            f"{name}: {n} instances, {changed} pixels changed ({changed / (w * h):.2%})"
+        )
 
     if blank:
         sys.exit(
             f"BLANK RENDERS ({len(blank)}): {blank} — overlays did not draw; do not show these to a human."
         )
+    if skipped:
+        print(f"skipped {len(skipped)} undecodable/error rows, e.g. {skipped[:3]}")
     if rendered == 0:
         sys.exit(
             "No page with instances was rendered — nothing verified; increase --limit."

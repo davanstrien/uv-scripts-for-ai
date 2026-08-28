@@ -16,7 +16,7 @@ Five decisions cover most runs; each routes into the numbered steps below.
 
 1. **Where are the images?** Dataset repo → `falcon-perception.py`. Bucket → `falcon-perception-bucket.py`
    (reads `.jpg`/`.jpeg`/`.png` only — convert JPEG 2000 / TIFF first).
-2. **Transport to the trainer**: build canonical `train.parquet` / `val.parquet` with
+2. **Transport to the trainer**: build canonical `train.parquet` / `validation.parquet` with
    `embed-bucket-images.py` (images embedded, gold excluded and asserted). Trainers that take HF
    datasets read the parquet directly — including straight off a bucket; trainers that want a COCO
    directory tree get one **generated in-job** with `materialize-coco.py` — onto a bucket mount if
@@ -25,8 +25,8 @@ Five decisions cover most runs; each routes into the numbered steps below.
    mismatches. Run `smoke-test.py` first (free, local, ~30 s): it proves these plumbing scripts
    still produce correct output before a paid job depends on them.
 3. **Boxes or masks?** Boxes → the D-FINE default in step 5. Masks → an RF-DETR-Seg-style trainer via
-   `materialize-coco.py` (RLE segmentation carried through); downscale mask polygons to the training
-   resolution.
+   `materialize-coco.py` (RLE masks carried through and resized from the teacher's inference frame to the
+   image frame).
 4. **Human available?** Show step-1 previews and do the step-6 gold slice. Headless → numeric proxies
    and say **unreviewed**.
 5. **After the first student**: run the step-6 loop — student over the teacher-empty pages at a low
@@ -161,18 +161,20 @@ hf jobs uv run --flavor a10g-large --secrets HF_TOKEN --timeout 2h \
   bare ints; the cast attaches the class name):
 
   ```python
-  from datasets import ClassLabel, Sequence, load_dataset
+  from datasets import ClassLabel, Image, Sequence, load_dataset
   ds = load_dataset("parquet", data_files="hf://buckets/<namespace>/<out-bucket>/part-*.parquet",
                     split="train")
   feats = ds.features.copy()
   feats["objects"]["category"] = Sequence(ClassLabel(names=[ds[0]["query"]]))
+  if "image" in feats:  # parts written with --embed-images: make the bytes a decodable Image column
+      feats["image"] = Image()
   ds.cast(feats).push_to_hub("<namespace>/<dataset>")
   ```
 
   The bucket path's output is **annotations-only** by default — there is no `image` column, and the
   step-5 trainer and `review-detections.py` both need embedded images. `embed-bucket-images.py` (same
-  repo) joins the bytes back in, excludes and asserts the gold slice, splits train/validation, and
-  writes the final schema exactly once — to a dataset repo, or as `train.parquet`/`validation.parquet`
+  repo) joins the bytes back in, drops the teacher's error rows, excludes and asserts the gold slice,
+  splits train/validation, and writes the final schema exactly once — to a dataset repo, or as `train.parquet`/`validation.parquet`
   in a bucket. (`--embed-images` on the teacher pass writes the bytes into the parts instead — storage
   is cheap, and the join step then skips its re-fetch; the cost is a copy of the corpus in the output
   bucket.) Trainers that want a COCO directory tree get one generated from that parquet by

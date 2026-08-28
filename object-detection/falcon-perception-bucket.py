@@ -26,11 +26,13 @@ Output is parquet parts in a BUCKET, not a dataset repo — that is what makes t
 run resumable (`completed_keys` reads the done-set back from `__source_key`).
 To hand the result to the rest of this directory, publish it once at the end:
 
-    from datasets import ClassLabel, Sequence, load_dataset
+    from datasets import ClassLabel, Image, Sequence, load_dataset
     ds = load_dataset("parquet", data_files="hf://buckets/<namespace>/<bucket>/part-*.parquet",
                       split="train")
     feats = ds.features.copy()  # parquet stores category as bare ints; name the class
     feats["objects"]["category"] = Sequence(ClassLabel(names=[ds[0]["query"]]))
+    if "image" in feats:  # --embed-images parts: make the bytes a decodable Image column
+        feats["image"] = Image()
     ds.cast(feats).push_to_hub("<namespace>/<dataset>")  # a dataset repo, distinct from the bucket
 
     uv run validate-hf-dataset.py <namespace>/<dataset> --bbox-format yolo
@@ -58,6 +60,7 @@ import io
 import json
 import time
 
+import fsspec
 import pyarrow as pa
 import pyarrow.parquet as pq
 from bucketbag import batched_files, boost, completed_keys, iter_keys, put_files
@@ -123,7 +126,9 @@ def main():
     p.add_argument("--max-dim", type=int, default=1024)
     p.add_argument("--max-new-tokens", type=int, default=200)
     p.add_argument("--batch-n", type=int, default=32, help="files per bucketbag batch")
-    p.add_argument("--max-bytes", type=int, default=2 * 2**30)
+    p.add_argument("--max-bytes", type=int, default=None,
+                   help="scratch bytes per batch (RAM tmpfs). Default 2 GiB; 256 MiB with --embed-images, "
+                        "whose bytes are also held ~4x in host RAM while a part is serialised")
     p.add_argument("--cudagraph", action="store_true", help="opt IN; off by default (host OOM)")
     p.add_argument("--format", default="parquet", choices=["parquet", "jsonl"])
     p.add_argument("--no-resume", action="store_true")
@@ -132,6 +137,8 @@ def main():
     args = p.parse_args()
     if args.embed_images and args.format == "jsonl":
         raise SystemExit("--embed-images writes raw image bytes, which jsonl cannot carry; use --format parquet.")
+    if args.max_bytes is None:
+        args.max_bytes = 256 * 2**20 if args.embed_images else 2 * 2**30
     schema = SCHEMA
     if args.embed_images:
         schema = SCHEMA.append(pa.field("image", pa.struct([("bytes", pa.binary()), ("path", pa.string())])))
@@ -163,6 +170,20 @@ def main():
 
     done = set() if args.no_resume else completed_keys(args.out)
     print(f"{len(done)} keys already done", flush=True)
+    if done and args.format == "parquet":
+        # a resume must not mix part schemas: half the parts with an image column and half
+        # without loads as nulls downstream, and the null rows crash the trainer's tree build
+        first_part = next((f for f in iter_keys(args.out, prefix="part-", objects=True)
+                           if f.path.endswith(".parquet")), None)
+        if first_part is not None:
+            with fsspec.open(f"hf://buckets/{args.out}/{first_part.path}", "rb") as fh:
+                existing = pq.read_schema(fh)
+            if ("image" in existing.names) != args.embed_images:
+                raise SystemExit(
+                    f"existing parts in {args.out} were written "
+                    f"{'with' if 'image' in existing.names else 'without'} --embed-images; "
+                    "resume with the same flag, or write to a fresh --out bucket."
+                )
 
     # objects=True yields BucketFile (with .size), so max_bytes is honoured.
     # Needs bucketbag >= 0.3.0: before that, string keys made batched_files drop
@@ -288,6 +309,8 @@ def main():
         # counter restarts at 0 and put_files overwrites, silently destroying the first
         # run's parts. A content-derived name is stable per batch and collision-free
         # across resumes (a re-run of the same batch overwrites its own part, idempotent).
+        if not rows:  # bucketbag drops files that vanished between listing and download
+            continue
         ext = "jsonl" if args.format == "jsonl" else "parquet"
         part = hashlib.blake2b(rows[0]["__source_key"].encode(), digest_size=6).hexdigest()
         put_files([(f"part-{part}.{ext}", serialise(rows, args.format, schema))], args.out)
