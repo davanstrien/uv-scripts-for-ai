@@ -313,9 +313,9 @@ def main(
     psm: int = 3,
     oem: int = 3,
     num_workers: int = 0,
-    hf_token: str = None,
+    hf_token: str | None = None,
     split: str = "train",
-    max_samples: int = None,
+    max_samples: int | None = None,
     private: bool = False,
     shuffle: bool = False,
     seed: int = 42,
@@ -323,7 +323,7 @@ def main(
     overwrite: bool = False,
     dry_run: bool = False,
     verbose: bool = False,
-    config: str = None,
+    config: str | None = None,
     create_pr: bool = False,
 ):
     """Process images from an HF dataset through Tesseract OCR."""
