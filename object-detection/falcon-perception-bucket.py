@@ -130,6 +130,8 @@ def main():
     p.add_argument("--embed-images", action="store_true",
                    help="also write the source image bytes into each part (see docstring)")
     args = p.parse_args()
+    if args.embed_images and args.format == "jsonl":
+        raise SystemExit("--embed-images writes raw image bytes, which jsonl cannot carry; use --format parquet.")
     schema = SCHEMA
     if args.embed_images:
         schema = SCHEMA.append(pa.field("image", pa.struct([("bytes", pa.binary()), ("path", pa.string())])))
