@@ -42,7 +42,7 @@ That's it! The script will:
 | `embed-bucket-images.py` | Join image bytes back into a bucket teacher pass — gold excluded + asserted, one final-schema write |
 | `materialize-coco.py` | Generate a canonical COCO 2017 directory tree from the parquet, in-job, on ephemeral disk |
 | `render-detections.py` | Render box/mask overlays and pixel-verify they actually drew (blank renders exit nonzero) |
-| `smoke-test.py` | Free local check (~20 s) that `materialize-coco.py` + `render-detections.py` still produce correct output — run before any job depends on them |
+| `smoke-test.py` | Free local check (~30 s) that the plumbing chain (`embed-bucket-images.py` → `materialize-coco.py` → `render-detections.py`) still produces correct output — run before any job depends on it |
 
 ## Supported Bbox Formats
 

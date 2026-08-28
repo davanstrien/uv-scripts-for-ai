@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #   "datasets>=4.0",
-#   "huggingface_hub>=1.0",
+#   "huggingface_hub>=1.27",  # hf://buckets in HfFileSystem (1.6) + prefix-collision fix (1.27)
 #   "pillow",
 #   "numpy",
 #   "pycocotools>=2.0.11",

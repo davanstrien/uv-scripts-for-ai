@@ -35,9 +35,11 @@ To hand the result to the rest of this directory, publish it once at the end:
 
     uv run validate-hf-dataset.py <namespace>/<dataset> --bbox-format yolo
 
-Note the parts carry `width`/`height` but no `image` column (the images stay in
-the source bucket), so pass --image-column accordingly if a downstream script
-wants to decode them.
+By default the parts carry `width`/`height` but no `image` column: the images stay in
+the source bucket, the parts stay small and resumable, and `embed-bucket-images.py`
+joins the bytes back in. Pass --embed-images to write the source bytes into each part
+instead (an `image` column datasets decodes directly) -- storage is cheap and it saves
+the join's re-fetch of every image; the cost is a copy of the corpus in the output bucket.
 
 GOTCHAS (all measured, none in the model card):
   * --query is a CLASS NAME. "illustration" works; "the illustration, excluding
@@ -102,11 +104,11 @@ def pair_bboxes(raw):
     return boxes
 
 
-def serialise(rows, fmt):
+def serialise(rows, fmt, schema=SCHEMA):
     if fmt == "jsonl":
         return "\n".join(json.dumps(r) for r in rows) + "\n"
     buf = io.BytesIO()
-    pq.write_table(pa.Table.from_pylist(rows, schema=SCHEMA), buf, compression="zstd")
+    pq.write_table(pa.Table.from_pylist(rows, schema=schema), buf, compression="zstd")
     return buf.getvalue()
 
 
@@ -125,7 +127,12 @@ def main():
     p.add_argument("--cudagraph", action="store_true", help="opt IN; off by default (host OOM)")
     p.add_argument("--format", default="parquet", choices=["parquet", "jsonl"])
     p.add_argument("--no-resume", action="store_true")
+    p.add_argument("--embed-images", action="store_true",
+                   help="also write the source image bytes into each part (see docstring)")
     args = p.parse_args()
+    schema = SCHEMA
+    if args.embed_images:
+        schema = SCHEMA.append(pa.field("image", pa.struct([("bytes", pa.binary()), ("path", pa.string())])))
 
     if args.format == "jsonl" and not args.no_resume:
         # completed_keys only reads the done-set back from .parquet parts, so jsonl
@@ -158,8 +165,6 @@ def main():
     # objects=True yields BucketFile (with .size), so max_bytes is honoured.
     # Needs bucketbag >= 0.3.0: before that, string keys made batched_files drop
     # max_bytes silently and run unbounded against RAM-tmpfs scratch.
-    # >= 0.3.1: prefix is a directory (trailing slash added), so `--prefix full/plates`
-    # no longer also matches `full/plates-rejects/`.
     keys = [
         f for f in iter_keys(args.src, prefix=args.prefix, objects=True)
         if f.path.lower().endswith((".jpg", ".jpeg", ".png")) and f.path not in done
@@ -210,15 +215,16 @@ def main():
                 orig_size = img.size  # SOURCE dims -- the images downstream tools decode
                 if max(img.size) > args.max_dim * 2:
                     img.thumbnail((args.max_dim * 2, args.max_dim * 2))
-                pairs.append((str(it.key), img, orig_size))
+                raw = it.bytes if args.embed_images else None  # read before the batch is deleted
+                pairs.append((str(it.key), img, orig_size, raw))
             except Exception as e:
-                pairs.append((str(it.key), e, None))
+                pairs.append((str(it.key), e, None, None))
 
-        good = [(k, im, sz) for k, im, sz in pairs if not isinstance(im, Exception)]
+        good = [(k, im, sz, raw) for k, im, sz, raw in pairs if not isinstance(im, Exception)]
         seqs = [
             Sequence(text=prompt, image=im, min_image_size=256,
                      max_image_size=args.max_dim, request_idx=i, task=args.task)
-            for i, (_, im, _) in enumerate(good)
+            for i, (_, im, _, _) in enumerate(good)
         ]
         t0 = time.perf_counter()
         if seqs:
@@ -227,7 +233,7 @@ def main():
         gen_total += dt
 
         rows = []
-        for (key, im, orig_size), seq in zip(good, seqs):
+        for (key, im, orig_size, raw), seq in zip(good, seqs):
             aux = seq.output_aux
             boxes = pair_bboxes(aux.bboxes_raw)
             masks = list(aux.masks_rle)
@@ -255,14 +261,17 @@ def main():
                     except Exception:
                         r = 0.0
                 rect.append(r)
-            rows.append({
+            row = {
                 "__source_key": key, "image_id": stable_id(key), "width": W, "height": H,
                 "objects": {"bbox": bbox, "category": [0] * len(bbox),
                             "area": area, "rectangularity": rect},
                 "n_instances": len(bbox), "masks_rle": json.dumps(masks),
                 "query": args.query, "gen_seconds": dt / max(len(seqs), 1), "error": None,
-            })
-        for key, err, _ in [(k, v, s) for k, v, s in pairs if isinstance(v, Exception)]:
+            }
+            if args.embed_images:
+                row["image"] = {"bytes": raw, "path": None}
+            rows.append(row)
+        for key, err, _, _ in [t for t in pairs if isinstance(t[1], Exception)]:
             # a durable error row, never a gap — and it counts as done so it is
             # not retried forever on every re-run. objects is EMPTY, not null:
             # a null struct crashes validate-hf-dataset.py after publish.
@@ -279,7 +288,7 @@ def main():
         # across resumes (a re-run of the same batch overwrites its own part, idempotent).
         ext = "jsonl" if args.format == "jsonl" else "parquet"
         part = hashlib.blake2b(rows[0]["__source_key"].encode(), digest_size=6).hexdigest()
-        put_files([(f"part-{part}.{ext}", serialise(rows, args.format))], args.out)
+        put_files([(f"part-{part}.{ext}", serialise(rows, args.format, schema))], args.out)
         n += len(rows); batch_i += 1
         rate = n / (time.perf_counter() - t_all)
         print(f"batch {batch_i}: {len(rows)} rows ({dt / max(len(seqs), 1):.2f}s/img)  "

@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #   "datasets>=4.0",
-#   "huggingface_hub>=1.0",
+#   "huggingface_hub>=1.27",  # hf://buckets in HfFileSystem (1.6) + prefix-collision fix (1.27)
 #   "pillow",
 #   "numpy",
 #   "pycocotools>=2.0.11",
@@ -13,7 +13,7 @@
 
 Some trainers (RF-DETR and friends) refuse HF datasets and demand the canonical COCO 2017
 layout: annotations/instances_train2017.json + train2017/*.jpg. Never hand-assemble or
-upload that tree -- generate it from the parquet on the training node instead. A generated
+upload that tree -- generate it from the parquet with this script instead. A generated
 tree cannot reference images that are not there, which kills the referenced-vs-uploaded
 mismatch class outright (it caused three paid job failures in one measured run).
 
@@ -22,6 +22,13 @@ mismatch class outright (it caused three paid job failures in one measured run).
 
     # or from a dataset repo produced by embed-bucket-images.py:
     uv run materialize-coco.py --data <ns>/<training-dataset> --out /tmp/coco
+
+    # training more than once? generate ONCE onto a bucket mount and let later jobs reuse it:
+    #   hf jobs run ... -v hf://buckets/<ns>/<training-bucket>:/data ...
+    uv run materialize-coco.py --data /data/dataset --out /data/coco
+
+A split whose tree is already complete (annotations file present, image count matches) is
+reused, not regenerated; --force rebuilds it.
 
 Boxes are converted yolo-normalized -> COCO xywh pixels (pass --bbox-format coco_xywh if your
 parquet already stores pixels). masks_rle, when present, is carried through as COCO RLE
@@ -59,12 +66,31 @@ def main():
     )
     p.add_argument("--bbox-format", default="yolo", choices=["yolo", "coco_xywh"])
     p.add_argument("--splits", nargs="+", default=["train", "validation"])
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="rebuild a split even if its tree is complete",
+    )
     args = p.parse_args()
 
     out = Path(args.out)
     (out / "annotations").mkdir(parents=True, exist_ok=True)
 
     for split in args.splits:
+        img_dir = out / SPLIT_DIR.get(split, split)
+        jpath = out / "annotations" / f"instances_{SPLIT_DIR.get(split, split)}.json"
+        if jpath.exists() and not args.force:
+            referenced = len(json.loads(jpath.read_text())["images"])
+            present = len(list(img_dir.glob("*.jpg")))
+            if referenced and referenced == present:
+                print(
+                    f"{split}: reusing complete tree ({present} images) at {img_dir} — pass --force to rebuild"
+                )
+                continue
+            print(
+                f"{split}: tree incomplete ({present} files vs {referenced} referenced) — rebuilding"
+            )
+
         if args.data.startswith("hf://"):
             ds = load_dataset(
                 "parquet",
@@ -79,7 +105,6 @@ def main():
 
         cat_feature = ds.features["objects"]["category"].feature
         names = getattr(cat_feature, "names", None) or ["object"]
-        img_dir = out / SPLIT_DIR.get(split, split)
         img_dir.mkdir(exist_ok=True)
 
         images, annotations, ann_id = [], [], 1
@@ -125,7 +150,6 @@ def main():
             "annotations": annotations,
             "categories": [{"id": i + 1, "name": n} for i, n in enumerate(names)],
         }
-        jpath = out / "annotations" / f"instances_{SPLIT_DIR.get(split, split)}.json"
         jpath.write_text(json.dumps(coco))
 
         n_files = len(list(img_dir.glob("*.jpg")))

@@ -19,10 +19,11 @@ Five decisions cover most runs; each routes into the numbered steps below.
 2. **Transport to the trainer**: build canonical `train.parquet` / `val.parquet` with
    `embed-bucket-images.py` (images embedded, gold excluded and asserted). Trainers that take HF
    datasets read the parquet directly — including straight off a bucket; trainers that want a COCO
-   directory tree get one **generated in-job** with `materialize-coco.py` on ephemeral disk. Never
-   hand-assemble or upload directory trees: a tree generated from the parquet cannot have
-   missing-image mismatches. Run `smoke-test.py` first (free, local, ~20 s): it proves these
-   plumbing scripts still produce correct output before a paid job depends on them.
+   directory tree get one **generated in-job** with `materialize-coco.py` — onto a bucket mount if
+   more than one job will train on it (a complete tree is reused, not rebuilt). Never hand-assemble
+   or upload directory trees: a tree generated from the parquet cannot have missing-image
+   mismatches. Run `smoke-test.py` first (free, local, ~30 s): it proves these plumbing scripts
+   still produce correct output before a paid job depends on them.
 3. **Boxes or masks?** Boxes → the D-FINE default in step 5. Masks → an RF-DETR-Seg-style trainer via
    `materialize-coco.py` (RLE segmentation carried through); downscale mask polygons to the training
    resolution.
@@ -168,12 +169,15 @@ hf jobs uv run --flavor a10g-large --secrets HF_TOKEN --timeout 2h \
   ds.cast(feats).push_to_hub("<namespace>/<dataset>")
   ```
 
-  The bucket path's output is **annotations-only** — there is no `image` column, and the step-5
-  trainer and `review-detections.py` both need embedded images. `embed-bucket-images.py` (same repo)
-  joins the bytes back in, excludes and asserts the gold slice, splits train/validation, and writes
-  the final schema exactly once — to a dataset repo, or as `train.parquet`/`validation.parquet` in a
-  bucket. Trainers that want a COCO directory tree get one generated **in-job** from that parquet by
-  `materialize-coco.py` — never hand-assemble or upload directory trees.
+  The bucket path's output is **annotations-only** by default — there is no `image` column, and the
+  step-5 trainer and `review-detections.py` both need embedded images. `embed-bucket-images.py` (same
+  repo) joins the bytes back in, excludes and asserts the gold slice, splits train/validation, and
+  writes the final schema exactly once — to a dataset repo, or as `train.parquet`/`validation.parquet`
+  in a bucket. (`--embed-images` on the teacher pass writes the bytes into the parts instead — storage
+  is cheap, and the join step then skips its re-fetch; the cost is a copy of the corpus in the output
+  bucket.) Trainers that want a COCO directory tree get one generated from that parquet by
+  `materialize-coco.py` — once, onto a bucket mount if several jobs will train on it — never
+  hand-assemble or upload directory trees.
 
 ## 3. Validate the labels (free, local)
 

@@ -5,27 +5,33 @@
 #   "datasets>=4.0",
 #   "pillow",
 #   "numpy",
+#   "pyarrow>=18",
 #   "pycocotools>=2.0.11",
 # ]
 # ///
-"""Free, local, ~20 s: prove the plumbing scripts still work BEFORE a paid job depends on them.
+"""Free, local, ~30 s: prove the plumbing scripts still work BEFORE a paid job depends on them.
 
-Builds a 3-page synthetic dataset in this directory's schema -- one page with two instances whose
-masks are stored in a 2x-thumbnailed inference frame (the frame-mismatch bug seen in a real run),
-one page with a box and no mask, one empty page -- then runs the plumbing scripts on it and checks
-their output, not just their exit codes:
+Builds what a teacher pass leaves behind -- annotations-only parquet parts in the
+falcon-perception-bucket.py schema, a source directory of page images, a gold slice -- for three
+pages: one with two instances whose masks are stored in a 2x-thumbnailed inference frame (the
+frame-mismatch bug seen in a real run), one with a box and no mask, one empty. Then it runs the
+plumbing chain on it and checks the OUTPUT of each step, not just the exit code:
 
-    materialize-coco.py   COCO tree: file count == referenced count, masks resized to the image
-                          frame, every mask's pixel extent agrees with its box
-    render-detections.py  overlays drawn (pixel-verified), the empty page not flagged as blank
+    embed-bucket-images.py   gold page excluded (and asserted), images joined in, one write of
+                             train.parquet + validation.parquet; also the --embed-images path
+                             (parts that already carry the bytes -> no --src needed)
+    materialize-coco.py      COCO tree: file count == referenced count, masks resized to the
+                             image frame, every mask's pixel extent agrees with its box; a
+                             second run reuses the complete tree instead of rebuilding
+    render-detections.py     overlays drawn (pixel-verified), the empty page not flagged as blank
 
 Run it after cloning, after bumping a dependency, and before submitting any job that uses these
 scripts. Exit 0 = green. Anything else names the failing check.
 
     uv run smoke-test.py
 
-Not covered: embed-bucket-images.py (needs a real bucket for the image join; run it on a --limit
-slice of your own bucket instead).
+Not covered: the teacher pass itself (falcon-perception-bucket.py needs a GPU); run it on a
+--limit slice of your own bucket.
 """
 
 import json
@@ -35,14 +41,50 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-from datasets import ClassLabel, Dataset, Features, Sequence, Value
-from datasets import Image as HFImage
+import pyarrow as pa
+import pyarrow.parquet as pq
+from datasets import load_dataset
 from PIL import Image
 from pycocotools import mask as mask_utils
 
 HERE = Path(__file__).resolve().parent
 IMAGE_W, IMAGE_H = 800, 1000  # the image frame
 INFER_W, INFER_H = 400, 500  # the teacher's inference frame (thumbnailed 2x)
+
+# Ground truth in image-frame pixels: (x0, y0, x1, y1). Masks are the same rectangles, but
+# stored at half resolution so the scripts must resize them.
+PAGE1_BOXES = [(100, 100, 300, 400), (450, 600, 750, 900)]
+PAGE2_BOXES = [(200, 200, 600, 500)]
+GOLD_IMAGE_ID = 3  # the empty page is held out as "gold" and must never reach train/val
+
+# mirrors SCHEMA in falcon-perception-bucket.py
+PARTS_SCHEMA = pa.schema(
+    [
+        ("__source_key", pa.string()),
+        ("image_id", pa.int64()),
+        ("width", pa.int32()),
+        ("height", pa.int32()),
+        (
+            "objects",
+            pa.struct(
+                [
+                    ("bbox", pa.list_(pa.list_(pa.float32()))),
+                    ("category", pa.list_(pa.int64())),
+                    ("area", pa.list_(pa.float32())),
+                    ("rectangularity", pa.list_(pa.float32())),
+                ]
+            ),
+        ),
+        ("n_instances", pa.int32()),
+        ("masks_rle", pa.string()),
+        ("query", pa.string()),
+        ("gen_seconds", pa.float32()),
+        ("error", pa.string()),
+    ]
+)
+IMAGE_FIELD = pa.field(
+    "image", pa.struct([("bytes", pa.binary()), ("path", pa.string())])
+)
 
 
 def synthetic_page(seed):
@@ -69,68 +111,71 @@ def yolo_box(x0, y0, x1, y1):
     ]
 
 
-# Ground truth in image-frame pixels: (x0, y0, x1, y1). Masks are the same rectangles, but
-# stored at half resolution so the scripts must resize them.
-PAGE1_BOXES = [(100, 100, 300, 400), (450, 600, 750, 900)]
-PAGE2_BOXES = [(200, 200, 600, 500)]
-
-
-def build_fixture(out_dir):
-    rows = [
-        {
-            "image_id": 1,
-            "image": synthetic_page(1),
-            "width": IMAGE_W,
-            "height": IMAGE_H,
-            "objects": {
-                "bbox": [yolo_box(*b) for b in PAGE1_BOXES],
-                "category": [0, 0],
-            },
-            "masks_rle": json.dumps(
-                [rle_in_inference_frame(*[v // 2 for v in b]) for b in PAGE1_BOXES]
-            ),
-        },
-        {
-            "image_id": 2,
-            "image": synthetic_page(2),
-            "width": IMAGE_W,
-            "height": IMAGE_H,
-            "objects": {"bbox": [yolo_box(*b) for b in PAGE2_BOXES], "category": [0]},
-            "masks_rle": None,
-        },
-        {
-            "image_id": 3,
-            "image": synthetic_page(3),
-            "width": IMAGE_W,
-            "height": IMAGE_H,
-            "objects": {"bbox": [], "category": []},
-            "masks_rle": None,
-        },
-    ]
-    features = Features(
-        {
-            "image_id": Value("int64"),
-            "image": HFImage(),
-            "width": Value("int64"),
-            "height": Value("int64"),
-            "objects": {
-                "bbox": Sequence(Sequence(Value("float32"))),
-                "category": Sequence(ClassLabel(names=["illustration"])),
-            },
-            "masks_rle": Value("string"),
-        }
+def teacher_row(image_id, boxes, with_masks):
+    bbox = [yolo_box(*b) for b in boxes]
+    masks = (
+        [rle_in_inference_frame(*[v // 2 for v in b]) for b in boxes]
+        if with_masks
+        else []
     )
-    ds = Dataset.from_list(rows, features=features)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    ds.to_parquet(str(out_dir / "train.parquet"))
-    ds.select([0]).to_parquet(str(out_dir / "validation.parquet"))
+    return {
+        "__source_key": f"pages/{image_id}.jpg",
+        "image_id": image_id,
+        "width": IMAGE_W,
+        "height": IMAGE_H,
+        "objects": {
+            "bbox": bbox,
+            "category": [0] * len(bbox),
+            "area": [b[2] * b[3] for b in bbox],
+            "rectangularity": [1.0] * len(bbox),
+        },
+        "n_instances": len(bbox),
+        "masks_rle": json.dumps(masks),
+        "query": "illustration",
+        "gen_seconds": 0.1,
+        "error": None,
+    }
+
+
+def build_teacher_output(root):
+    """parts/ (annotations-only), parts-embedded/ (with image bytes), pages/, gold.parquet"""
+    pages = root / "pages" / "pages"
+    pages.mkdir(parents=True)
+    rows = [
+        teacher_row(1, PAGE1_BOXES, with_masks=True),
+        teacher_row(2, PAGE2_BOXES, with_masks=False),
+        teacher_row(3, [], with_masks=False),
+    ]
+    blobs = {}
+    for row in rows:
+        path = pages / f"{row['image_id']}.jpg"
+        synthetic_page(row["image_id"]).save(path, "JPEG", quality=95)
+        blobs[row["image_id"]] = path.read_bytes()
+
+    (root / "parts").mkdir()
+    pq.write_table(
+        pa.Table.from_pylist(rows, schema=PARTS_SCHEMA),
+        root / "parts" / "part-a.parquet",
+    )
+
+    embedded = [
+        {**r, "image": {"bytes": blobs[r["image_id"]], "path": None}} for r in rows
+    ]
+    (root / "parts-embedded").mkdir()
+    pq.write_table(
+        pa.Table.from_pylist(embedded, schema=PARTS_SCHEMA.append(IMAGE_FIELD)),
+        root / "parts-embedded" / "part-a.parquet",
+    )
+
+    gold = pa.table({"image_id": pa.array([GOLD_IMAGE_ID], pa.int64())})
+    pq.write_table(gold, root / "gold.parquet")
 
 
 def run(script, *argv):
     # `uv run` so each script resolves its OWN PEP 723 header -- a bad dependency line in a
     # child script is exactly the kind of breakage this test exists to catch
     cmd = ["uv", "run", "--quiet", str(HERE / script), *map(str, argv)]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         print(proc.stdout)
         print(proc.stderr)
@@ -143,37 +188,84 @@ def check(condition, message):
         sys.exit(f"FAIL: {message}")
 
 
+def check_embedded(out_dir, label):
+    files = sorted(p.name for p in out_dir.glob("*.parquet"))
+    check(files == ["train.parquet", "validation.parquet"], f"{label}: wrote {files}")
+    ds = load_dataset("parquet", data_files=str(out_dir / "*.parquet"), split="train")
+    ids = sorted(ds["image_id"])
+    check(
+        ids == [1, 2], f"{label}: expected pages [1, 2] after gold exclusion, got {ids}"
+    )
+    check("image" in ds.column_names, f"{label}: no image column")
+    sizes = {row["image_id"]: row["image"].size for row in ds}
+    check(
+        all(s == (IMAGE_W, IMAGE_H) for s in sizes.values()),
+        f"{label}: decoded sizes {sizes}",
+    )
+    names = ds.features["objects"]["category"].feature.names
+    check(names == ["illustration"], f"{label}: category names {names}")
+    print(
+        f"OK embed-bucket-images ({label}): gold page {GOLD_IMAGE_ID} excluded, 2 pages with decodable images, one write"
+    )
+
+
 def check_coco(coco_dir):
     ann_path = coco_dir / "annotations" / "instances_train2017.json"
     coco = json.loads(ann_path.read_text())
     n_files = len(list((coco_dir / "train2017").glob("*.jpg")))
-    check(n_files == len(coco["images"]) == 3, "train2017 file count != referenced images")
+    check(
+        n_files == len(coco["images"]) >= 1, "train2017 file count != referenced images"
+    )
     check(coco["categories"] == [{"id": 1, "name": "illustration"}], "categories wrong")
 
     by_image = {}
     for ann in coco["annotations"]:
         by_image.setdefault(ann["image_id"], []).append(ann)
-    check(len(by_image.get(1, [])) == 2, "page 1 should have 2 annotations")
-    check(len(by_image.get(2, [])) == 1, "page 2 should have 1 annotation")
-    check(3 not in by_image, "empty page 3 should have no annotations")
-
-    for ann, (x0, y0, x1, y1) in zip(by_image[1], PAGE1_BOXES):
-        bx, by, bw, bh = [round(v) for v in ann["bbox"]]
-        check((bx, by, bw, bh) == (x0, y0, x1 - x0, y1 - y0), f"bbox mismatch: {ann['bbox']}")
-        seg = ann.get("segmentation")
-        check(seg is not None, "page 1 annotation lost its mask")
-        check(seg["size"] == [IMAGE_H, IMAGE_W], f"mask not resized to image frame: {seg['size']}")
-        m = mask_utils.decode({**seg, "counts": seg["counts"].encode()})
-        ys, xs = np.where(m)
-        extent = (xs.min(), ys.min(), xs.max() + 1, ys.max() + 1)
-        check(extent == (x0, y0, x1, y1), f"mask extent {extent} != box {(x0, y0, x1, y1)}")
-    check("segmentation" not in by_image[2][0], "page 2 has no mask but got a segmentation")
-    print("OK materialize-coco: 3 files, 3 annotations, masks resized 500x400 -> 1000x800 and aligned to boxes")
+    check(GOLD_IMAGE_ID not in by_image, "gold page leaked into the COCO tree")
+    for image_id, boxes in ((1, PAGE1_BOXES), (2, PAGE2_BOXES)):
+        if image_id not in {im["id"] for im in coco["images"]}:
+            continue  # landed in validation on this split
+        anns = by_image.get(image_id, [])
+        check(
+            len(anns) == len(boxes),
+            f"page {image_id}: {len(anns)} annotations, expected {len(boxes)}",
+        )
+        for ann, (x0, y0, x1, y1) in zip(anns, boxes):
+            bx, by, bw, bh = [round(v) for v in ann["bbox"]]
+            check(
+                (bx, by, bw, bh) == (x0, y0, x1 - x0, y1 - y0),
+                f"bbox mismatch: {ann['bbox']}",
+            )
+            if image_id == 1:
+                seg = ann.get("segmentation")
+                check(seg is not None, "page 1 annotation lost its mask")
+                check(
+                    seg["size"] == [IMAGE_H, IMAGE_W],
+                    f"mask not resized to image frame: {seg['size']}",
+                )
+                m = mask_utils.decode({**seg, "counts": seg["counts"].encode()})
+                ys, xs = np.where(m)
+                extent = (xs.min(), ys.min(), xs.max() + 1, ys.max() + 1)
+                check(
+                    extent == (x0, y0, x1, y1),
+                    f"mask extent {extent} != box {(x0, y0, x1, y1)}",
+                )
+            else:
+                check(
+                    "segmentation" not in ann,
+                    "page 2 has no mask but got a segmentation",
+                )
+    print(
+        "OK materialize-coco: files == referenced, masks resized 500x400 -> 1000x800 and aligned to boxes"
+    )
 
 
 def check_render(stdout, previews):
     names = sorted(p.name for p in previews.glob("*.png"))
-    check(names == ["1_2inst.png", "2_1inst.png", "3_0inst.png"], f"unexpected previews: {names}")
+    check(
+        names == ["1_2inst.png", "2_1inst.png", "3_0inst.png"],
+        f"unexpected previews: {names}",
+    )
     check("OK: 2 non-empty renders verified" in stdout, "render did not verify 2 pages")
     print("OK render-detections: 2 overlays pixel-verified, empty page not flagged")
 
@@ -181,14 +273,69 @@ def check_render(stdout, previews):
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        data = tmp / "data"
-        build_fixture(data)
-        print(f"fixture: 3 pages -> {data}")
+        build_teacher_output(tmp)
+        print(f"fixture: 3 pages of teacher output -> {tmp}")
 
-        run("materialize-coco.py", "--data", data, "--out", tmp / "coco")
+        # 1. annotations-only parts + local source dir (the default teacher output)
+        run(
+            "embed-bucket-images.py",
+            "--parts",
+            tmp / "parts" / "part-*.parquet",
+            "--src",
+            tmp / "pages",
+            "--gold",
+            tmp / "gold.parquet",
+            "--out",
+            tmp / "dataset",
+            "--val-frac",
+            "0.5",
+            "--chunk",
+            "1",
+        )
+        check_embedded(tmp / "dataset", "annotations-only parts + --src")
+
+        # 2. parts that already carry the bytes (teacher ran with --embed-images): no --src
+        run(
+            "embed-bucket-images.py",
+            "--parts",
+            tmp / "parts-embedded" / "part-*.parquet",
+            "--gold",
+            tmp / "gold.parquet",
+            "--out",
+            tmp / "dataset-embedded",
+            "--val-frac",
+            "0.5",
+        )
+        check_embedded(tmp / "dataset-embedded", "--embed-images parts, no --src")
+
+        # 3. COCO tree from the parquet, then a second run must reuse it
+        run("materialize-coco.py", "--data", tmp / "dataset", "--out", tmp / "coco")
         check_coco(tmp / "coco")
+        again = run(
+            "materialize-coco.py", "--data", tmp / "dataset", "--out", tmp / "coco"
+        )
+        check(
+            again.count("reusing complete tree") == 2,
+            f"second run rebuilt instead of reusing:\n{again}",
+        )
+        print("OK materialize-coco: second run reused both complete trees")
 
-        out = run("render-detections.py", data / "train.parquet", "--out", tmp / "previews")
+        # 4. overlays over the raw teacher pages (all 3, incl. the empty one)
+        (tmp / "all").mkdir()
+        run(
+            "embed-bucket-images.py",
+            "--parts",
+            tmp / "parts" / "part-*.parquet",
+            "--src",
+            tmp / "pages",
+            "--out",
+            tmp / "all",
+            "--val-frac",
+            "0.34",
+        )
+        out = run(
+            "render-detections.py", tmp / "all" / "*.parquet", "--out", tmp / "previews"
+        )
         check_render(out, tmp / "previews")
 
     print("SMOKE TEST GREEN")
