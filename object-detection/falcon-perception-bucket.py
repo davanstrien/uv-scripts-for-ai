@@ -4,7 +4,7 @@
 # dependencies = [
 #   "falcon-perception>=1.0.0",
 #   # tarball not git+: some GPU images have no `git` for uv to shell out to
-#   "bucketbag @ https://github.com/davanstrien/bucketbag/archive/refs/tags/v0.3.0.tar.gz",
+#   "bucketbag @ https://github.com/davanstrien/bucketbag/archive/refs/tags/v0.3.1.tar.gz",
 #   "pyarrow>=18",
 #   "pycocotools>=2.0.11",
 # ]
@@ -158,6 +158,8 @@ def main():
     # objects=True yields BucketFile (with .size), so max_bytes is honoured.
     # Needs bucketbag >= 0.3.0: before that, string keys made batched_files drop
     # max_bytes silently and run unbounded against RAM-tmpfs scratch.
+    # >= 0.3.1: prefix is a directory (trailing slash added), so `--prefix full/plates`
+    # no longer also matches `full/plates-rejects/`.
     keys = [
         f for f in iter_keys(args.src, prefix=args.prefix, objects=True)
         if f.path.lower().endswith((".jpg", ".jpeg", ".png")) and f.path not in done
