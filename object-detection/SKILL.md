@@ -10,17 +10,38 @@ Every step is a self-contained UV script from
 [`uv-scripts/object-detection`](https://huggingface.co/datasets/uv-scripts/object-detection) on the
 Hugging Face Hub, or a `hf jobs` command. `--help` works on every script.
 
+## Pick your path
+
+Five decisions cover most runs; each routes into the numbered steps below.
+
+1. **Where are the images?** Dataset repo → `falcon-perception.py`. Bucket → `falcon-perception-bucket.py`
+   (reads `.jpg`/`.jpeg`/`.png` only — convert JPEG 2000 / TIFF first).
+2. **Transport to the trainer**: build canonical `train.parquet` / `validation.parquet` with
+   `embed-bucket-images.py` (images embedded, gold excluded and asserted). Trainers that take HF
+   datasets read the parquet directly — including straight off a bucket; trainers that want a COCO
+   directory tree get one **generated in-job** with `materialize-coco.py` — onto a bucket mount if
+   more than one job will train on it (a complete tree is reused, not rebuilt). Never hand-assemble
+   or upload directory trees: a tree generated from the parquet cannot have missing-image
+   mismatches. Run `smoke-test.py` first (free, local, ~30 s): it proves these plumbing scripts
+   still produce correct output before a paid job depends on them.
+3. **Boxes or masks?** Boxes → the D-FINE default in step 5. Masks → an RF-DETR-Seg-style trainer via
+   `materialize-coco.py` (RLE masks carried through and resized from the teacher's inference frame to the
+   image frame).
+4. **Human available?** Show step-1 previews and do the step-6 gold slice. Headless → numeric proxies
+   and say **unreviewed**.
+5. **After the first student**: run the step-6 loop — student over the teacher-empty pages at a low
+   threshold, VLM pre-triage, retrain on the corrections.
+
 ## Check if a human in the loop
 
 You can use the approach outlined in this skill with or without a human in the loop.
 
 - **With a human in the loop** (better models): show them the step-1 previews — "is the teacher boxing
-  the right things?" is the highest-value question, and its fix is the cheapest (a better query, about $2 to
-  re-run the teacher). Then train on a small slice first (500–1k images, about $1) and show 20 rendered
+  the right things?" is the highest-value question, and its fix is the cheapest (a better query and a re-run of the teacher). Then train on a small slice first (500–1k images) and show 20 rendered
   predictions before spending on the full corpus. If corrections are worth collecting at volume, run a
   review pass with `review-detections.py` (keyboard accept/reject in the browser — quick mode for
   whole-image verdicts in random order with quotable rates, boxes mode for per-box rejects; pushes a
-  `review` column), fold corrections in and retrain (about $1). Diff the corrected set against the first pass (`diff-hf-datasets.py`) to measure how
+  `review` column), fold corrections in and retrain. Diff the corrected set against the first pass (`diff-hf-datasets.py`) to measure how
   good the zero-shot pass actually was.
 - **Autonomously** (headless): don't pause for review — use the numeric proxies, and say **unreviewed**
   in the final report and model card.
@@ -49,7 +70,9 @@ hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
 
 Judge the result before scaling up:
 - **If you can view images**, look at the rendered previews (or the pushed check dataset) — are the
-  right things boxed?
+  right things boxed? `render-detections.py` renders any dataset in this schema and **pixel-verifies
+  its own output** (a page with instances whose render equals the source exits nonzero — silent
+  blank-overlay bugs are real and have been shown to humans as "done").
 - **If you can't**, compare instance counts across candidate queries (`stats-hf-dataset.py` below works
   on a pushed check dataset): near-zero instances/image means the class name is wrong for this material —
   try a synonym (`photograph` / `illustration` / `figure` / `cartoon`). Suspiciously many (more than about 10/image)
@@ -77,6 +100,9 @@ hf jobs uv run --flavor a10g-large --secrets HF_TOKEN --timeout 2h \
   --dataset <USER>/<IMAGES> --query photograph --out <USER>/<NAME>-photograph --private
 ```
 
+- Sizing: expect a few images per second, not tens — the pass is decode-bound, so a bigger GPU
+  changes little; to go faster, shard the file list across several jobs writing to the same output
+  bucket. `--limit` on either script caps a run.
 - Flavor rule (all three failures measured): the engine needs a **24 GB-VRAM GPU** (16 GB T4s
   CUDA-OOM during prefill) and **more than 15 GB host RAM** (the engine sizes itself from the GPU
   and ignores host RAM, so `t4-small` and `a10g-small` are OOMKilled before the first image).
@@ -121,7 +147,8 @@ hf jobs uv run --flavor a10g-large --secrets HF_TOKEN --timeout 2h \
   switch (`hf jobs hardware` for alternatives), cancel the queued copy first (`hf jobs cancel <id>`).
 - For images in a [storage bucket](https://huggingface.co/docs/hub/storage-buckets) instead of a
   dataset, use `falcon-perception-bucket.py` — it writes resumable parquet parts back to a bucket
-  (kill and re-run the same command; done keys are skipped):
+  (kill and re-run the same command; done keys are skipped). It reads `.jpg` / `.jpeg` / `.png` only —
+  convert JPEG 2000 or TIFF scans first, or it will silently find zero images:
 
   ```
   hf jobs uv run --flavor a10g-large --secrets HF_TOKEN --timeout 2h --detach \
@@ -134,13 +161,25 @@ hf jobs uv run --flavor a10g-large --secrets HF_TOKEN --timeout 2h \
   bare ints; the cast attaches the class name):
 
   ```python
-  from datasets import ClassLabel, Sequence, load_dataset
+  from datasets import ClassLabel, Image, Sequence, load_dataset
   ds = load_dataset("parquet", data_files="hf://buckets/<namespace>/<out-bucket>/part-*.parquet",
                     split="train")
   feats = ds.features.copy()
   feats["objects"]["category"] = Sequence(ClassLabel(names=[ds[0]["query"]]))
+  if "image" in feats:  # parts written with --embed-images: make the bytes a decodable Image column
+      feats["image"] = Image()
   ds.cast(feats).push_to_hub("<namespace>/<dataset>")
   ```
+
+  The bucket path's output is **annotations-only** by default — there is no `image` column, and the
+  step-5 trainer and `review-detections.py` both need embedded images. `embed-bucket-images.py` (same
+  repo) joins the bytes back in, drops the teacher's error rows, excludes and asserts the gold slice,
+  splits train/validation, and writes the final schema exactly once — to a dataset repo, or as `train.parquet`/`validation.parquet`
+  in a bucket. (`--embed-images` on the teacher pass writes the bytes into the parts instead — storage
+  is cheap, and the join step then skips its re-fetch; the cost is a copy of the corpus in the output
+  bucket.) Trainers that want a COCO directory tree get one generated from that parquet by
+  `materialize-coco.py` — once, onto a bucket mount if several jobs will train on it — never
+  hand-assemble or upload directory trees.
 
 ## 3. Validate the labels (free, local)
 
@@ -151,8 +190,10 @@ uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/stat
   <USER>/<NAME>-photograph --bbox-format yolo
 ```
 
-Expect **VALID** with 0 out-of-bounds and 0 zero-area boxes. `W001` warnings on empty images are normal —
-they are true negatives (pages with no instance), and they are useful training signal; keep them.
+Expect **VALID** with 0 out-of-bounds and 0 zero-area boxes. `W001` warnings on empty images are normal
+and worth keeping as training signal — but treat them as **unverified negatives**: zero-shot teachers
+miss real instances on a meaningful fraction of "empty" pages (a third, on one measured corpus). The
+step-6 loop is how you find and flip them.
 Drop obvious junk before training: degenerate slivers (extreme aspect ratio + tiny area) and near-duplicate
 boxes (IoU > 0.9 within one image).
 
@@ -170,7 +211,7 @@ uv run https://huggingface.co/datasets/uv-scripts/object-detection/raw/main/conv
 A known-good default: fine-tune
 [`ustc-community/dfine-small-coco`](https://huggingface.co/ustc-community/dfine-small-coco)
 (D-FINE small, 10.4M params, Apache-2.0, in `transformers`) on the step-4 COCO dataset —
-800 images, 30 epochs, `t4-medium`, about 48 min and $0.35. Training needs only a T4:
+800 images, 30 epochs, `t4-medium`, about 48 minutes (`hf jobs hardware` shows current prices). Training needs only a T4:
 step 2's 24 GB-VRAM rule is the teacher's engine, not the student's.
 
 The [**`huggingface-vision-trainer`**](https://github.com/huggingface/skills/tree/main/skills/huggingface-vision-trainer)
@@ -178,7 +219,9 @@ skill runs the training end to end (dataset validation,
 augmentation, mAP eval, Hub persistence) — install it with `hf skills add huggingface-vision-trainer`
 if you don't have it, and follow its object-detection path with the `<USER>/<NAME>-coco` dataset and
 the settings above. Hold out the validation split — and the step-6 gold slice — BEFORE training,
-and never train on either.
+and never train on either. Write checkpoints **continuously to the synced `/data` mount**, not `/tmp`
+or a local output dir: Jobs can be SIGTERM'd at any time (node reclaim, requeue), anything outside the
+mount dies with the job, and durable checkpoints are also what make stopping at a plateau safe.
 
 Other trainers work — the dataset is plain COCO. [RT-DETRv2](https://huggingface.co/PekingU/rtdetr_v2_r18vd)
 is a comparable compact Apache-2.0 pick; [RF-DETR](https://github.com/roboflow/rf-detr) (Apache-2.0,
@@ -207,7 +250,10 @@ for rle in json.loads(row["masks_rle"]):
 - Report mAP on the held-out slice. Be clear about what it measures: **agreement with the teacher**,
   not accuracy against human truth — no human labels exist in this loop unless you make some (next
   bullet).
-- **Gold slice** (with a human in the loop): hold out about 100 random images BEFORE training, and have
+- **Gold slice** (with a human in the loop): hold out about 100 random images BEFORE training — keyed
+  on a **stable image id** that is identical in every dataset you build (path prefixes from different
+  runs silently break the match) — and **assert the exclusion** before submitting any training job:
+  train count = total − gold, overlap = 0. Then have
   the human verify every box on them with `review-detections.py --mode boxes --order random`, then
   correct any misses (the tool flags them with M; drawing the missing boxes is manual for now).
   Then report TWO numbers: mAP vs teacher labels AND mAP vs the human gold. They
@@ -226,12 +272,19 @@ for rle in json.loads(row["masks_rle"]):
   cannot view images, state prominently in the report that the model is **unreviewed**.
 - It can make sense to run this process in a loop: predict → review (a human, or a vision-capable
   agent, via `review-detections.py`) → retrain on the corrections → review again, until the acceptance
-  rate stops improving.
+  rate stops improving. Two things make the loop cheap: point the student at the **teacher-empty pages
+  at a low threshold** first (that is where the teacher's false negatives concentrate, and flipping
+  them from negative to positive is the biggest training-signal win), and **pre-triage candidates with
+  a VLM judge** (one crop per instance, mask highlighted) so the human only reviews the uncertain
+  residue rather than every candidate.
 
 ## 7. Publish with honest provenance
 
 Push the model and dataset — ask the user whether public or private; if you can't ask, default to
-private and say so. The cards must state: labels are **zero-shot weak labels** from Falcon-Perception
+private and say so. Build each dataset's **final schema in memory and push once** — never stage an
+intermediate push to the repo you will publish. A second push with different columns leaves the repo's
+stored features stale and `load_dataset` fails with a cast error; if the schema must change, push to a
+new repo id. The cards must state: labels are **zero-shot weak labels** from Falcon-Perception
 (name the script + date), which filters ran, and that **recall is unmeasured** unless you measured it
 against an independent source. Say what the model is for and what it was trained on. A model trained
 this way is a first pass. The review loop above is how it gets better.

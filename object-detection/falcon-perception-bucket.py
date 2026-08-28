@@ -4,7 +4,7 @@
 # dependencies = [
 #   "falcon-perception>=1.0.0",
 #   # tarball not git+: some GPU images have no `git` for uv to shell out to
-#   "bucketbag @ https://github.com/davanstrien/bucketbag/archive/refs/tags/v0.3.0.tar.gz",
+#   "bucketbag @ https://github.com/davanstrien/bucketbag/archive/refs/tags/v0.3.1.tar.gz",
 #   "pyarrow>=18",
 #   "pycocotools>=2.0.11",
 # ]
@@ -26,18 +26,22 @@ Output is parquet parts in a BUCKET, not a dataset repo — that is what makes t
 run resumable (`completed_keys` reads the done-set back from `__source_key`).
 To hand the result to the rest of this directory, publish it once at the end:
 
-    from datasets import ClassLabel, Sequence, load_dataset
+    from datasets import ClassLabel, Image, Sequence, load_dataset
     ds = load_dataset("parquet", data_files="hf://buckets/<namespace>/<bucket>/part-*.parquet",
                       split="train")
     feats = ds.features.copy()  # parquet stores category as bare ints; name the class
     feats["objects"]["category"] = Sequence(ClassLabel(names=[ds[0]["query"]]))
+    if "image" in feats:  # --embed-images parts: make the bytes a decodable Image column
+        feats["image"] = Image()
     ds.cast(feats).push_to_hub("<namespace>/<dataset>")  # a dataset repo, distinct from the bucket
 
     uv run validate-hf-dataset.py <namespace>/<dataset> --bbox-format yolo
 
-Note the parts carry `width`/`height` but no `image` column (the images stay in
-the source bucket), so pass --image-column accordingly if a downstream script
-wants to decode them.
+By default the parts carry `width`/`height` but no `image` column: the images stay in
+the source bucket, the parts stay small and resumable, and `embed-bucket-images.py`
+joins the bytes back in. Pass --embed-images to write the source bytes into each part
+instead (an `image` column datasets decodes directly) -- storage is cheap and it saves
+the join's re-fetch of every image; the cost is a copy of the corpus in the output bucket.
 
 GOTCHAS (all measured, none in the model card):
   * --query is a CLASS NAME. "illustration" works; "the illustration, excluding
@@ -56,6 +60,7 @@ import io
 import json
 import time
 
+import fsspec
 import pyarrow as pa
 import pyarrow.parquet as pq
 from bucketbag import batched_files, boost, completed_keys, iter_keys, put_files
@@ -102,11 +107,11 @@ def pair_bboxes(raw):
     return boxes
 
 
-def serialise(rows, fmt):
+def serialise(rows, fmt, schema=SCHEMA):
     if fmt == "jsonl":
         return "\n".join(json.dumps(r) for r in rows) + "\n"
     buf = io.BytesIO()
-    pq.write_table(pa.Table.from_pylist(rows, schema=SCHEMA), buf, compression="zstd")
+    pq.write_table(pa.Table.from_pylist(rows, schema=schema), buf, compression="zstd")
     return buf.getvalue()
 
 
@@ -121,11 +126,22 @@ def main():
     p.add_argument("--max-dim", type=int, default=1024)
     p.add_argument("--max-new-tokens", type=int, default=200)
     p.add_argument("--batch-n", type=int, default=32, help="files per bucketbag batch")
-    p.add_argument("--max-bytes", type=int, default=2 * 2**30)
+    p.add_argument("--max-bytes", type=int, default=None,
+                   help="scratch bytes per batch (RAM tmpfs). Default 2 GiB; 256 MiB with --embed-images, "
+                        "whose bytes are also held ~4x in host RAM while a part is serialised")
     p.add_argument("--cudagraph", action="store_true", help="opt IN; off by default (host OOM)")
     p.add_argument("--format", default="parquet", choices=["parquet", "jsonl"])
     p.add_argument("--no-resume", action="store_true")
+    p.add_argument("--embed-images", action="store_true",
+                   help="also write the source image bytes into each part (see docstring)")
     args = p.parse_args()
+    if args.embed_images and args.format == "jsonl":
+        raise SystemExit("--embed-images writes raw image bytes, which jsonl cannot carry; use --format parquet.")
+    if args.max_bytes is None:
+        args.max_bytes = 256 * 2**20 if args.embed_images else 2 * 2**30
+    schema = SCHEMA
+    if args.embed_images:
+        schema = SCHEMA.append(pa.field("image", pa.struct([("bytes", pa.binary()), ("path", pa.string())])))
 
     if args.format == "jsonl" and not args.no_resume:
         # completed_keys only reads the done-set back from .parquet parts, so jsonl
@@ -154,6 +170,20 @@ def main():
 
     done = set() if args.no_resume else completed_keys(args.out)
     print(f"{len(done)} keys already done", flush=True)
+    if done and args.format == "parquet":
+        # a resume must not mix part schemas: half the parts with an image column and half
+        # without loads as nulls downstream, and the null rows crash the trainer's tree build
+        first_part = next((f for f in iter_keys(args.out, prefix="part-", objects=True)
+                           if f.path.endswith(".parquet")), None)
+        if first_part is not None:
+            with fsspec.open(f"hf://buckets/{args.out}/{first_part.path}", "rb") as fh:
+                existing = pq.read_schema(fh)
+            if ("image" in existing.names) != args.embed_images:
+                raise SystemExit(
+                    f"existing parts in {args.out} were written "
+                    f"{'with' if 'image' in existing.names else 'without'} --embed-images; "
+                    "resume with the same flag, or write to a fresh --out bucket."
+                )
 
     # objects=True yields BucketFile (with .size), so max_bytes is honoured.
     # Needs bucketbag >= 0.3.0: before that, string keys made batched_files drop
@@ -166,7 +196,11 @@ def main():
         keys = keys[: args.limit]
     print(f"{len(keys)} keys to process", flush=True)
     if not keys:
-        return
+        raise SystemExit(
+            f"0 keys matched under {args.src}/{args.prefix or ''} — this script reads only "
+            ".jpg/.jpeg/.png (convert JPEG 2000 / TIFF first), and already-done keys are skipped "
+            "(pass --no-resume to redo)."
+        )
 
     from falcon_perception import PERCEPTION_MODEL_ID, build_prompt_for_task, load_and_prepare_model, setup_torch_config
     from falcon_perception.data import ImageProcessor
@@ -204,15 +238,16 @@ def main():
                 orig_size = img.size  # SOURCE dims -- the images downstream tools decode
                 if max(img.size) > args.max_dim * 2:
                     img.thumbnail((args.max_dim * 2, args.max_dim * 2))
-                pairs.append((str(it.key), img, orig_size))
+                raw = it.bytes if args.embed_images else None  # read before the batch is deleted
+                pairs.append((str(it.key), img, orig_size, raw))
             except Exception as e:
-                pairs.append((str(it.key), e, None))
+                pairs.append((str(it.key), e, None, None))
 
-        good = [(k, im, sz) for k, im, sz in pairs if not isinstance(im, Exception)]
+        good = [(k, im, sz, raw) for k, im, sz, raw in pairs if not isinstance(im, Exception)]
         seqs = [
             Sequence(text=prompt, image=im, min_image_size=256,
                      max_image_size=args.max_dim, request_idx=i, task=args.task)
-            for i, (_, im, _) in enumerate(good)
+            for i, (_, im, _, _) in enumerate(good)
         ]
         t0 = time.perf_counter()
         if seqs:
@@ -221,7 +256,7 @@ def main():
         gen_total += dt
 
         rows = []
-        for (key, im, orig_size), seq in zip(good, seqs):
+        for (key, im, orig_size, raw), seq in zip(good, seqs):
             aux = seq.output_aux
             boxes = pair_bboxes(aux.bboxes_raw)
             masks = list(aux.masks_rle)
@@ -249,14 +284,17 @@ def main():
                     except Exception:
                         r = 0.0
                 rect.append(r)
-            rows.append({
+            row = {
                 "__source_key": key, "image_id": stable_id(key), "width": W, "height": H,
                 "objects": {"bbox": bbox, "category": [0] * len(bbox),
                             "area": area, "rectangularity": rect},
                 "n_instances": len(bbox), "masks_rle": json.dumps(masks),
                 "query": args.query, "gen_seconds": dt / max(len(seqs), 1), "error": None,
-            })
-        for key, err, _ in [(k, v, s) for k, v, s in pairs if isinstance(v, Exception)]:
+            }
+            if args.embed_images:
+                row["image"] = {"bytes": raw, "path": None}
+            rows.append(row)
+        for key, err, _, _ in [t for t in pairs if isinstance(t[1], Exception)]:
             # a durable error row, never a gap — and it counts as done so it is
             # not retried forever on every re-run. objects is EMPTY, not null:
             # a null struct crashes validate-hf-dataset.py after publish.
@@ -271,9 +309,11 @@ def main():
         # counter restarts at 0 and put_files overwrites, silently destroying the first
         # run's parts. A content-derived name is stable per batch and collision-free
         # across resumes (a re-run of the same batch overwrites its own part, idempotent).
+        if not rows:  # bucketbag drops files that vanished between listing and download
+            continue
         ext = "jsonl" if args.format == "jsonl" else "parquet"
         part = hashlib.blake2b(rows[0]["__source_key"].encode(), digest_size=6).hexdigest()
-        put_files([(f"part-{part}.{ext}", serialise(rows, args.format))], args.out)
+        put_files([(f"part-{part}.{ext}", serialise(rows, args.format, schema))], args.out)
         n += len(rows); batch_i += 1
         rate = n / (time.perf_counter() - t_all)
         print(f"batch {batch_i}: {len(rows)} rows ({dt / max(len(seqs), 1):.2f}s/img)  "
