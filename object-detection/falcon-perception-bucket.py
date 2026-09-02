@@ -122,6 +122,8 @@ def main():
     p.add_argument("--max-new-tokens", type=int, default=200)
     p.add_argument("--batch-n", type=int, default=32, help="files per bucketbag batch")
     p.add_argument("--max-bytes", type=int, default=2 * 2**30)
+    p.add_argument("--revision", default="main",
+                   help="model revision; '19-08-2026' = RL post-trained (better recall on dense images)")
     p.add_argument("--cudagraph", action="store_true", help="opt IN; off by default (host OOM)")
     p.add_argument("--format", default="parquet", choices=["parquet", "jsonl"])
     p.add_argument("--no-resume", action="store_true")
@@ -177,7 +179,8 @@ def main():
     setup_torch_config()
     t = time.perf_counter()
     model, tokenizer, _ = load_and_prepare_model(
-        hf_model_id=PERCEPTION_MODEL_ID, dtype="bfloat16", compile=False,  # compile breaks on dynamic shapes
+        hf_model_id=PERCEPTION_MODEL_ID, hf_revision=args.revision,
+        dtype="bfloat16", compile=False,  # compile breaks on dynamic shapes
     )
     print(f"model loaded in {time.perf_counter() - t:.1f}s", flush=True)
 

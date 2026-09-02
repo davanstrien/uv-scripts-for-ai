@@ -366,6 +366,8 @@ def main():
     p.add_argument("--max-dim", type=int, default=1024)
     p.add_argument("--max-new-tokens", type=int, default=200)
     p.add_argument("--chunk", type=int, default=16)
+    p.add_argument("--revision", default="main",
+                   help="model revision; '19-08-2026' = RL post-trained (better recall on dense images)")
     p.add_argument("--backend", default="auto", choices=["auto", "mlx", "torch"])
     p.add_argument("--engine", default="auto", choices=["auto", "batch", "paged"])
     p.add_argument("--cudagraph", action="store_true", help="opt IN -- can OOM the host on small flavors")
@@ -379,7 +381,8 @@ def main():
     if use_paged and backend == "mlx":
         print("paged engine is CUDA-only -- using batch", flush=True)
         use_paged = False
-    print(f"backend={backend} engine={'paged' if use_paged else 'batch'} query={args.query!r}", flush=True)
+    print(f"backend={backend} engine={'paged' if use_paged else 'batch'} "
+          f"revision={args.revision} query={args.query!r}", flush=True)
 
     from falcon_perception import PERCEPTION_MODEL_ID, build_prompt_for_task, load_and_prepare_model
     from pycocotools import mask as mask_utils
@@ -392,7 +395,7 @@ def main():
         kw = {"compile": False}  # dynamic image shapes break Inductor
     t = time.perf_counter()
     model, tokenizer, model_args = load_and_prepare_model(
-        hf_model_id=PERCEPTION_MODEL_ID,
+        hf_model_id=PERCEPTION_MODEL_ID, hf_revision=args.revision,
         dtype="float16" if backend == "mlx" else "bfloat16",
         backend=backend, **kw,
     )
