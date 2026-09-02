@@ -39,6 +39,22 @@ Language packs (apt codes are 3-letter ISO 639-2, same as Tesseract's `--lang`):
     --lang fra            French   (installs tesseract-ocr-fra)
     --lang eng+fra        multiple languages, '+'-joined
 
+CUSTOM MODELS: `--traineddata` runs a `.traineddata` other than the stock packs
+— community models for historic scripts or your own tesstrain fine-tune. The
+community models live on GitHub (tessdata_best), so a URL is usually what you
+want; use a Hub repo for your own fine-tunes.
+
+    # historic German blackletter, straight from tessdata_best
+    --traineddata https://github.com/tesseract-ocr/tessdata_best/raw/main/script/Fraktur.traineddata
+
+    --traineddata owner/repo                      (Hub repo with one .traineddata)
+    --traineddata owner/repo:frak2021.traineddata (pick one of several)
+    --traineddata ./my-fine-tune.traineddata      (local file)
+
+`--lang` defaults to the file's stem; pass `--lang eng+frak2021` to combine it
+with a stock pack. The recorded `model_id` becomes `tesseract-5+<stem>` so a
+fine-tuned run is never scored as if it were the stock engine.
+
 Engine: Tesseract OCR (https://github.com/tesseract-ocr/tesseract), Apache-2.0.
 """
 
@@ -53,10 +69,11 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Union
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from datasets import load_dataset
-from huggingface_hub import DatasetCard, login
+from huggingface_hub import DatasetCard, HfApi, hf_hub_download, login
 from PIL import Image
 from tqdm import tqdm
 
@@ -125,6 +142,107 @@ def ensure_tesseract_installed(lang: str) -> None:
                 f"Could not install language pack(s) {pkgs}: {e}. "
                 f"OCR will fail for those languages if the data is absent."
             )
+
+
+def find_system_tessdata() -> Optional[Path]:
+    """Locate the installed tessdata directory, or None if it can't be found."""
+    candidates = []
+    env = os.environ.get("TESSDATA_PREFIX")
+    if env:
+        candidates += [Path(env), Path(env) / "tessdata"]
+    candidates += [
+        Path("/usr/share/tesseract-ocr/5/tessdata"),
+        Path("/usr/share/tesseract-ocr/4.00/tessdata"),
+        Path("/usr/share/tessdata"),
+        Path("/opt/homebrew/share/tessdata"),
+        Path("/usr/local/share/tessdata"),
+    ]
+    for c in candidates:
+        if c.is_dir() and any(c.glob("*.traineddata")):
+            return c
+    return None
+
+
+def resolve_traineddata(spec: str) -> Path:
+    """Resolve a --traineddata spec to a local `.traineddata` file.
+
+    Accepts, in this order:
+      - a local path to a `.traineddata` file
+      - an `http(s)://` URL
+      - `owner/repo:path/to/file.traineddata` (a specific file in a Hub repo)
+      - `owner/repo` (a Hub repo containing exactly one `.traineddata`)
+    """
+    if Path(spec).is_file():
+        return Path(spec)
+
+    if spec.startswith(("http://", "https://")):
+        import urllib.request
+
+        dest = Path(spec.split("/")[-1].split("?")[0])
+        logger.info(f"Downloading traineddata: {spec}")
+        urllib.request.urlretrieve(spec, dest)
+        return dest
+
+    repo_id, _, filename = spec.partition(":")
+    if not filename:
+        files = [
+            f
+            for f in HfApi().list_repo_files(repo_id)
+            if f.endswith(".traineddata")
+        ]
+        if not files:
+            logger.error(f"No .traineddata file found in Hub repo '{repo_id}'.")
+            sys.exit(1)
+        if len(files) > 1:
+            # Guessing here would silently pick a different model than intended.
+            logger.error(
+                f"Repo '{repo_id}' contains {len(files)} .traineddata files: {files}. "
+                f"Disambiguate with --traineddata {repo_id}:<filename>."
+            )
+            sys.exit(1)
+        filename = files[0]
+
+    logger.info(f"Downloading {filename} from Hub repo {repo_id}")
+    return Path(hf_hub_download(repo_id, filename))
+
+
+def prepare_traineddata(spec: str, lang: str) -> Tuple[str, Path, str]:
+    """Stage a custom `.traineddata` and return (lang, tessdata_dir, model_suffix).
+
+    Tesseract's `--tessdata-dir` makes it look in that directory *only*, so the
+    stock language files are symlinked in alongside the custom one. Without this,
+    a combined `--lang eng+custom` would fail to find `eng`.
+    """
+    src = resolve_traineddata(spec)
+    stem = src.name.removesuffix(".traineddata")
+
+    tessdata_dir = Path("custom_tessdata").resolve()
+    tessdata_dir.mkdir(parents=True, exist_ok=True)
+
+    system_dir = find_system_tessdata()
+    if system_dir:
+        for f in system_dir.glob("*.traineddata"):
+            link = tessdata_dir / f.name
+            if not link.exists():
+                link.symlink_to(f)
+        logger.info(f"Linked stock language data from {system_dir}")
+    else:
+        logger.warning(
+            "Could not locate the system tessdata directory — only the custom "
+            "model will be available, so '+'-combined languages may fail."
+        )
+
+    shutil.copy(src, tessdata_dir / f"{stem}.traineddata")
+
+    # Only override the language when the user left it at the default. Someone
+    # passing --lang explicitly may well want a combination like eng+<custom>.
+    if lang == "eng":
+        logger.info(f"Using custom traineddata '{stem}' (set --lang to override)")
+        lang = stem
+    else:
+        logger.info(f"Custom traineddata '{stem}' staged; --lang stays '{lang}'")
+
+    return lang, tessdata_dir, stem
 
 
 def detect_tesseract_version() -> str:
@@ -325,6 +443,7 @@ def main(
     verbose: bool = False,
     config: str | None = None,
     create_pr: bool = False,
+    traineddata: str | None = None,
 ):
     """Process images from an HF dataset through Tesseract OCR."""
 
@@ -339,6 +458,17 @@ def main(
         os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
     ensure_tesseract_installed(lang)
+
+    # A custom model is a different system from stock Tesseract, so it gets its
+    # own leaderboard label — a fine-tuned model scoring as `tesseract-5` would
+    # misattribute the result to the stock engine.
+    model_id, model_name = MODEL_ID, MODEL_NAME
+    tessdata_dir = None
+    if traineddata:
+        lang, tessdata_dir, stem = prepare_traineddata(traineddata, lang)
+        model_id = f"{MODEL_ID}+{stem}"
+        model_name = f"{MODEL_NAME} ({stem})"
+
     tesseract_version = detect_tesseract_version()
     logger.info(
         f"Using Tesseract {tesseract_version} (lang={lang}, psm={psm}, oem={oem})"
@@ -370,6 +500,8 @@ def main(
         logger.info(f"Limited to {len(dataset)} samples")
 
     tess_config = f"--psm {psm} --oem {oem}"
+    if tessdata_dir is not None:
+        tess_config += f" --tessdata-dir {tessdata_dir}"
     logger.info(f"Processing {len(dataset)} images -> column '{output_column}'")
 
     all_outputs = run_ocr(dataset, image_column, lang, tess_config, num_workers)
@@ -387,8 +519,8 @@ def main(
     # Inference info tracking. `model_id` + `column_name` are the fields consumers
     # (e.g. ocr-bench) read to find the text column and the leaderboard label.
     inference_entry = {
-        "model_id": MODEL_ID,
-        "model_name": MODEL_NAME,
+        "model_id": model_id,
+        "model_name": model_name,
         "column_name": output_column,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "engine": "tesseract",
@@ -397,6 +529,8 @@ def main(
         "psm": psm,
         "oem": oem,
     }
+    if traineddata:
+        inference_entry["traineddata"] = traineddata
 
     if "inference_info" in dataset.column_names:
         logger.info("Updating existing inference_info column")
@@ -552,6 +686,14 @@ Page segmentation modes (--psm), common ones:
         "Non-English packs are apt-installed on Jobs.",
     )
     parser.add_argument(
+        "--traineddata",
+        help="Custom .traineddata model: a Hub repo id ('owner/repo' or "
+        "'owner/repo:file.traineddata'), a local path, or a URL. Use for "
+        "community models (Fraktur, historic scripts) or your own fine-tune. "
+        "--lang defaults to the file's stem; the leaderboard label becomes "
+        "'tesseract-5+<stem>'.",
+    )
+    parser.add_argument(
         "--psm",
         type=int,
         default=3,
@@ -643,4 +785,5 @@ Page segmentation modes (--psm), common ones:
         verbose=args.verbose,
         config=args.config,
         create_pr=args.create_pr,
+        traineddata=args.traineddata,
     )

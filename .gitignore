@@ -18,3 +18,7 @@ __pycache__/
 # Local-only working docs (launch plans, planning notes) — never published
 LAUNCH.md
 *.local.md
+
+# tesseract-ocr.py --traineddata stages models here at runtime
+custom_tessdata/
+*.traineddata
