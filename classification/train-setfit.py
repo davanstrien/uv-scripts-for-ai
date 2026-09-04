@@ -92,7 +92,8 @@ SCRIPT_URL = (
 NOISE_BAND = 0.05
 
 # Applied to the measured step time. Covers what the measurement omits — optimizer update,
-# pair-batch assembly, data loading — measured at 5% (CPU) and 22% (GPU) against real runs.
+# pair-batch assembly, data loading. Raw shortfall against real runs of the same config:
+# ~5% on cpu-basic (two independent configs agreed) and 37% on t4-small.
 MEASUREMENT_MARGIN = 1.35
 
 
@@ -351,7 +352,7 @@ def measure_step_seconds(model, texts, batch_size: int) -> float:
     return sorted(timings)[1]
 
 
-def project_training_seconds(model, texts, batch_size: int, steps: int, args_max_seq_hint: int) -> float:
+def project_training_seconds(model, texts, batch_size: int, steps: int, max_seq_length: int) -> float:
     """Project total training time from a measured step.
 
     Step count alone cannot bound runtime: measured cost per step ranged from 0.07s (short
@@ -361,11 +362,18 @@ def project_training_seconds(model, texts, batch_size: int, steps: int, args_max
     try:
         measured = measure_step_seconds(model, texts, batch_size)
         # The measurement covers forward+backward, which is most of a step but not all of it: the
-        # optimizer update, pair-batch assembly and data loading are not included. Measured
-        # shortfall against real runs of the same config was 5% on cpu-basic (2.384 vs 2.508) and
-        # 22% on t4-small (0.068 vs 0.0875). MEASUREMENT_MARGIN covers both, because a gate should
-        # err towards over-estimating — the cost of that is an --allow-slow-training flag, while
-        # the cost of under-estimating is the multi-hour job this exists to prevent.
+        # optimizer update, pair-batch assembly and data loading are not included. Raw shortfall
+        # against real runs of the same config, measured AFTER the full-batch fix:
+        #   2-class cpu-basic  8.01 vs 8.41 actual   -5%
+        #   4-class cpu-basic  2.39 vs 2.51 actual   -5%
+        #   4-class t4-small   0.055 vs 0.0875       -37%
+        # The margin leaves CPU over-reading by ~28%, which is the side a refusal gate should err
+        # on, and leaves GPU under-reading by ~15%. That GPU looseness is accepted, but NOT
+        # because GPU runs never approach the budget — 200 classes at 8/class is ~159k steps,
+        # nearly four hours on a T4, so they certainly do. It is accepted because a 15% under-read
+        # only changes the verdict within 15% of the boundary, and the failure there is a job that
+        # runs modestly over the budget the user set, not the multi-hour runaway this exists to
+        # catch. Far from the boundary the answer is the same either way.
         per_step = measured * MEASUREMENT_MARGIN
         logger.info(
             "Measured %.3fs per training step (forward+backward); using %.3fs with margin.",
@@ -377,7 +385,7 @@ def project_training_seconds(model, texts, batch_size: int, steps: int, args_max
         torch.cuda.empty_cache()
         sys.exit(
             f"Out of GPU memory timing a single training step at --batch-size {batch_size} and "
-            f"--max-seq-length {args_max_seq_hint}. Training would fail the same way. Lower "
+            f"--max-seq-length {max_seq_length}. Training would fail the same way. Lower "
             "--batch-size or --max-seq-length, or use a larger flavor."
         )
     except Exception as error:
