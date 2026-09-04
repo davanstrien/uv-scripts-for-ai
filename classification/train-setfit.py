@@ -33,6 +33,7 @@ NOTE: a SetFit model is a sentence-transformer body plus a scikit-learn head. It
 
 import argparse
 import logging
+import random
 import os
 import sys
 import time
@@ -91,6 +92,14 @@ SCRIPT_URL = (
     "https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py"
 )
 
+# Single-seed few-shot accuracy moves by roughly this much on its own (measured across body
+# models on one dataset), so any lift smaller than this is not evidence of anything.
+NOISE_BAND = 0.05
+
+# Training-step cost as a multiple of encoding the same texts. Calibrated on a measured run,
+# not derived; see project_training_seconds.
+STEP_COST_FACTOR = 5
+
 DEFAULT_BODY = "sentence-transformers/all-MiniLM-L6-v2"
 
 
@@ -133,6 +142,30 @@ def normalise_label_column(dataset: Dataset, label_column: str) -> Dataset:
     # cast_column, not map: map re-casts its output back to the column's EXISTING feature, so
     # returning str() from a map over an int64 column silently converts straight back to int64.
     return dataset.cast_column(label_column, Value("string"))
+
+
+def drop_unlabelled_rows(dataset: Dataset, label_column: str, split_name: str) -> Dataset:
+    """Remove rows whose label is missing or blank.
+
+    Real-world catalogue data carries missing values, and a blank string is silently a valid
+    class name: biglam/hansard_speech trains a "" party class unless this runs. Dropping is the
+    right default — an unlabelled row is not a class, and keeping it teaches the model to
+    predict "no label".
+    """
+    def has_label(example) -> bool:
+        value = example[label_column]
+        if value is None:
+            return False
+        return not (isinstance(value, str) and not value.strip())
+
+    kept = dataset.filter(has_label)
+    dropped = len(dataset) - len(kept)
+    if dropped:
+        logger.warning(
+            "Dropped %d %s rows with a missing or blank '%s' (%d remain).",
+            dropped, split_name, label_column, len(kept),
+        )
+    return kept
 
 
 def resolve_label_names(dataset: Dataset, label_column: str) -> list[str]:
@@ -204,12 +237,55 @@ def evaluate(model, eval_data, text_column, label_column, label_names) -> dict:
     if hasattr(predictions, "tolist"):
         predictions = predictions.tolist()
 
+    # The majority-class rate is the floor any classifier must clear to be worth having. Without
+    # it a number like 0.37 reads as "a model"; against a 0.35 floor it reads as "nothing learned".
+    majority = Counter(gold).most_common(1)[0][1] / len(gold)
+
     return {
         "accuracy": round(accuracy_score(gold, predictions), 4),
+        "majority_baseline": round(majority, 4),
         "f1_macro": round(f1_score(gold, predictions, average="macro", zero_division=0), 4),
         "eval_examples": len(gold),
         "predict_seconds": round(elapsed, 1),
     }
+
+
+def project_training_seconds(model, texts, batch_size: int, steps: int) -> float:
+    """Time real encodes on real texts, then project the whole run.
+
+    Step count alone cannot bound runtime: across measured runs one step ranged from 0.07s (short
+    utterances on a T4) to 11.2s (long parliamentary speeches on CPU), a 160x spread driven by
+    hardware and document length. A 2,055-step job cleared a 5,000-step budget and then ran for
+    six hours. So measure.
+
+    Two things the first version of this got wrong, both worth six times the answer:
+    the FIRST encode pays torch warmup and thread setup, and taking texts[:n] samples whatever
+    happens to be at the top of the corpus. Warm up first, then time a random draw.
+
+    A training step pushes batch_size PAIRS (2 x batch_size texts) through forward and backward.
+    Theory says backward is about twice forward, giving a factor of three — but measured against
+    a real run (ag_news, MiniLM, cpu-basic: predicted 1.50 s/step, actual 2.42) that under-reads
+    by nearly 40%. STEP_COST_FACTOR is set from that measurement, and deliberately rounded up:
+    this is a refusal gate, so over-estimating merely prompts --allow-slow-training, while
+    under-estimating waves through the six-hour job the gate exists to stop.
+    """
+    pool = list(texts)
+    sample_size = min(max(2 * batch_size, 2), len(pool))
+    rng = random.Random(0)
+    warmup = rng.sample(pool, sample_size)
+    timed = rng.sample(pool, sample_size)
+
+    # Discarded: the first encode is dominated by one-off setup, not by the texts.
+    model.model_body.encode(warmup, batch_size=batch_size, show_progress_bar=False)
+
+    started = time.time()
+    model.model_body.encode(timed, batch_size=batch_size, show_progress_bar=False)
+    encode_seconds = time.time() - started
+
+    per_step = encode_seconds * STEP_COST_FACTOR
+    logger.info("Measured %.2fs to encode %d texts -> ~%.1fs per step.",
+                encode_seconds, sample_size, per_step)
+    return per_step * steps
 
 
 def estimate_training_steps(per_class, batch_size, num_epochs, strategy) -> tuple[int, int]:
@@ -384,21 +460,25 @@ def main(args) -> None:
     train_pool = normalise_label_column(train_pool, args.label_column)
     eval_data = normalise_label_column(eval_data, args.label_column)
 
-    label_names = resolve_label_names(train_pool, args.label_column)
-    logger.info("Found %d classes: %s", len(label_names), label_names)
-    if len(label_names) < 2:
-        sys.exit(f"Only one class found in '{args.label_column}'. A classifier needs two or more.")
-
+    # Cap BEFORE filtering. Both caps are O(1) selects while the blank-label filter is a full
+    # scan, and on a 2.4M-row corpus that ordering was eight minutes of preflight before a single
+    # training step. sample_dataset also calls .to_pandas() on whatever pool it is handed, which
+    # would OOM a cpu-basic job outright. The cap samples randomly, so a very rare class can be
+    # thinned by it.
+    if args.max_train_pool and len(train_pool) > args.max_train_pool:
+        train_pool = train_pool.shuffle(seed=args.seed).select(range(args.max_train_pool))
+        logger.info("Capped train pool at %d rows before sampling.", args.max_train_pool)
     if args.max_eval_samples and len(eval_data) > args.max_eval_samples:
         eval_data = eval_data.shuffle(seed=args.seed).select(range(args.max_eval_samples))
         logger.info("Capped eval set at %d examples.", args.max_eval_samples)
 
-    # sample_dataset calls .to_pandas() on the whole pool, which would OOM a cpu-basic job on a
-    # multi-million-row dataset. Capping first keeps the CPU path viable; the cap samples
-    # randomly, so a very rare class can be thinned by it.
-    if args.max_train_pool and len(train_pool) > args.max_train_pool:
-        train_pool = train_pool.shuffle(seed=args.seed).select(range(args.max_train_pool))
-        logger.info("Capped train pool at %d rows before sampling.", args.max_train_pool)
+    train_pool = drop_unlabelled_rows(train_pool, args.label_column, "train")
+    eval_data = drop_unlabelled_rows(eval_data, args.label_column, "eval")
+
+    label_names = resolve_label_names(train_pool, args.label_column)
+    logger.info("Found %d classes: %s", len(label_names), label_names)
+    if len(label_names) < 2:
+        sys.exit(f"Only one class found in '{args.label_column}'. A classifier needs two or more.")
 
     train_data = sample_dataset(
         train_pool, label_column=args.label_column, num_samples=args.num_samples, seed=args.seed
@@ -419,17 +499,6 @@ def main(args) -> None:
     logger.info(
         "Contrastive pairs: %d -> %d optimizer steps (%s).", pairs, steps, args.sampling_strategy
     )
-    if steps > 5_000 and args.sampling_strategy != "undersampling":
-        _, cheaper = estimate_training_steps(
-            per_class, args.batch_size, args.num_epochs, "undersampling"
-        )
-        logger.warning(
-            "That is a lot of steps. Pair count grows with the SQUARE of the training set, so "
-            "many classes get expensive fast. --sampling-strategy undersampling would need %d "
-            "steps instead; fewer --num-samples or a GPU flavor also help.",
-            cheaper,
-        )
-
     logger.info("Loading body model %s", args.body_model)
     model = SetFitModel.from_pretrained(args.body_model, labels=label_names)
     model.model_body.max_seq_length = args.max_seq_length
@@ -440,6 +509,34 @@ def main(args) -> None:
     else:
         logger.info("DEVICE: cpu")
     logger.info("DEVICE: body model is on %s", model.model_body.device)
+
+    projected = project_training_seconds(model, train_data[args.text_column], args.batch_size, steps)
+    logger.info("Projected training time: %.0f min (%d steps).", projected / 60, steps)
+    if projected / 60 > args.max_minutes and not args.allow_slow_training:
+        _, cheaper_steps = estimate_training_steps(
+            per_class, args.batch_size, args.num_epochs, "undersampling"
+        )
+        cheaper_minutes = projected / 60 * cheaper_steps / max(steps, 1)
+        if cheaper_minutes <= args.max_minutes:
+            suggestion = (
+                f"  --sampling-strategy undersampling  ->  {cheaper_steps} steps "
+                f"(~{cheaper_minutes:.0f} min, within budget)"
+            )
+        else:
+            suggestion = (
+                f"  --sampling-strategy undersampling  ->  {cheaper_steps} steps "
+                f"(~{cheaper_minutes:.0f} min — still over budget on this hardware)"
+            )
+        sys.exit(
+            f"Refusing to start: projected {projected / 60:.0f} min of training exceeds "
+            f"--max-minutes ({args.max_minutes}).\n"
+            f"Measured on this hardware with your actual texts, so it accounts for both the pair "
+            f"count and how long your documents are.\n"
+            f"{suggestion}\n"
+            f"  or lower --num-samples / --max-seq-length, use a GPU flavor, "
+            f"or pass --allow-slow-training."
+        )
+
 
     training_args = TrainingArguments(
         batch_size=args.batch_size,
@@ -464,6 +561,34 @@ def main(args) -> None:
 
     metrics = evaluate(model, eval_data, args.text_column, args.label_column, label_names)
     logger.info("Metrics: %s", metrics)
+
+    # Two floors matter, and the majority class is only the lower one. Single-seed few-shot
+    # results move by ~5 points on their own, so a lift inside that band is not a result.
+    # The floor that actually binds is the free zero-shot arm: on dair-ai/emotion this script
+    # scores 0.370 against a 0.352 majority — passing a naive check — while SetFit's templated
+    # zero-shot, which needs no labels at all, scores 0.591.
+    lift = metrics["accuracy"] - metrics["majority_baseline"]
+    if lift <= 0:
+        logger.warning(
+            "BELOW FLOOR: accuracy %.3f does not beat always predicting the majority class "
+            "(%.3f). This model is not worth deploying.",
+            metrics["accuracy"], metrics["majority_baseline"],
+        )
+    elif lift < NOISE_BAND:
+        logger.warning(
+            "WITHIN NOISE OF FLOOR: accuracy %.3f versus a %.3f majority class is only %.1f "
+            "points, and single-seed few-shot results vary by about %.0f. Treat this as 'no "
+            "signal demonstrated', not as a working classifier. Re-run with other seeds before "
+            "believing it.",
+            metrics["accuracy"], metrics["majority_baseline"], lift * 100, NOISE_BAND * 100,
+        )
+    else:
+        logger.info("Beats the majority-class floor by %.1f points.", lift * 100)
+
+    logger.warning(
+        "The majority class is the LOWER floor. Before trusting this model, compare it against "
+        "zero-shot with no labels at all — on some tasks that wins outright."
+    )
 
     logger.info("Pushing to %s (private=%s)", args.output_repo, args.private)
     model.push_to_hub(args.output_repo, private=args.private, token=token)
@@ -505,6 +630,10 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size (default: 16)")
     parser.add_argument("--max-seq-length", type=int, default=256, help="Max sequence length (default: 256)")
     parser.add_argument("--seed", type=int, default=42, help="Seed (default: 42)")
+    parser.add_argument("--max-minutes", type=int, default=60,
+                        help="Refuse to start if projected training exceeds this (default: 60)")
+    parser.add_argument("--allow-slow-training", action="store_true",
+                        help="Override the --max-minutes refusal")
     parser.add_argument("--private", action="store_true", help="Make the output model repo private")
     parser.add_argument("--hf-token", help="HF token (or set HF_TOKEN)")
     return parser.parse_args()
