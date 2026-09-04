@@ -82,7 +82,7 @@ A self-contained, pinned script is easy to run and reuse, for a few reasons:
 | **embeddings** | Embed text/images (auto-batch, prompt-aware); build a searchable Lance vector DB on the Hub | [`embeddings`](https://huggingface.co/datasets/uv-scripts/embeddings) |
 | **embeddings & atlas** | Embed a dataset; build an interactive map | [`build-atlas`](https://huggingface.co/datasets/uv-scripts/build-atlas) |
 | **data processing** | Filter / dedup / stats over large datasets | [`dataset-stats`](https://huggingface.co/datasets/uv-scripts/dataset-stats) · [`deduplication`](https://huggingface.co/datasets/uv-scripts/deduplication) |
-| **classification** | Fine-tune an encoder classifier (LFM2.5-Encoder, ModernBERT, …) or zero-shot classify with an LLM | [`classification`](https://huggingface.co/datasets/uv-scripts/classification) |
+| **classification** | Fine-tune an encoder classifier (LFM2.5-Encoder, ModernBERT, …), few-shot train one with SetFit on CPU, or zero-shot classify with an LLM | [`classification`](https://huggingface.co/datasets/uv-scripts/classification) |
 | **dataset creation** | Turn PDFs / image URLs into Hub datasets | [`dataset-creation`](https://huggingface.co/datasets/uv-scripts/dataset-creation) · [`iiif-tiles`](https://huggingface.co/datasets/uv-scripts/iiif-tiles) |
 | **synthetic data** | Generate datasets with LLMs | [`synthetic-data`](https://huggingface.co/datasets/uv-scripts/synthetic-data) |
 | **inference** | Run any open LLM / VLM over a dataset | [`vllm`](https://huggingface.co/datasets/uv-scripts/vllm) · [`openai-oss`](https://huggingface.co/datasets/uv-scripts/openai-oss) · [`transformers-inference`](https://huggingface.co/datasets/uv-scripts/transformers-inference) |

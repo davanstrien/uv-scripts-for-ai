@@ -1,6 +1,6 @@
 ---
 viewer: false
-tags: [uv-script, classification, fine-tuning, vllm, structured-outputs, gpu-required, hf-jobs]
+tags: [uv-script, classification, fine-tuning, few-shot, setfit, vllm, structured-outputs, hf-jobs]
 ---
 
 # Classification Scripts
@@ -10,11 +10,20 @@ Text classification on [HF Jobs](https://huggingface.co/docs/huggingface_hub/gui
 | Script | What it does |
 |--------|--------------|
 | [`train-classifier.py`](#fine-tune-a-classifier-train-classifierpy) | **Fine-tune** an encoder into a classifier (default: [LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M)) and push it to the Hub |
+| [`train-setfit.py`](#few-shot-with-setfit-train-setfitpy) | **Few-shot** train a classifier from 8-64 labels per class with [SetFit](https://github.com/huggingface/setfit) — runs on CPU |
 | [`classify-dataset.py`](#zero-shot-classification-classify-datasetpy) | **Zero-shot** classify a dataset with an instruction LLM (SmolLM3 + vLLM, structured outputs) |
 | `classify-dataset-sglang.py` | Zero-shot variant on SGLang (reasoning-aware `<think>` models) |
 
-Rule of thumb: zero-shot to bootstrap labels or for one-off jobs; fine-tune when you have
-(or have bootstrapped) a few thousand labels and want a small, fast, dedicated model.
+Pick by how many labels you have:
+
+| Labels you have | Use | Hardware |
+|---|---|---|
+| none | `classify-dataset.py` to bootstrap labels, or for one-off jobs | GPU |
+| ~8-64 per class | `train-setfit.py` | CPU |
+| a few thousand | `train-classifier.py` | GPU |
+
+The rungs chain: bootstrap labels with `classify-dataset.py`, review them, then train a small
+dedicated model on what you kept.
 
 ## Fine-tune a classifier (`train-classifier.py`)
 
@@ -64,6 +73,103 @@ metadata on datasets that lack it.
 produces a plain, vLLM-servable model — pair it with
 [`uv-scripts/vllm`](https://huggingface.co/datasets/uv-scripts/vllm)'s
 `classify-dataset.py` for large-scale batch inference with the model you just trained.
+
+## Few-shot with SetFit (`train-setfit.py`)
+
+Trains a [SetFit](https://github.com/huggingface/setfit) classifier from a handful of labelled
+examples per class. SetFit finetunes a sentence-transformer body on contrastive pairs, then fits a
+logistic regression head on the resulting embeddings — no GPU required.
+
+- **Default body**: [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (22M), chosen for CPU speed. Swap it with `--body-model`.
+- **Evaluation split** follows the same precedence as `train-classifier.py`: `--eval-split` if given, else `validation`, else `test`, else a stratified carve-out of `--eval-fraction` from train.
+- **Single-label only.** A multi-label column exits with a pointer to `train-classifier.py`.
+- **Metrics match `train-classifier.py`** (accuracy + macro F1 on a held-out split), so the two rungs are directly comparable.
+- **`--num-samples`** sets labelled examples per class (default 8). **`--sampling-strategy`** controls contrastive pairing: `oversampling` (default), `undersampling`, `unique`.
+- **Every run reports a floor.** `majority_baseline` sits next to accuracy, and the run warns when the model fails to beat it — or beats it by less than the ~5-point run-to-run noise of few-shot training.
+- **It refuses jobs it cannot finish.** Before training it encodes a sample of your actual texts on the actual hardware, projects the total, and exits above `--max-minutes` (default 60) rather than discovering it at the timeout.
+- **Rows with missing or blank labels are dropped**, with a count. A blank string is otherwise a perfectly valid class name.
+
+```bash
+# 8 labels per class, on CPU
+hf jobs uv run --flavor cpu-basic --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \
+  fancyzhx/ag_news username/ag-news-setfit --num-samples 8
+
+# larger body on a GPU for the accuracy ceiling
+hf jobs uv run --flavor t4-small --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \
+  fancyzhx/ag_news username/ag-news-setfit \
+  --body-model sentence-transformers/paraphrase-mpnet-base-v2
+```
+
+### Measured
+
+8 labels per class, seed 42, evaluated on each dataset's own held-out split (capped at 500
+examples, 1000 for banking77):
+
+| Dataset | Classes | Labels used | Body | Flavor | Training | Accuracy | Macro F1 |
+|---|---|---|---|---|---|---|---|
+| [`SetFit/enron_spam`](https://huggingface.co/datasets/SetFit/enron_spam) | 2 | 16 | MiniLM-L6 | `cpu-basic` | 78s | 0.924 | 0.924 |
+| [`fancyzhx/ag_news`](https://huggingface.co/datasets/fancyzhx/ag_news) | 4 | 32 | MiniLM-L6 | `cpu-basic` | 118s | 0.804 | 0.807 |
+| [`legacy-datasets/banking77`](https://huggingface.co/datasets/legacy-datasets/banking77) | 77 | 616 | MiniLM-L6 | `t4-small` | 18s | 0.803 | 0.789 |
+| [`dair-ai/emotion`](https://huggingface.co/datasets/dair-ai/emotion) | 6 | 48 | MiniLM-L6 | `cpu-basic` | 216s | 0.370 | 0.325 |
+
+**Single seed each — these do not rank models or predict your dataset.** Few-shot results vary
+substantially with which examples happen to get sampled; SetFit's own benchmarks report mean and
+standard deviation across ten seeds for exactly this reason. Run your own task before trusting
+any of these numbers.
+
+`emotion` is the honest counter-example: six overlapping affect classes are hard from 8 examples
+each, and swapping the body barely moved it (`bge-small` 0.418, `paraphrase-mpnet-base-v2` 0.410).
+SetFit's docs report **0.591 on this dataset with no labels at all**, using synthetic examples
+generated from the class names — so when classes are semantically well-named but hard to separate
+from a handful of samples, the zero-shot route may beat few-shot.
+
+### The majority class is the lower floor
+
+`dair-ai/emotion` is the cautionary case. This script scores **0.370** on it; the majority class
+is **0.352**, so a naive "did it beat the baseline" check passes. SetFit's own documentation
+reports **0.591 on the same dataset with no labels at all**, using examples templated from the
+class names. Swapping the body barely moves it (`bge-small` 0.418, `paraphrase-mpnet-base-v2`
+0.410), so this is the task resisting few-shot learning, not the model being wrong.
+
+The lesson generalises: before spending labels, measure what free costs. When classes are
+well-named but semantically entangled, zero-shot can win outright.
+
+### Real-world data: a worked failure
+
+`biglam/hansard_speech` (2.7M parliamentary speeches, predicting `party` from `speech`) is the
+case where none of the convenient properties hold, and it is instructive precisely because it
+produces no score:
+
+- **No held-out split**, so the eval set has to be carved from train — the numbers stop being
+  comparable to anything published.
+- **~9.5% of rows have a blank `party`**, which without the drop trains an `""` class.
+- **28 parties after cleaning, nine of which cannot supply 8 examples** (`Respect` 4,
+  `Independent SDP` 2, `Change UK` 1). The few-shot framing does not hold at any budget.
+- **1,878 steps at ~11s/step on CPU** — the script refuses it, projecting well past an hour.
+
+The model card discloses the first three automatically, so a run on messy data cannot quietly
+report a clean-looking number.
+
+### Many classes: watch the pair count
+
+SetFit trains on pairs drawn from every combination of training examples, so the pair count grows
+with the **square** of the training-set size — which is `--num-samples` x number of classes. The
+script logs the estimate before training starts:
+
+| Dataset | Strategy | Pairs | Steps |
+|---|---|---|---|
+| ag_news (4 classes x 8) | `oversampling` (default) | 768 | 48 |
+| banking77 (77 classes x 8) | `oversampling` (default) | 374,528 | 23,408 |
+| banking77 (77 classes x 8) | `undersampling` | 4,312 | 270 |
+
+At 77 classes the default would take roughly 15 hours on `cpu-basic`; `--sampling-strategy
+undersampling` finished in 18 seconds on a T4. Above 5,000 estimated steps the script warns and
+names the cheaper alternative.
+
+> **Note**: a SetFit model is a sentence-transformer body plus a scikit-learn head. Load it with
+> `SetFitModel.from_pretrained(repo)`, not `AutoModelForSequenceClassification`.
 
 ---
 
