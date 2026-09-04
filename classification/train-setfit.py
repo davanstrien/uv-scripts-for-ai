@@ -91,12 +91,6 @@ SCRIPT_URL = (
 # models on one dataset), so any lift smaller than this is not evidence of anything.
 NOISE_BAND = 0.05
 
-# Training-step cost as a multiple of encoding the same texts — measured, not derived, and
-# device-dependent because GPU encodes are dominated by launch overhead rather than compute.
-# CPU: predicted 1.50 s/step at factor 3 against 2.42 actual -> 4.8. GPU: factor 5 projected
-# 31 min against 17.7 actual -> 2.9. See project_training_seconds.
-STEP_COST_FACTOR_CPU = 5
-STEP_COST_FACTOR_GPU = 3
 
 # MiniLM-L6 is the default because it makes the CPU path viable: ~4.4x faster than
 # paraphrase-mpnet-base-v2 on cpu-basic (207s vs 915s for 8 examples/class on ag_news). It is
@@ -290,42 +284,78 @@ def warn_on_truncation(model, texts, max_seq_length: int) -> None:
     )
 
 
-def project_training_seconds(model, texts, batch_size: int, steps: int) -> float:
-    """Time real encodes on real texts, then project the whole run.
+def measure_step_seconds(model, texts, batch_size: int) -> float:
+    """Time a real forward+backward on real texts, on the hardware that will train.
 
-    Step count alone cannot bound runtime: across measured runs one step ranged from 0.07s (short
-    utterances on a T4) to 11.2s (long parliamentary speeches on CPU), a 160x spread driven by
-    hardware and document length. A 2,055-step job cleared a 5,000-step budget and then ran for
-    six hours. So measure.
+    Earlier versions timed an ENCODE and multiplied by a constant standing in for the backward
+    pass. That constant had to be fitted per device (5 on CPU, 3 on GPU) and each value rested on
+    a single observation — the same one-datapoint reasoning that produced two other wrong guards
+    today. A training step is a forward and a backward over 2 x batch_size texts, so time exactly
+    that instead and delete the constant.
 
-    Two things the first version of this got wrong, both worth six times the answer:
-    the FIRST encode pays torch warmup and thread setup, and taking texts[:n] samples whatever
-    happens to be at the top of the corpus. Warm up first, then time a random draw.
-
-    A training step pushes batch_size PAIRS (2 x batch_size texts) through forward and backward.
-    Theory says backward is about twice forward, giving a factor of three — but measured against
-    a real run (ag_news, MiniLM, cpu-basic: predicted 1.50 s/step, actual 2.42) that under-reads
-    by nearly 40%. STEP_COST_FACTOR is set from that measurement, and deliberately rounded up:
-    this is a refusal gate, so over-estimating merely prompts --allow-slow-training, while
-    under-estimating waves through the six-hour job the gate exists to stop.
+    The loss here is a stand-in, not SetFit's CoSENTLoss: cost is dominated by the transformer
+    forward and backward over the batch, not by the scalar reduction on top.
     """
-    pool = list(texts)
-    sample_size = min(max(2 * batch_size, 2), len(pool))
-    rng = random.Random(0)
-    warmup = rng.sample(pool, sample_size)
-    timed = rng.sample(pool, sample_size)
+    body = model.model_body
+    device = body.device
+    sample = random.sample(list(texts), min(2 * batch_size, len(texts)))
 
-    # Discarded: the first encode is dominated by one-off setup, not by the texts.
-    model.model_body.encode(warmup, batch_size=batch_size, show_progress_bar=False)
+    def one_step() -> None:
+        features = body.tokenize(sample)
+        # tokenize() does not return tensors for every key, so move only what can move.
+        features = {
+            key: value.to(device) if hasattr(value, "to") else value
+            for key, value in features.items()
+        }
+        embeddings = body(features)["sentence_embedding"]
+        embeddings.pow(2).mean().backward()
+        body.zero_grad(set_to_none=True)
 
-    started = time.time()
-    model.model_body.encode(timed, batch_size=batch_size, show_progress_bar=False)
-    encode_seconds = time.time() - started
+    was_training = body.training
+    body.train()
+    try:
+        one_step()  # warmup: first pass pays kernel/thread setup, not per-step cost
+        timings = []
+        for _ in range(3):
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()  # CUDA is async; without this we time the launch only
+            started = time.time()
+            one_step()
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            timings.append(time.time() - started)
+    finally:
+        body.zero_grad(set_to_none=True)
+        if not was_training:
+            body.eval()
 
-    factor = STEP_COST_FACTOR_GPU if torch.cuda.is_available() else STEP_COST_FACTOR_CPU
-    per_step = encode_seconds * factor
-    logger.info("Measured %.2fs to encode %d texts -> ~%.1fs per step.",
-                encode_seconds, sample_size, per_step)
+    return sorted(timings)[1]
+
+
+def project_training_seconds(model, texts, batch_size: int, steps: int) -> float:
+    """Project total training time from a measured step.
+
+    Step count alone cannot bound runtime: measured cost per step ranged from 0.07s (short
+    utterances on a T4) to 11.2s (long speeches on CPU), a 160x spread driven by hardware and
+    document length. A 2,055-step job cleared a 5,000-step budget and then ran for six hours.
+    """
+    try:
+        measured = measure_step_seconds(model, texts, batch_size)
+        # The measurement covers forward+backward, which is most of a step but not all of it: the
+        # optimizer update, pair-batch assembly and data loading are not included. Measured
+        # shortfall against real runs of the same config was 5% on cpu-basic (2.384 vs 2.508) and
+        # 22% on t4-small (0.068 vs 0.0875). The margin covers both, because a refusal gate should
+        # err towards over-estimating — the cost of that is an --allow-slow-training flag, while
+        # the cost of under-estimating is the multi-hour job this exists to prevent.
+        per_step = measured * 1.25
+        logger.info(
+            "Measured %.3fs per training step (forward+backward); using %.3fs with margin.",
+            measured, per_step,
+        )
+    except Exception as error:
+        # Never let the guard's own failure block a legitimate run.
+        logger.warning("Could not time a training step (%s); skipping the time budget.", error)
+        return 0.0
     return per_step * steps
 
 
@@ -611,8 +641,9 @@ def main(args) -> None:
     )
 
     projected = project_training_seconds(model, train_data[args.text_column], args.batch_size, steps)
-    logger.info("Projected training time: %.0f min (%d steps).", projected / 60, steps)
-    if projected / 60 > args.max_minutes and not args.allow_slow_training:
+    if projected:
+        logger.info("Projected training time: %.0f min (%d steps).", projected / 60, steps)
+    if projected and projected / 60 > args.max_minutes and not args.allow_slow_training:
         _, cheaper_steps = estimate_training_steps(
             per_class, args.batch_size, args.num_epochs, "undersampling"
         )
