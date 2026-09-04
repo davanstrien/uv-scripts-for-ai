@@ -91,6 +91,10 @@ SCRIPT_URL = (
 # models on one dataset), so any lift smaller than this is not evidence of anything.
 NOISE_BAND = 0.05
 
+# Applied to the measured step time. Covers what the measurement omits — optimizer update,
+# pair-batch assembly, data loading — measured at 5% (CPU) and 22% (GPU) against real runs.
+MEASUREMENT_MARGIN = 1.35
+
 
 # MiniLM-L6 is the default because it makes the CPU path viable: ~4.4x faster than
 # paraphrase-mpnet-base-v2 on cpu-basic (207s vs 915s for 8 examples/class on ag_news). It is
@@ -267,7 +271,10 @@ def warn_on_truncation(model, texts, max_seq_length: int) -> None:
     letting it be discovered in the scores.
     """
     tokenizer = model.model_body.tokenizer
-    sample = list(texts)[:200]
+    # No internal cap: the caller decides the sample, and it deliberately mixes train and eval.
+    # An earlier version re-sliced to the first 200 here, which meant the eval texts appended by
+    # the caller were never actually looked at.
+    sample = list(texts)
     lengths = [
         len(tokenizer.encode(text, truncation=False, add_special_tokens=True)) for text in sample
     ]
@@ -298,9 +305,17 @@ def measure_step_seconds(model, texts, batch_size: int) -> float:
     """
     body = model.model_body
     device = body.device
-    sample = random.sample(list(texts), min(2 * batch_size, len(texts)))
+    pool = list(texts)
+    rng = random.Random(0)
 
-    def one_step() -> None:
+    def draw() -> list:
+        # A real step always sees 2 x batch_size texts because pairs are drawn WITH repetition.
+        # Sampling min(2*batch_size, len(pool)) instead measured a short batch whenever the
+        # few-shot set was smaller than a batch — a 2-class 8-shot run at the default batch size
+        # measured half a step and projected it as a whole one.
+        return rng.choices(pool, k=2 * batch_size)
+
+    def one_step(sample) -> None:
         features = body.tokenize(sample)
         # tokenize() does not return tensors for every key, so move only what can move.
         features = {
@@ -314,13 +329,17 @@ def measure_step_seconds(model, texts, batch_size: int) -> float:
     was_training = body.training
     body.train()
     try:
-        one_step()  # warmup: first pass pays kernel/thread setup, not per-step cost
+        one_step(draw())  # warmup: first pass pays kernel/thread setup, not per-step cost
         timings = []
         for _ in range(3):
+            # Draw a FRESH batch each time. Reusing one sample collapses timing noise but not
+            # batch-composition noise, and padded length drives cost — on a corpus mixing short
+            # interjections with long speeches, one unlucky draw sets the whole estimate.
+            sample = draw()
             if torch.cuda.is_available():
                 torch.cuda.synchronize()  # CUDA is async; without this we time the launch only
             started = time.time()
-            one_step()
+            one_step(sample)
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             timings.append(time.time() - started)
@@ -332,7 +351,7 @@ def measure_step_seconds(model, texts, batch_size: int) -> float:
     return sorted(timings)[1]
 
 
-def project_training_seconds(model, texts, batch_size: int, steps: int) -> float:
+def project_training_seconds(model, texts, batch_size: int, steps: int, args_max_seq_hint: int) -> float:
     """Project total training time from a measured step.
 
     Step count alone cannot bound runtime: measured cost per step ranged from 0.07s (short
@@ -344,16 +363,27 @@ def project_training_seconds(model, texts, batch_size: int, steps: int) -> float
         # The measurement covers forward+backward, which is most of a step but not all of it: the
         # optimizer update, pair-batch assembly and data loading are not included. Measured
         # shortfall against real runs of the same config was 5% on cpu-basic (2.384 vs 2.508) and
-        # 22% on t4-small (0.068 vs 0.0875). The margin covers both, because a refusal gate should
+        # 22% on t4-small (0.068 vs 0.0875). MEASUREMENT_MARGIN covers both, because a gate should
         # err towards over-estimating — the cost of that is an --allow-slow-training flag, while
         # the cost of under-estimating is the multi-hour job this exists to prevent.
-        per_step = measured * 1.25
+        per_step = measured * MEASUREMENT_MARGIN
         logger.info(
             "Measured %.3fs per training step (forward+backward); using %.3fs with margin.",
             measured, per_step,
         )
+    except torch.cuda.OutOfMemoryError:
+        # A step that will not fit now will not fit in training either. Fail here, cheaply and
+        # clearly, rather than proceeding on a fragmented allocator and OOMing mid-run.
+        torch.cuda.empty_cache()
+        sys.exit(
+            f"Out of GPU memory timing a single training step at --batch-size {batch_size} and "
+            f"--max-seq-length {args_max_seq_hint}. Training would fail the same way. Lower "
+            "--batch-size or --max-seq-length, or use a larger flavor."
+        )
     except Exception as error:
-        # Never let the guard's own failure block a legitimate run.
+        # Any other failure of the guard itself must not block a legitimate run.
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         logger.warning("Could not time a training step (%s); skipping the time budget.", error)
         return 0.0
     return per_step * steps
@@ -640,7 +670,9 @@ def main(args) -> None:
         args.max_seq_length,
     )
 
-    projected = project_training_seconds(model, train_data[args.text_column], args.batch_size, steps)
+    projected = project_training_seconds(
+        model, train_data[args.text_column], args.batch_size, steps, args.max_seq_length
+    )
     if projected:
         logger.info("Projected training time: %.0f min (%d steps).", projected / 60, steps)
     if projected and projected / 60 > args.max_minutes and not args.allow_slow_training:
