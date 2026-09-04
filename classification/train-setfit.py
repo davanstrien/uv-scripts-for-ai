@@ -91,9 +91,12 @@ SCRIPT_URL = (
 # models on one dataset), so any lift smaller than this is not evidence of anything.
 NOISE_BAND = 0.05
 
-# Training-step cost as a multiple of encoding the same texts. Calibrated on a measured run,
-# not derived; see project_training_seconds.
-STEP_COST_FACTOR = 5
+# Training-step cost as a multiple of encoding the same texts — measured, not derived, and
+# device-dependent because GPU encodes are dominated by launch overhead rather than compute.
+# CPU: predicted 1.50 s/step at factor 3 against 2.42 actual -> 4.8. GPU: factor 5 projected
+# 31 min against 17.7 actual -> 2.9. See project_training_seconds.
+STEP_COST_FACTOR_CPU = 5
+STEP_COST_FACTOR_GPU = 3
 
 # MiniLM-L6 is the default because it makes the CPU path viable: ~4.4x faster than
 # paraphrase-mpnet-base-v2 on cpu-basic (207s vs 915s for 8 examples/class on ag_news). It is
@@ -249,6 +252,32 @@ def evaluate(model, eval_data, text_column, label_column) -> dict:
     }
 
 
+def warn_on_truncation(model, texts, max_seq_length: int) -> None:
+    """Say how much of the corpus is being cut off.
+
+    Truncation is silent and its consequence is not uniform: for short utterances it never fires,
+    while for long documents it can remove the very span that carries the label. The 256-token
+    default is right for the former and wrong for the latter, so measure and report rather than
+    letting it be discovered in the scores.
+    """
+    tokenizer = model.model_body.tokenizer
+    sample = list(texts)[:200]
+    lengths = [
+        len(tokenizer.encode(text, truncation=False, add_special_tokens=True)) for text in sample
+    ]
+    over = [n for n in lengths if n > max_seq_length]
+    if not over:
+        return
+
+    median_over = sorted(over)[len(over) // 2]
+    logger.warning(
+        "%d of %d sampled documents exceed --max-seq-length %d (median of those: %d tokens). "
+        "Everything past the limit is discarded before training and before prediction. If the "
+        "signal for your labels sits late in the document, raise --max-seq-length.",
+        len(over), len(sample), max_seq_length, median_over,
+    )
+
+
 def project_training_seconds(model, texts, batch_size: int, steps: int) -> float:
     """Time real encodes on real texts, then project the whole run.
 
@@ -281,7 +310,8 @@ def project_training_seconds(model, texts, batch_size: int, steps: int) -> float
     model.model_body.encode(timed, batch_size=batch_size, show_progress_bar=False)
     encode_seconds = time.time() - started
 
-    per_step = encode_seconds * STEP_COST_FACTOR
+    factor = STEP_COST_FACTOR_GPU if torch.cuda.is_available() else STEP_COST_FACTOR_CPU
+    per_step = encode_seconds * factor
     logger.info("Measured %.2fs to encode %d texts -> ~%.1fs per step.",
                 encode_seconds, sample_size, per_step)
     return per_step * steps
@@ -297,8 +327,15 @@ def estimate_training_steps(per_class, batch_size, num_epochs, strategy) -> tupl
     """
     counts = list(per_class.values())
     total = sum(counts)
-    positive = sum(comb(count, 2) for count in counts)
-    negative = comb(total, 2) - positive
+
+    # SetFit's shuffle_combinations defaults to replacement=True, i.e. np.triu_indices(n, 0) —
+    # the DIAGONAL is included, and those `total` self-pairs all count as positive. Verified
+    # against SetFit's own "Num unique pairs" on five runs: 2x4 -> 40, 4x8 -> 528, 2x8 -> 144,
+    # 3x8 -> 384, 77x8 -> 374,528. Negatives are cross-class, so they exclude the diagonal and
+    # must be computed from the combinations WITHOUT it.
+    same_class_pairs = sum(comb(count, 2) for count in counts)
+    positive = same_class_pairs + total
+    negative = comb(total, 2) - same_class_pairs
 
     if strategy == "oversampling":
         pairs = 2 * max(positive, negative)
@@ -541,6 +578,8 @@ def main(args) -> None:
     else:
         logger.info("DEVICE: cpu")
     logger.info("DEVICE: body model is on %s", model.model_body.device)
+
+    warn_on_truncation(model, train_data[args.text_column], args.max_seq_length)
 
     projected = project_training_seconds(model, train_data[args.text_column], args.batch_size, steps)
     logger.info("Projected training time: %.0f min (%d steps).", projected / 60, steps)
