@@ -1,6 +1,6 @@
 ---
 viewer: false
-tags: [uv-script, classification, fine-tuning, vllm, structured-outputs, gpu-required, hf-jobs]
+tags: [uv-script, classification, fine-tuning, few-shot, setfit, vllm, structured-outputs, hf-jobs]
 ---
 
 # Classification Scripts
@@ -10,11 +10,20 @@ Text classification on [HF Jobs](https://huggingface.co/docs/huggingface_hub/gui
 | Script | What it does |
 |--------|--------------|
 | [`train-classifier.py`](#fine-tune-a-classifier-train-classifierpy) | **Fine-tune** an encoder into a classifier (default: [LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M)) and push it to the Hub |
+| [`train-setfit.py`](#few-shot-with-setfit-train-setfitpy) | **Few-shot** train a classifier from 8-64 labels per class with [SetFit](https://github.com/huggingface/setfit) — runs on CPU |
 | [`classify-dataset.py`](#zero-shot-classification-classify-datasetpy) | **Zero-shot** classify a dataset with an instruction LLM (SmolLM3 + vLLM, structured outputs) |
 | `classify-dataset-sglang.py` | Zero-shot variant on SGLang (reasoning-aware `<think>` models) |
 
-Rule of thumb: zero-shot to bootstrap labels or for one-off jobs; fine-tune when you have
-(or have bootstrapped) a few thousand labels and want a small, fast, dedicated model.
+Pick by how many labels you have:
+
+| Labels you have | Use | Hardware |
+|---|---|---|
+| none | `classify-dataset.py` to bootstrap labels, or for one-off jobs | GPU |
+| ~8-64 per class | `train-setfit.py` | CPU |
+| a few thousand | `train-classifier.py` | GPU |
+
+The rungs chain: bootstrap labels with `classify-dataset.py`, review them, then train a small
+dedicated model on what you kept.
 
 ## Fine-tune a classifier (`train-classifier.py`)
 
@@ -64,6 +73,46 @@ metadata on datasets that lack it.
 produces a plain, vLLM-servable model — pair it with
 [`uv-scripts/vllm`](https://huggingface.co/datasets/uv-scripts/vllm)'s
 `classify-dataset.py` for large-scale batch inference with the model you just trained.
+
+## Few-shot with SetFit (`train-setfit.py`)
+
+Trains a [SetFit](https://github.com/huggingface/setfit) classifier from a handful of labelled
+examples per class. SetFit finetunes a sentence-transformer body on contrastive pairs, then fits a
+logistic regression head on the resulting embeddings — no GPU required.
+
+- **Default body**: [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (22M), chosen for CPU speed. Swap it with `--body-model`.
+- **Metrics match `train-classifier.py`** (accuracy + macro F1 on a held-out split), so the two rungs are directly comparable.
+- **`--num-samples`** sets labelled examples per class (default 8). **`--sampling-strategy`** controls contrastive pairing: `oversampling` (default), `undersampling`, `unique`.
+
+```bash
+# 8 labels per class, on CPU
+hf jobs uv run --flavor cpu-basic --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \
+  fancyzhx/ag_news username/ag-news-setfit --num-samples 8
+
+# larger body on a GPU for the accuracy ceiling
+hf jobs uv run --flavor t4-small --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \
+  fancyzhx/ag_news username/ag-news-setfit \
+  --body-model sentence-transformers/paraphrase-mpnet-base-v2
+```
+
+### Measured on `ag_news`
+
+8 labels per class, 500 held-out eval examples, seed 42:
+
+| Body model | Flavor | Training | Accuracy | Macro F1 | Total job |
+|---|---|---|---|---|---|
+| `all-MiniLM-L6-v2` (22M) | `cpu-basic` | 204s | 0.826 | 0.819 | 285s |
+| `paraphrase-mpnet-base-v2` (110M) | `t4-small` | 32s | 0.862 | 0.857 | 205s |
+| `paraphrase-mpnet-base-v2` (110M) | `cpu-basic` | 915s | — | — | 1015s |
+
+Single seed on one dataset. Few-shot results vary substantially with which examples get sampled,
+so treat these as indicative — SetFit's own benchmarks report mean and standard deviation across
+several seeds.
+
+> **Note**: a SetFit model is a sentence-transformer body plus a scikit-learn head. Load it with
+> `SetFitModel.from_pretrained(repo)`, not `AutoModelForSequenceClassification`.
 
 ---
 
