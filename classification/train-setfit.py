@@ -5,6 +5,8 @@
 #     "datasets>=4.0.0",
 #     "scikit-learn",
 #     "huggingface-hub",
+#     "torch",
+#     "transformers",
 # ]
 # ///
 """
@@ -34,6 +36,7 @@ import logging
 import os
 import sys
 import time
+from collections import Counter
 
 # tqdm reads TQDM_DISABLE when it is imported, so this must be set before any third-party import
 # pulls tqdm in — setting it later has no effect. Jobs logs have no TTY, so progress bars arrive
@@ -43,8 +46,8 @@ os.environ.setdefault("TQDM_DISABLE", "1")
 import datasets
 import torch
 import transformers
-from datasets import Dataset, load_dataset
-from huggingface_hub import ModelCard, login
+from datasets import ClassLabel, Dataset, Value, load_dataset
+from huggingface_hub import HfApi, ModelCard, login
 from huggingface_hub.utils import disable_progress_bars
 from setfit import SetFitModel, Trainer, TrainingArguments, sample_dataset
 from sklearn.metrics import accuracy_score, f1_score
@@ -79,42 +82,118 @@ def configure_logging() -> logging.Logger:
 
 logger = configure_logging()
 
-# MiniLM-L6 trains ~4.4x faster than paraphrase-mpnet-base-v2 on cpu-basic (207s vs 915s for
-# 8 examples/class on ag_news) for 3.6pp less accuracy (0.826 vs 0.862). The CPU-first default
-# matters more here than the ceiling; pass --body-model with a GPU flavor for the ceiling.
+# MiniLM-L6 is the default because it makes the CPU path viable: ~4.4x faster than
+# paraphrase-mpnet-base-v2 on cpu-basic (207s vs 915s for 8 examples/class on ag_news). It is
+# NOT chosen on accuracy — on ag_news's test split the two scored 0.804 and 0.788 respectively,
+# a gap well inside single-seed few-shot noise. Pass --body-model to try a larger body.
+SCRIPT_URL = (
+    "https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py"
+)
+
 DEFAULT_BODY = "sentence-transformers/all-MiniLM-L6-v2"
 
 
-def resolve_label_names(dataset: Dataset, label_column: str) -> list[str]:
-    """Return human-readable class names, falling back to stringified label values."""
+def check_label_column(dataset: Dataset, label_column: str) -> None:
+    """Fail early and clearly on a missing or multi-label column."""
+    if label_column not in dataset.column_names:
+        sys.exit(
+            f"Label column '{label_column}' not found. Columns are: {dataset.column_names}. "
+            "Pass --label-column."
+        )
+
+    # A Sequence/list feature carries an inner `feature`; that is the multi-label shape.
     feature = dataset.features.get(label_column)
-    if hasattr(feature, "names"):
+    if getattr(feature, "feature", None) is not None:
+        sys.exit(
+            f"Label column '{label_column}' is multi-label (a list per row). "
+            "train-setfit.py is single-label only — use train-classifier.py, which "
+            "auto-detects multi-label and tunes per-label thresholds."
+        )
+    if isinstance(dataset[label_column][0], list):
+        sys.exit(
+            f"Label column '{label_column}' holds lists (multi-label). "
+            "Use train-classifier.py instead."
+        )
+
+
+def normalise_label_column(dataset: Dataset, label_column: str) -> Dataset:
+    """Make the label column safe for SetFit's positional label mapping.
+
+    SetFit maps an integer prediction through `model.labels` BY POSITION, so integers are only
+    safe when they really are indices — which is true for a ClassLabel column and nothing else.
+    Any other integer column holds arbitrary values (1-indexed, sparse, or negative), so it is
+    stringified and the head learns the label text directly. Without this, a -1/0/1 column
+    decodes through Python's negative indexing and silently mislabels everything while the
+    metrics still look correct.
+    """
+    feature = dataset.features.get(label_column)
+    if isinstance(feature, ClassLabel):
+        return dataset
+    # cast_column, not map: map re-casts its output back to the column's EXISTING feature, so
+    # returning str() from a map over an int64 column silently converts straight back to int64.
+    return dataset.cast_column(label_column, Value("string"))
+
+
+def resolve_label_names(dataset: Dataset, label_column: str) -> list[str]:
+    """Return the class names, in the order SetFit should map predictions through."""
+    feature = dataset.features.get(label_column)
+    if isinstance(feature, ClassLabel):
         return list(feature.names)
-    distinct = sorted(set(dataset[label_column]))
-    return [str(value) for value in distinct]
+    return sorted(set(dataset[label_column]))
 
 
-def split_train_eval(dataset_id, config, train_split, eval_split, eval_fraction, seed):
-    """Load the train split, and either the named eval split or a carved-out fraction."""
+def pick_eval_split(dataset_id, config, train_split, requested):
+    """Resolve which split to evaluate on, matching train-classifier.py's precedence."""
+    if requested:
+        if requested == train_split:
+            sys.exit(
+                f"--eval-split and --train-split are both '{requested}'. Evaluating on the "
+                "training data would report a meaningless score."
+            )
+        return requested
+
+    # Same auto-detect order as the sibling, so both scripts evaluate on the same split by
+    # default and their reported metrics really are comparable.
+    available = datasets.get_dataset_split_names(dataset_id, config)
+    for candidate in ("validation", "test"):
+        if candidate in available and candidate != train_split:
+            logger.info("Using the '%s' split for evaluation.", candidate)
+            return candidate
+    return None
+
+
+def split_train_eval(dataset_id, config, train_split, eval_split, eval_fraction, seed, label_column):
+    """Load the train split, and either the named eval split or a stratified carve-out."""
     train_data = load_dataset(dataset_id, config, split=train_split)
 
     if eval_split:
         eval_data = load_dataset(dataset_id, config, split=eval_split)
         return train_data, eval_data
 
-    logger.info("No --eval-split given; carving %.0f%% off the train split.", eval_fraction * 100)
-    parts = train_data.train_test_split(test_size=eval_fraction, seed=seed)
+    logger.info("No eval split found; carving %.0f%% off the train split.", eval_fraction * 100)
+    # Stratify when the labels are typed, so a rare class cannot vanish from a small carve.
+    feature = train_data.features.get(label_column)
+    stratify = label_column if isinstance(feature, ClassLabel) else None
+    parts = train_data.train_test_split(
+        test_size=eval_fraction, seed=seed, stratify_by_column=stratify
+    )
     return parts["train"], parts["test"]
 
 
 def evaluate(model, eval_data, text_column, label_column, label_names) -> dict:
     """Predict on the eval set and report the same metrics as train-classifier.py."""
-    texts = eval_data[text_column]
+    # None in the text column would crash model.encode after training has already been paid for.
+    texts = [str(text) for text in eval_data[text_column]]
     gold_raw = list(eval_data[label_column])
 
-    # The model was loaded with `labels=`, so it predicts label NAMES, while a ClassLabel column
-    # holds integer indices. Normalise the gold side to names so both sides are the same type.
-    gold = [label_names[value] if isinstance(value, int) else value for value in gold_raw]
+    # The model predicts label NAMES. Decode the gold side using the EVAL set's own feature —
+    # a named --eval-split can order its ClassLabel differently from the train split, and
+    # decoding through train-derived names would silently score against the wrong table.
+    feature = eval_data.features.get(label_column)
+    if isinstance(feature, ClassLabel):
+        gold = [feature.int2str(int(value)) for value in gold_raw]
+    else:
+        gold = [str(value) for value in gold_raw]
 
     started = time.time()
     predictions = model.predict(texts)
@@ -132,7 +211,53 @@ def evaluate(model, eval_data, text_column, label_column, label_names) -> dict:
     }
 
 
-def build_card(args, label_names, metrics, train_size, train_seconds) -> str:
+def build_reproduce_command(args) -> str:
+    """Rebuild the exact invocation, so the card's command produces the card's model.
+
+    Only non-default flags are appended, keeping the command short while staying faithful.
+    """
+    flavor = "t4-small" if torch.cuda.is_available() else "cpu-basic"
+    parts = [
+        f"hf jobs uv run --flavor {flavor} --secrets HF_TOKEN \\",
+        f"  {SCRIPT_URL} \\",
+        f"  {args.input_dataset} {args.output_repo} \\",
+    ]
+
+    flags = []
+    if args.body_model != DEFAULT_BODY:
+        flags.append(f"--body-model {args.body_model}")
+    if args.dataset_config:
+        flags.append(f"--dataset-config {args.dataset_config}")
+    if args.text_column != "text":
+        flags.append(f"--text-column {args.text_column}")
+    if args.label_column != "label":
+        flags.append(f"--label-column {args.label_column}")
+    if args.train_split != "train":
+        flags.append(f"--train-split {args.train_split}")
+    if args.eval_split:
+        flags.append(f"--eval-split {args.eval_split}")
+    if args.num_samples != 8:
+        flags.append(f"--num-samples {args.num_samples}")
+    if args.num_epochs != 1:
+        flags.append(f"--num-epochs {args.num_epochs}")
+    if args.batch_size != 16:
+        flags.append(f"--batch-size {args.batch_size}")
+    if args.max_seq_length != 256:
+        flags.append(f"--max-seq-length {args.max_seq_length}")
+    if args.sampling_strategy != "oversampling":
+        flags.append(f"--sampling-strategy {args.sampling_strategy}")
+    if args.seed != 42:
+        flags.append(f"--seed {args.seed}")
+
+    # --num-samples is the defining knob, so always show it even at its default.
+    if f"--num-samples {args.num_samples}" not in flags:
+        flags.insert(0, f"--num-samples {args.num_samples}")
+
+    parts.append("  " + " ".join(flags))
+    return "\n".join(parts)
+
+
+def build_card(args, label_names, metrics, per_class, train_seconds) -> str:
     """Model card following the uv-scripts conventions (org credit, Jobs claim gated on JOB_ID)."""
     on_jobs = os.environ.get("JOB_ID") is not None
     provenance = (
@@ -141,24 +266,30 @@ def build_card(args, label_names, metrics, train_size, train_seconds) -> str:
         if on_jobs
         else "Produced with [`uv-scripts/classification`](https://huggingface.co/datasets/uv-scripts/classification)."
     )
-    metric_lines = "\n".join(
-        f"| {name} | {value} |" for name, value in metrics.items()
-    )
+
+    tags = ["setfit", "text-classification", "few-shot", "uv-script"]
+    if on_jobs:
+        tags.append("hf-jobs")
+    tag_lines = "\n".join(f"- {tag}" for tag in tags)
+
+    metric_lines = "\n".join(f"| {name} | {value} |" for name, value in metrics.items())
+    train_size = sum(per_class.values())
+    counts = ", ".join(f"`{name}`: {count}" for name, count in per_class.items())
+
     return f"""---
 tags:
-- setfit
-- text-classification
-- few-shot
-- uv-script
-{"- hf-jobs" if on_jobs else ""}
+{tag_lines}
 library_name: setfit
+pipeline_tag: text-classification
 base_model: {args.body_model}
+datasets:
+- {args.input_dataset}
 ---
 
 # {args.output_repo.split("/")[-1]}
 
 Few-shot text classifier trained with [SetFit](https://github.com/huggingface/setfit) on
-**{args.num_samples} examples per class** ({train_size} training examples total) from
+**up to {args.num_samples} examples per class** ({train_size} training examples in total) from
 [`{args.input_dataset}`](https://huggingface.co/datasets/{args.input_dataset}).
 
 {provenance}
@@ -169,6 +300,10 @@ Few-shot text classifier trained with [SetFit](https://github.com/huggingface/se
 |---|---|
 {metric_lines}
 | training seconds | {round(train_seconds, 1)} |
+
+## Training examples per class
+
+{counts}
 
 ## Labels
 
@@ -183,12 +318,13 @@ model = SetFitModel.from_pretrained("{args.output_repo}")
 model.predict(["some text to classify"])
 ```
 
-## Reproduce
+## Reproduction
+
+Produced by [`train-setfit.py`]({SCRIPT_URL}) from
+[`uv-scripts/classification`](https://huggingface.co/datasets/uv-scripts/classification):
 
 ```bash
-hf jobs uv run --flavor cpu-basic --secrets HF_TOKEN \\
-  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \\
-  {args.input_dataset} {args.output_repo} --num-samples {args.num_samples}
+{build_reproduce_command(args)}
 ```
 """
 
@@ -199,27 +335,52 @@ def main(args) -> None:
         sys.exit("No HF token. Pass --hf-token or run with --secrets HF_TOKEN.")
     login(token=token)
 
+    # Prove we can write the output repo BEFORE paying for training. A permissions failure
+    # after trainer.train() costs the whole run and leaves no artifact behind.
+    HfApi(token=token).create_repo(
+        args.output_repo, repo_type="model", private=args.private, exist_ok=True
+    )
+
     logger.info("Loading %s", args.input_dataset)
+    eval_split = pick_eval_split(
+        args.input_dataset, args.dataset_config, args.train_split, args.eval_split
+    )
     train_pool, eval_data = split_train_eval(
         args.input_dataset,
         args.dataset_config,
         args.train_split,
-        args.eval_split,
+        eval_split,
         args.eval_fraction,
         args.seed,
+        args.label_column,
     )
+
+    check_label_column(train_pool, args.label_column)
+    train_pool = normalise_label_column(train_pool, args.label_column)
+    eval_data = normalise_label_column(eval_data, args.label_column)
 
     label_names = resolve_label_names(train_pool, args.label_column)
     logger.info("Found %d classes: %s", len(label_names), label_names)
+    if len(label_names) < 2:
+        sys.exit(f"Only one class found in '{args.label_column}'. A classifier needs two or more.")
 
     if args.max_eval_samples and len(eval_data) > args.max_eval_samples:
         eval_data = eval_data.shuffle(seed=args.seed).select(range(args.max_eval_samples))
         logger.info("Capped eval set at %d examples.", args.max_eval_samples)
 
+    # sample_dataset calls .to_pandas() on the whole pool, which would OOM a cpu-basic job on a
+    # multi-million-row dataset. Capping first keeps the CPU path viable; the cap samples
+    # randomly, so a very rare class can be thinned by it.
+    if args.max_train_pool and len(train_pool) > args.max_train_pool:
+        train_pool = train_pool.shuffle(seed=args.seed).select(range(args.max_train_pool))
+        logger.info("Capped train pool at %d rows before sampling.", args.max_train_pool)
+
     train_data = sample_dataset(
         train_pool, label_column=args.label_column, num_samples=args.num_samples, seed=args.seed
     )
-    logger.info("Sampled %d training examples (%d per class).", len(train_data), args.num_samples)
+    # sample_dataset takes AT MOST num_samples per class, so report what was actually drawn.
+    per_class = dict(sorted(Counter(train_data[args.label_column]).items()))
+    logger.info("Sampled %d training examples; per class: %s", len(train_data), per_class)
 
     logger.info("Loading body model %s", args.body_model)
     model = SetFitModel.from_pretrained(args.body_model, labels=label_names)
@@ -258,7 +419,7 @@ def main(args) -> None:
 
     logger.info("Pushing to %s (private=%s)", args.output_repo, args.private)
     model.push_to_hub(args.output_repo, private=args.private, token=token)
-    card = build_card(args, label_names, metrics, len(train_data), train_seconds)
+    card = build_card(args, label_names, metrics, per_class, train_seconds)
     ModelCard(card).push_to_hub(args.output_repo, token=token)
 
     logger.info("Verifying reload from the Hub")
@@ -277,9 +438,17 @@ def parse_args():
     parser.add_argument("--text-column", default="text", help="Text column (default: text)")
     parser.add_argument("--label-column", default="label", help="Label column (default: label)")
     parser.add_argument("--train-split", default="train", help="Train split (default: train)")
-    parser.add_argument("--eval-split", help="Eval split (default: carve --eval-fraction off train)")
+    parser.add_argument(
+        "--eval-split",
+        help="Eval split. Default: validation, else test, else carve --eval-fraction off "
+             "train. A slice such as train[:10%] is NOT checked for overlap with training.",
+    )
     parser.add_argument("--eval-fraction", type=float, default=0.1, help="Eval fraction if no eval split (default: 0.1)")
     parser.add_argument("--max-eval-samples", type=int, default=2000, help="Cap eval examples (default: 2000)")
+    parser.add_argument(
+        "--max-train-pool", type=int, default=200_000,
+        help="Cap the pool before per-class sampling (default: 200000)",
+    )
     parser.add_argument("--num-samples", type=int, default=8, help="Labelled examples per class (default: 8)")
     parser.add_argument("--num-epochs", type=int, default=1, help="Epochs (default: 1)")
     parser.add_argument("--sampling-strategy", default="oversampling",

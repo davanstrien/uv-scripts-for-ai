@@ -81,6 +81,8 @@ examples per class. SetFit finetunes a sentence-transformer body on contrastive 
 logistic regression head on the resulting embeddings — no GPU required.
 
 - **Default body**: [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (22M), chosen for CPU speed. Swap it with `--body-model`.
+- **Evaluation split** follows the same precedence as `train-classifier.py`: `--eval-split` if given, else `validation`, else `test`, else a stratified carve-out of `--eval-fraction` from train.
+- **Single-label only.** A multi-label column exits with a pointer to `train-classifier.py`.
 - **Metrics match `train-classifier.py`** (accuracy + macro F1 on a held-out split), so the two rungs are directly comparable.
 - **`--num-samples`** sets labelled examples per class (default 8). **`--sampling-strategy`** controls contrastive pairing: `oversampling` (default), `undersampling`, `unique`.
 
@@ -99,17 +101,18 @@ hf jobs uv run --flavor t4-small --secrets HF_TOKEN \
 
 ### Measured on `ag_news`
 
-8 labels per class, 500 held-out eval examples, seed 42:
+8 labels per class, 500 examples from the `test` split, seed 42:
 
 | Body model | Flavor | Training | Accuracy | Macro F1 | Total job |
 |---|---|---|---|---|---|
-| `all-MiniLM-L6-v2` (22M) | `cpu-basic` | 204s | 0.826 | 0.819 | 285s |
-| `paraphrase-mpnet-base-v2` (110M) | `t4-small` | 32s | 0.862 | 0.857 | 205s |
-| `paraphrase-mpnet-base-v2` (110M) | `cpu-basic` | 915s | — | — | 1015s |
+| `all-MiniLM-L6-v2` (22M) | `cpu-basic` | 118s | 0.804 | 0.807 | 193s |
+| `paraphrase-mpnet-base-v2` (110M) | `t4-small` | 20s | 0.788 | 0.792 | 129s |
+| `paraphrase-mpnet-base-v2` (110M) | `cpu-basic` | 915s | not measured | | 1015s |
 
-Single seed on one dataset. Few-shot results vary substantially with which examples get sampled,
-so treat these as indicative — SetFit's own benchmarks report mean and standard deviation across
-several seeds.
+**These are single-seed numbers and do not rank the two models.** The 1.6pp difference is well
+inside the run-to-run variation of 8-example-per-class training — SetFit's own benchmarks report
+mean and standard deviation across ten seeds for exactly this reason. MiniLM is the default
+because it makes the CPU path practical, not because it scored higher here.
 
 > **Note**: a SetFit model is a sentence-transformer body plus a scikit-learn head. Load it with
 > `SetFitModel.from_pretrained(repo)`, not `AutoModelForSequenceClassification`.
