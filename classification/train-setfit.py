@@ -33,8 +33,8 @@ NOTE: a SetFit model is a sentence-transformer body plus a scikit-learn head. It
 
 import argparse
 import logging
-import random
 import os
+import random
 import sys
 import time
 from collections import Counter
@@ -53,7 +53,6 @@ from huggingface_hub import HfApi, ModelCard, login
 from huggingface_hub.utils import disable_progress_bars
 from setfit import SetFitModel, Trainer, TrainingArguments, sample_dataset
 from sklearn.metrics import accuracy_score, f1_score
-
 
 
 def configure_logging() -> logging.Logger:
@@ -84,10 +83,6 @@ def configure_logging() -> logging.Logger:
 
 logger = configure_logging()
 
-# MiniLM-L6 is the default because it makes the CPU path viable: ~4.4x faster than
-# paraphrase-mpnet-base-v2 on cpu-basic (207s vs 915s for 8 examples/class on ag_news). It is
-# NOT chosen on accuracy — on ag_news's test split the two scored 0.804 and 0.788 respectively,
-# a gap well inside single-seed few-shot noise. Pass --body-model to try a larger body.
 SCRIPT_URL = (
     "https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py"
 )
@@ -100,6 +95,10 @@ NOISE_BAND = 0.05
 # not derived; see project_training_seconds.
 STEP_COST_FACTOR = 5
 
+# MiniLM-L6 is the default because it makes the CPU path viable: ~4.4x faster than
+# paraphrase-mpnet-base-v2 on cpu-basic (207s vs 915s for 8 examples/class on ag_news). It is
+# NOT chosen on accuracy — on ag_news's test split the two scored 0.804 and 0.788, a gap well
+# inside single-seed few-shot noise. Pass --body-model to try a larger body.
 DEFAULT_BODY = "sentence-transformers/all-MiniLM-L6-v2"
 
 
@@ -214,7 +213,7 @@ def split_train_eval(dataset_id, config, train_split, eval_split, eval_fraction,
     return parts["train"], parts["test"]
 
 
-def evaluate(model, eval_data, text_column, label_column, label_names) -> dict:
+def evaluate(model, eval_data, text_column, label_column) -> dict:
     """Predict on the eval set and report the same metrics as train-classifier.py."""
     # None in the text column would crash model.encode after training has already been paid for.
     texts = [str(text) for text in eval_data[text_column]]
@@ -349,6 +348,14 @@ def build_reproduce_command(args) -> str:
         flags.append(f"--sampling-strategy {args.sampling_strategy}")
     if args.seed != 42:
         flags.append(f"--seed {args.seed}")
+    # These three change which rows are trained on or scored, so a command without them
+    # reproduces a different model and a different number.
+    if args.max_train_pool != 200_000:
+        flags.append(f"--max-train-pool {args.max_train_pool}")
+    if args.max_eval_samples != 2000:
+        flags.append(f"--max-eval-samples {args.max_eval_samples}")
+    if args.eval_fraction != 0.1:
+        flags.append(f"--eval-fraction {args.eval_fraction}")
 
     # --num-samples is the defining knob, so always show it even at its default.
     if f"--num-samples {args.num_samples}" not in flags:
@@ -358,7 +365,7 @@ def build_reproduce_command(args) -> str:
     return "\n".join(parts)
 
 
-def build_card(args, label_names, metrics, per_class, train_seconds) -> str:
+def build_card(args, label_names, metrics, per_class, train_seconds, eval_split) -> str:
     """Model card following the uv-scripts conventions (org credit, Jobs claim gated on JOB_ID)."""
     on_jobs = os.environ.get("JOB_ID") is not None
     provenance = (
@@ -376,6 +383,27 @@ def build_card(args, label_names, metrics, per_class, train_seconds) -> str:
     metric_lines = "\n".join(f"| {name} | {value} |" for name, value in metrics.items())
     train_size = sum(per_class.values())
     counts = ", ".join(f"`{name}`: {count}" for name, count in per_class.items())
+
+    # Disclose the two things that most often make a headline number misleading.
+    caveats = []
+    short = {name: n for name, n in per_class.items() if n < args.num_samples}
+    if short:
+        caveats.append(
+            f"**{len(short)} of {len(per_class)} classes had fewer than {args.num_samples} "
+            f"examples available** ({', '.join(f'`{k}`: {v}' for k, v in short.items())}). "
+            "The few-shot budget was not met for those classes."
+        )
+    if not eval_split:
+        caveats.append(
+            f"**No held-out split existed, so {args.eval_fraction:.0%} was carved out of train.** "
+            "These numbers are not comparable with published results on this dataset."
+        )
+    caveats.append(
+        f"Accuracy is reported against a majority-class baseline of "
+        f"`{metrics['majority_baseline']}`. The majority class is the LOWER floor — zero-shot "
+        "with no labels wins outright on some tasks and is the comparison that matters."
+    )
+    caveat_block = "\n".join(f"- {c}" for c in caveats)
 
     return f"""---
 tags:
@@ -405,6 +433,10 @@ Few-shot text classifier trained with [SetFit](https://github.com/huggingface/se
 ## Training examples per class
 
 {counts}
+
+## Read this before trusting the numbers
+
+{caveat_block}
 
 ## Labels
 
@@ -537,7 +569,6 @@ def main(args) -> None:
             f"or pass --allow-slow-training."
         )
 
-
     training_args = TrainingArguments(
         batch_size=args.batch_size,
         num_epochs=args.num_epochs,
@@ -559,7 +590,7 @@ def main(args) -> None:
     train_seconds = time.time() - started
     logger.info("Training finished in %.1fs", train_seconds)
 
-    metrics = evaluate(model, eval_data, args.text_column, args.label_column, label_names)
+    metrics = evaluate(model, eval_data, args.text_column, args.label_column)
     logger.info("Metrics: %s", metrics)
 
     # Two floors matter, and the majority class is only the lower one. Single-seed few-shot
@@ -592,7 +623,7 @@ def main(args) -> None:
 
     logger.info("Pushing to %s (private=%s)", args.output_repo, args.private)
     model.push_to_hub(args.output_repo, private=args.private, token=token)
-    card = build_card(args, label_names, metrics, per_class, train_seconds)
+    card = build_card(args, label_names, metrics, per_class, train_seconds, eval_split)
     ModelCard(card).push_to_hub(args.output_repo, token=token)
 
     logger.info("Verifying reload from the Hub")

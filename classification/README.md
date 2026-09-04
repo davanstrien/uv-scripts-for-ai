@@ -85,6 +85,9 @@ logistic regression head on the resulting embeddings — no GPU required.
 - **Single-label only.** A multi-label column exits with a pointer to `train-classifier.py`.
 - **Metrics match `train-classifier.py`** (accuracy + macro F1 on a held-out split), so the two rungs are directly comparable.
 - **`--num-samples`** sets labelled examples per class (default 8). **`--sampling-strategy`** controls contrastive pairing: `oversampling` (default), `undersampling`, `unique`.
+- **Every run reports a floor.** `majority_baseline` sits next to accuracy, and the run warns when the model fails to beat it — or beats it by less than the ~5-point run-to-run noise of few-shot training.
+- **It refuses jobs it cannot finish.** Before training it encodes a sample of your actual texts on the actual hardware, projects the total, and exits above `--max-minutes` (default 60) rather than discovering it at the timeout.
+- **Rows with missing or blank labels are dropped**, with a count. A blank string is otherwise a perfectly valid class name.
 
 ```bash
 # 8 labels per class, on CPU
@@ -121,6 +124,33 @@ each, and swapping the body barely moved it (`bge-small` 0.418, `paraphrase-mpne
 SetFit's docs report **0.591 on this dataset with no labels at all**, using synthetic examples
 generated from the class names — so when classes are semantically well-named but hard to separate
 from a handful of samples, the zero-shot route may beat few-shot.
+
+### The majority class is the lower floor
+
+`dair-ai/emotion` is the cautionary case. This script scores **0.370** on it; the majority class
+is **0.352**, so a naive "did it beat the baseline" check passes. SetFit's own documentation
+reports **0.591 on the same dataset with no labels at all**, using examples templated from the
+class names. Swapping the body barely moves it (`bge-small` 0.418, `paraphrase-mpnet-base-v2`
+0.410), so this is the task resisting few-shot learning, not the model being wrong.
+
+The lesson generalises: before spending labels, measure what free costs. When classes are
+well-named but semantically entangled, zero-shot can win outright.
+
+### Real-world data: a worked failure
+
+`biglam/hansard_speech` (2.7M parliamentary speeches, predicting `party` from `speech`) is the
+case where none of the convenient properties hold, and it is instructive precisely because it
+produces no score:
+
+- **No held-out split**, so the eval set has to be carved from train — the numbers stop being
+  comparable to anything published.
+- **~9.5% of rows have a blank `party`**, which without the drop trains an `""` class.
+- **28 parties after cleaning, nine of which cannot supply 8 examples** (`Respect` 4,
+  `Independent SDP` 2, `Change UK` 1). The few-shot framing does not hold at any budget.
+- **1,878 steps at ~11s/step on CPU** — the script refuses it, projecting well past an hour.
+
+The model card discloses the first three automatically, so a run on messy data cannot quietly
+report a clean-looking number.
 
 ### Many classes: watch the pair count
 
