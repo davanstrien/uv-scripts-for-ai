@@ -210,9 +210,21 @@ def split_train_eval(dataset_id, config, train_split, eval_split, eval_fraction,
     # Stratify when the labels are typed, so a rare class cannot vanish from a small carve.
     feature = train_data.features.get(label_column)
     stratify = label_column if isinstance(feature, ClassLabel) else None
-    parts = train_data.train_test_split(
-        test_size=eval_fraction, seed=seed, stratify_by_column=stratify
-    )
+
+    try:
+        parts = train_data.train_test_split(
+            test_size=eval_fraction, seed=seed, stratify_by_column=stratify
+        )
+    except ValueError as error:
+        # Stratification needs at least two members of every class, so it fails on exactly the
+        # singleton classes it is meant to protect. An unstratified split is worse but usable;
+        # crashing is not.
+        logger.warning(
+            "Could not stratify the carve-out (%s). Falling back to an unstratified split — a "
+            "very rare class may be absent from the eval set.",
+            error,
+        )
+        parts = train_data.train_test_split(test_size=eval_fraction, seed=seed)
     return parts["train"], parts["test"]
 
 
@@ -329,10 +341,13 @@ def estimate_training_steps(per_class, batch_size, num_epochs, strategy) -> tupl
     total = sum(counts)
 
     # SetFit's shuffle_combinations defaults to replacement=True, i.e. np.triu_indices(n, 0) —
-    # the DIAGONAL is included, and those `total` self-pairs all count as positive. Verified
-    # against SetFit's own "Num unique pairs" on five runs: 2x4 -> 40, 4x8 -> 528, 2x8 -> 144,
-    # 3x8 -> 384, 77x8 -> 374,528. Negatives are cross-class, so they exclude the diagonal and
-    # must be computed from the combinations WITHOUT it.
+    # the DIAGONAL is included, and those `total` self-pairs all count as positive. Negatives are
+    # cross-class, so they exclude the diagonal and must be computed from the combinations
+    # WITHOUT it. Verified against SetFit's own reported "Num unique pairs", which is the
+    # POST-strategy total, so the strategy matters when reading these:
+    #   oversampling:  2x4 -> 40 · 2x8 -> 144 · 3x8 -> 384 · 4x8 -> 768 · 77x8 -> 374,528
+    #   undersampling: 4x8 -> 288
+    #   unique:        4x8 -> 528
     same_class_pairs = sum(comb(count, 2) for count in counts)
     positive = same_class_pairs + total
     negative = comb(total, 2) - same_class_pairs
@@ -393,6 +408,14 @@ def build_reproduce_command(args) -> str:
         flags.append(f"--max-eval-samples {args.max_eval_samples}")
     if args.eval_fraction != 0.1:
         flags.append(f"--eval-fraction {args.eval_fraction}")
+    # Without these the published command either stops at the refusal gate or publishes to a
+    # different visibility than the run it describes.
+    if args.max_minutes != 60:
+        flags.append(f"--max-minutes {args.max_minutes}")
+    if args.allow_slow_training:
+        flags.append("--allow-slow-training")
+    if args.private:
+        flags.append("--private")
 
     # --num-samples is the defining knob, so always show it even at its default.
     if f"--num-samples {args.num_samples}" not in flags:
@@ -579,7 +602,13 @@ def main(args) -> None:
         logger.info("DEVICE: cpu")
     logger.info("DEVICE: body model is on %s", model.model_body.device)
 
-    warn_on_truncation(model, train_data[args.text_column], args.max_seq_length)
+    # Sample the POOL and the eval set, not the few-shot training slice — that slice can be
+    # as small as 16 texts, and eval documents are truncated at predict time too.
+    warn_on_truncation(
+        model,
+        list(train_pool[args.text_column][:200]) + list(eval_data[args.text_column][:200]),
+        args.max_seq_length,
+    )
 
     projected = project_training_seconds(model, train_data[args.text_column], args.batch_size, steps)
     logger.info("Projected training time: %.0f min (%d steps).", projected / 60, steps)
@@ -588,7 +617,9 @@ def main(args) -> None:
             per_class, args.batch_size, args.num_epochs, "undersampling"
         )
         cheaper_minutes = projected / 60 * cheaper_steps / max(steps, 1)
-        if cheaper_minutes <= args.max_minutes:
+        if args.sampling_strategy == "undersampling":
+            suggestion = "  (already on the cheapest sampling strategy)"
+        elif cheaper_minutes <= args.max_minutes:
             suggestion = (
                 f"  --sampling-strategy undersampling  ->  {cheaper_steps} steps "
                 f"(~{cheaper_minutes:.0f} min, within budget)"
@@ -655,10 +686,6 @@ def main(args) -> None:
     else:
         logger.info("Beats the majority-class floor by %.1f points.", lift * 100)
 
-    logger.warning(
-        "The majority class is the LOWER floor. Before trusting this model, compare it against "
-        "zero-shot with no labels at all — on some tasks that wins outright."
-    )
 
     logger.info("Pushing to %s (private=%s)", args.output_repo, args.private)
     model.push_to_hub(args.output_repo, private=args.private, token=token)
