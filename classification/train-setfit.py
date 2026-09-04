@@ -37,6 +37,7 @@ import os
 import sys
 import time
 from collections import Counter
+from math import ceil, comb
 
 # tqdm reads TQDM_DISABLE when it is imported, so this must be set before any third-party import
 # pulls tqdm in — setting it later has no effect. Jobs logs have no TTY, so progress bars arrive
@@ -211,6 +212,30 @@ def evaluate(model, eval_data, text_column, label_column, label_names) -> dict:
     }
 
 
+def estimate_training_steps(per_class, batch_size, num_epochs, strategy) -> tuple[int, int]:
+    """Return (contrastive pairs, optimizer steps) for one run, before any training happens.
+
+    SetFit builds pairs from every combination of training examples, so the count grows with the
+    SQUARE of the training-set size — and the training set is num_samples x number of classes.
+    A 77-class dataset at 8 examples per class is 374k pairs under the default strategy, which
+    is hours of CPU time. Knowing that before the job starts is worth a few lines of arithmetic.
+    """
+    counts = list(per_class.values())
+    total = sum(counts)
+    positive = sum(comb(count, 2) for count in counts)
+    negative = comb(total, 2) - positive
+
+    if strategy == "oversampling":
+        pairs = 2 * max(positive, negative)
+    elif strategy == "undersampling":
+        pairs = 2 * min(positive, negative)
+    else:  # "unique"
+        pairs = positive + negative
+
+    steps = ceil(pairs / batch_size) * num_epochs
+    return pairs, steps
+
+
 def build_reproduce_command(args) -> str:
     """Rebuild the exact invocation, so the card's command produces the card's model.
 
@@ -379,8 +404,31 @@ def main(args) -> None:
         train_pool, label_column=args.label_column, num_samples=args.num_samples, seed=args.seed
     )
     # sample_dataset takes AT MOST num_samples per class, so report what was actually drawn.
-    per_class = dict(sorted(Counter(train_data[args.label_column]).items()))
+    # Keys go through the class names, or a ClassLabel column reports bare indices.
+    counts = sorted(Counter(train_data[args.label_column]).items())
+    feature = train_data.features.get(args.label_column)
+    if isinstance(feature, ClassLabel):
+        per_class = {feature.int2str(int(value)): count for value, count in counts}
+    else:
+        per_class = {str(value): count for value, count in counts}
     logger.info("Sampled %d training examples; per class: %s", len(train_data), per_class)
+
+    pairs, steps = estimate_training_steps(
+        per_class, args.batch_size, args.num_epochs, args.sampling_strategy
+    )
+    logger.info(
+        "Contrastive pairs: %d -> %d optimizer steps (%s).", pairs, steps, args.sampling_strategy
+    )
+    if steps > 5_000 and args.sampling_strategy != "undersampling":
+        _, cheaper = estimate_training_steps(
+            per_class, args.batch_size, args.num_epochs, "undersampling"
+        )
+        logger.warning(
+            "That is a lot of steps. Pair count grows with the SQUARE of the training set, so "
+            "many classes get expensive fast. --sampling-strategy undersampling would need %d "
+            "steps instead; fewer --num-samples or a GPU flavor also help.",
+            cheaper,
+        )
 
     logger.info("Loading body model %s", args.body_model)
     model = SetFitModel.from_pretrained(args.body_model, labels=label_names)

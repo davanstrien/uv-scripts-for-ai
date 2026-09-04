@@ -99,20 +99,44 @@ hf jobs uv run --flavor t4-small --secrets HF_TOKEN \
   --body-model sentence-transformers/paraphrase-mpnet-base-v2
 ```
 
-### Measured on `ag_news`
+### Measured
 
-8 labels per class, 500 examples from the `test` split, seed 42:
+8 labels per class, seed 42, evaluated on each dataset's own held-out split (capped at 500
+examples, 1000 for banking77):
 
-| Body model | Flavor | Training | Accuracy | Macro F1 | Total job |
-|---|---|---|---|---|---|
-| `all-MiniLM-L6-v2` (22M) | `cpu-basic` | 118s | 0.804 | 0.807 | 193s |
-| `paraphrase-mpnet-base-v2` (110M) | `t4-small` | 20s | 0.788 | 0.792 | 129s |
-| `paraphrase-mpnet-base-v2` (110M) | `cpu-basic` | 915s | not measured | | 1015s |
+| Dataset | Classes | Labels used | Body | Flavor | Training | Accuracy | Macro F1 |
+|---|---|---|---|---|---|---|---|
+| [`SetFit/enron_spam`](https://huggingface.co/datasets/SetFit/enron_spam) | 2 | 16 | MiniLM-L6 | `cpu-basic` | 78s | 0.924 | 0.924 |
+| [`fancyzhx/ag_news`](https://huggingface.co/datasets/fancyzhx/ag_news) | 4 | 32 | MiniLM-L6 | `cpu-basic` | 118s | 0.804 | 0.807 |
+| [`legacy-datasets/banking77`](https://huggingface.co/datasets/legacy-datasets/banking77) | 77 | 616 | MiniLM-L6 | `t4-small` | 18s | 0.803 | 0.789 |
+| [`dair-ai/emotion`](https://huggingface.co/datasets/dair-ai/emotion) | 6 | 48 | MiniLM-L6 | `cpu-basic` | 216s | 0.370 | 0.325 |
 
-**These are single-seed numbers and do not rank the two models.** The 1.6pp difference is well
-inside the run-to-run variation of 8-example-per-class training — SetFit's own benchmarks report
-mean and standard deviation across ten seeds for exactly this reason. MiniLM is the default
-because it makes the CPU path practical, not because it scored higher here.
+**Single seed each — these do not rank models or predict your dataset.** Few-shot results vary
+substantially with which examples happen to get sampled; SetFit's own benchmarks report mean and
+standard deviation across ten seeds for exactly this reason. Run your own task before trusting
+any of these numbers.
+
+`emotion` is the honest counter-example: six overlapping affect classes are hard from 8 examples
+each, and swapping the body barely moved it (`bge-small` 0.418, `paraphrase-mpnet-base-v2` 0.410).
+SetFit's docs report **0.591 on this dataset with no labels at all**, using synthetic examples
+generated from the class names — so when classes are semantically well-named but hard to separate
+from a handful of samples, the zero-shot route may beat few-shot.
+
+### Many classes: watch the pair count
+
+SetFit trains on pairs drawn from every combination of training examples, so the pair count grows
+with the **square** of the training-set size — which is `--num-samples` x number of classes. The
+script logs the estimate before training starts:
+
+| Dataset | Strategy | Pairs | Steps |
+|---|---|---|---|
+| ag_news (4 classes x 8) | `oversampling` (default) | 768 | 48 |
+| banking77 (77 classes x 8) | `oversampling` (default) | 374,528 | 23,408 |
+| banking77 (77 classes x 8) | `undersampling` | 4,312 | 270 |
+
+At 77 classes the default would take roughly 15 hours on `cpu-basic`; `--sampling-strategy
+undersampling` finished in 18 seconds on a T4. Above 5,000 estimated steps the script warns and
+names the cheaper alternative.
 
 > **Note**: a SetFit model is a sentence-transformer body plus a scikit-learn head. Load it with
 > `SetFitModel.from_pretrained(repo)`, not `AutoModelForSequenceClassification`.
