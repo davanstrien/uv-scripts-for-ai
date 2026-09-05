@@ -38,7 +38,7 @@ import random
 import sys
 import time
 from collections import Counter
-from math import ceil, comb
+from math import ceil, comb, isnan
 
 # tqdm reads TQDM_DISABLE when it is imported, so this must be set before any third-party import
 # pulls tqdm in — setting it later has no effect. Jobs logs have no TTY, so progress bars arrive
@@ -106,6 +106,8 @@ DEFAULT_BODY = "sentence-transformers/all-MiniLM-L6-v2"
 
 def check_label_column(dataset: Dataset, label_column: str) -> None:
     """Fail early and clearly on a missing or multi-label column."""
+    if not len(dataset):
+        sys.exit("Dataset split is empty. Supply a non-empty labelled split.")
     if label_column not in dataset.column_names:
         sys.exit(
             f"Label column '{label_column}' not found. Columns are: {dataset.column_names}. "
@@ -153,13 +155,18 @@ def drop_unlabelled_rows(dataset: Dataset, label_column: str, split_name: str) -
     right default — an unlabelled row is not a class, and keeping it teaches the model to
     predict "no label".
     """
-    def has_label(example) -> bool:
-        value = example[label_column]
+    feature = dataset.features.get(label_column)
+
+    def has_label(value) -> bool:
         if value is None:
+            return False
+        if isinstance(feature, ClassLabel) and value == -1:
+            return False
+        if isinstance(value, float) and isnan(value):
             return False
         return not (isinstance(value, str) and not value.strip())
 
-    kept = dataset.filter(has_label)
+    kept = dataset.filter(has_label, input_columns=[label_column])
     dropped = len(dataset) - len(kept)
     if dropped:
         logger.warning(
@@ -167,6 +174,26 @@ def drop_unlabelled_rows(dataset: Dataset, label_column: str, split_name: str) -
             dropped, split_name, label_column, len(kept),
         )
     return kept
+
+
+def prepare_split(dataset, text_column, label_column, split_name):
+    """Validate both splits before loading a model or paying for training."""
+    check_label_column(dataset, label_column)
+    if text_column not in dataset.column_names:
+        sys.exit(
+            f"Text column '{text_column}' not found in {split_name}. "
+            f"Columns are: {dataset.column_names}. Pass --text-column."
+        )
+    # Check missing labels before casting: a float NaN otherwise becomes the class "nan".
+    dataset = drop_unlabelled_rows(dataset, label_column, split_name)
+    if not len(dataset):
+        sys.exit(f"No labelled rows remain in {split_name} after removing missing labels.")
+    if any(not isinstance(text, str) or not text.strip() for text in dataset[text_column]):
+        sys.exit(
+            f"Text column '{text_column}' in {split_name} contains null, blank or non-string "
+            "values. Clean the text column before training."
+        )
+    return normalise_label_column(dataset, label_column)
 
 
 def resolve_label_names(dataset: Dataset, label_column: str) -> list[str]:
@@ -206,13 +233,18 @@ def split_train_eval(dataset_id, config, train_split, eval_split, eval_fraction,
         return train_data, eval_data
 
     logger.info("No eval split found; carving %.0f%% off the train split.", eval_fraction * 100)
-    # Stratify when the labels are typed, so a rare class cannot vanish from a small carve.
-    feature = train_data.features.get(label_column)
-    stratify = label_column if isinstance(feature, ClassLabel) else None
+    check_label_column(train_data, label_column)
+    train_data = drop_unlabelled_rows(train_data, label_column, "train")
+    if len(train_data) < 2:
+        sys.exit("Need at least two labelled rows to carve out an evaluation split.")
+    # Encode plain labels as well, so string/int columns get the same stratification guarantee.
+    train_data = normalise_label_column(train_data, label_column)
+    if not isinstance(train_data.features[label_column], ClassLabel):
+        train_data = train_data.class_encode_column(label_column)
 
     try:
         parts = train_data.train_test_split(
-            test_size=eval_fraction, seed=seed, stratify_by_column=stratify
+            test_size=eval_fraction, seed=seed, stratify_by_column=label_column
         )
     except ValueError as error:
         # Stratification needs at least two members of every class, so it fails on exactly the
@@ -220,7 +252,7 @@ def split_train_eval(dataset_id, config, train_split, eval_split, eval_fraction,
         # crashing is not.
         logger.warning(
             "Could not stratify the carve-out (%s). Falling back to an unstratified split — a "
-            "very rare class may be absent from the eval set.",
+            "very rare class may be absent from either split.",
             error,
         )
         parts = train_data.train_test_split(test_size=eval_fraction, seed=seed)
@@ -616,11 +648,8 @@ def main(args) -> None:
         args.label_column,
     )
 
-    check_label_column(train_pool, args.label_column)
-    train_pool = normalise_label_column(train_pool, args.label_column)
-    eval_data = normalise_label_column(eval_data, args.label_column)
-
-    # Cap BEFORE filtering. Both caps are O(1) selects while the blank-label filter is a full
+    # Cap before final validation (a carved split already needed a pass over labels).
+    # Both caps are O(1) selects while the blank-label filter is a full
     # scan, and on a 2.4M-row corpus that ordering was eight minutes of preflight before a single
     # training step. sample_dataset also calls .to_pandas() on whatever pool it is handed, which
     # would OOM a cpu-basic job outright. The cap samples randomly, so a very rare class can be
@@ -632,13 +661,13 @@ def main(args) -> None:
         eval_data = eval_data.shuffle(seed=args.seed).select(range(args.max_eval_samples))
         logger.info("Capped eval set at %d examples.", args.max_eval_samples)
 
-    train_pool = drop_unlabelled_rows(train_pool, args.label_column, "train")
-    eval_data = drop_unlabelled_rows(eval_data, args.label_column, "eval")
+    train_pool = prepare_split(train_pool, args.text_column, args.label_column, "train")
+    eval_data = prepare_split(eval_data, args.text_column, args.label_column, "eval")
 
     label_names = resolve_label_names(train_pool, args.label_column)
     logger.info("Found %d classes: %s", len(label_names), label_names)
-    if len(label_names) < 2:
-        sys.exit(f"Only one class found in '{args.label_column}'. A classifier needs two or more.")
+    if len(set(train_pool[args.label_column])) < 2:
+        sys.exit(f"Fewer than two observed classes in '{args.label_column}'. A classifier needs two or more.")
 
     train_data = sample_dataset(
         train_pool, label_column=args.label_column, num_samples=args.num_samples, seed=args.seed
@@ -648,7 +677,9 @@ def main(args) -> None:
     counts = sorted(Counter(train_data[args.label_column]).items())
     feature = train_data.features.get(args.label_column)
     if isinstance(feature, ClassLabel):
-        per_class = {feature.int2str(int(value)): count for value, count in counts}
+        # Keep the full positional label table, but disclose declared classes with no examples.
+        per_class = dict.fromkeys(label_names, 0)
+        per_class.update({feature.int2str(int(value)): count for value, count in counts})
     else:
         per_class = {str(value): count for value, count in counts}
     logger.info("Sampled %d training examples; per class: %s", len(train_data), per_class)
@@ -782,7 +813,7 @@ def parse_args():
     parser.add_argument(
         "--eval-split",
         help="Eval split. Default: validation, else test, else carve --eval-fraction off "
-             "train. A slice such as train[:10%] is NOT checked for overlap with training.",
+             "train. A slice such as train[:10%%] is NOT checked for overlap with training.",
     )
     parser.add_argument("--eval-fraction", type=float, default=0.1, help="Eval fraction if no eval split (default: 0.1)")
     parser.add_argument("--max-eval-samples", type=int, default=2000, help="Cap eval examples (default: 2000)")
