@@ -71,6 +71,8 @@ A self-contained, pinned script is easy to run and reuse, for a few reasons:
 
 **Built for agents, too.** Every recipe takes its arguments in the same `input output` order and runs from a URL, so an AI agent can pick a tool from its header and run it with no setup. On Jobs the agent runs in a sandbox: a throwaway disk, access limited to what the token's repo permissions allow, and a cost cap per job — not arbitrary code on your machine. (Hugging Face also ships an [`hf` CLI skill for agents](https://huggingface.co/docs/hub/agents-cli) for driving Jobs from an editor.) This repo also ships a ready-to-use **[`uv-recipes` agent skill](skills/uv-recipes/)** — point your agent at it to discover, run, and adapt recipes.
 
+For few-shot text classification, the focused **[`setfit-on-jobs` skill](skills/setfit-on-jobs/)** prepares a small labeled sample when needed, runs SetFit on Jobs, and verifies the resulting model.
+
 ## Recipes
 
 | Domain | What it does | On the Hub |
