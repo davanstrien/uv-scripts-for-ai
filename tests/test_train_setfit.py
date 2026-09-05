@@ -49,9 +49,23 @@ def test_empty_or_unlabelled_split_is_rejected(labels):
         recipe.prepare_split(data, "text", "label", "eval")
 
 
-@pytest.mark.parametrize("text", [None, "", " ", 12])
-def test_invalid_text_is_rejected_before_training(text):
+@pytest.mark.parametrize("text", [None, "", " "])
+def test_empty_text_split_is_rejected_before_training(text):
     data = Dataset.from_dict({"text": [text], "label": ["a"]})
+    with pytest.raises(SystemExit, match="No usable text rows"):
+        recipe.prepare_split(data, "text", "label", "eval")
+
+
+@pytest.mark.parametrize("text", [None, "", " "])
+def test_missing_text_is_dropped_without_rejecting_usable_rows(text):
+    data = Dataset.from_dict({"text": [text, "a real document"], "label": ["a", "b"]})
+    cleaned = recipe.prepare_split(data, "text", "label", "eval")
+    assert list(cleaned["text"]) == ["a real document"]
+    assert list(cleaned["label"]) == ["b"]
+
+
+def test_non_string_text_is_rejected_before_training():
+    data = Dataset.from_dict({"text": [12], "label": ["a"]})
     with pytest.raises(SystemExit, match="Clean the text column"):
         recipe.prepare_split(data, "text", "label", "eval")
 

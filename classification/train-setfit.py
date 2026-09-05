@@ -188,12 +188,25 @@ def prepare_split(dataset, text_column, label_column, split_name):
     dataset = drop_unlabelled_rows(dataset, label_column, split_name)
     if not len(dataset):
         sys.exit(f"No labelled rows remain in {split_name} after removing missing labels.")
-    if any(not isinstance(text, str) or not text.strip() for text in dataset[text_column]):
-        sys.exit(
-            f"Text column '{text_column}' in {split_name} contains null, blank or non-string "
-            "values. Clean the text column before training."
+    def has_text(text):
+        if text is None:
+            return False
+        if not isinstance(text, str):
+            sys.exit(
+                f"Text column '{text_column}' in {split_name} contains non-string values. "
+                "Clean the text column before training."
+            )
+        return bool(text.strip())
+
+    kept = dataset.filter(has_text, input_columns=[text_column])
+    if len(kept) < len(dataset):
+        logger.warning(
+            "Dropped %d %s rows with missing or blank '%s' (%d remain).",
+            len(dataset) - len(kept), split_name, text_column, len(kept),
         )
-    return normalise_label_column(dataset, label_column)
+    if not len(kept):
+        sys.exit(f"No usable text rows remain in {split_name} after removing missing texts.")
+    return normalise_label_column(kept, label_column)
 
 
 def resolve_label_names(dataset: Dataset, label_column: str) -> list[str]:
