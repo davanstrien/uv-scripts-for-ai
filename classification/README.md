@@ -87,7 +87,7 @@ logistic regression head on the resulting embeddings — no GPU required.
 - **`--num-samples`** sets labelled examples per class (default 8). **`--sampling-strategy`** controls contrastive pairing: `oversampling` (default), `undersampling`, `unique`.
 - **Every run reports a floor.** `majority_baseline` sits next to accuracy, and the run warns when the model fails to beat it — or beats it by less than the ~5-point run-to-run noise of few-shot training.
 - **It refuses jobs it cannot finish.** Before training it encodes a sample of your actual texts on the actual hardware, projects the total, and exits above `--max-minutes` (default 60) rather than discovering it at the timeout.
-- **Rows with missing or blank labels are dropped**, with a count. A blank string is otherwise a perfectly valid class name.
+- **Rows with missing or blank labels or texts are dropped**, with a count. Missing labels include `ClassLabel`'s `-1` sentinel and numeric NaN; plain integer `-1` remains a valid class. Splits with no usable labelled text, fewer than two observed training classes, and missing or non-string text columns exit before model loading.
 
 ```bash
 # 8 labels per class, on CPU
