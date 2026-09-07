@@ -87,8 +87,8 @@ SCRIPT_URL = (
     "https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py"
 )
 
-# Single-seed few-shot accuracy moves by roughly this much on its own (measured across body
-# models on one dataset), so any lift smaller than this is not evidence of anything.
+# Fixed threshold for prompting review of a small gain over the majority baseline.
+# This is a heuristic, not an estimate of seed variance or statistical significance.
 NOISE_BAND = 0.05
 
 # Applied to the measured step time. Covers what the measurement omits — optimizer update,
@@ -99,8 +99,8 @@ MEASUREMENT_MARGIN = 1.35
 
 # MiniLM-L6 is the default because it makes the CPU path viable: ~4.4x faster than
 # paraphrase-mpnet-base-v2 on cpu-basic (207s vs 915s for 8 examples/class on ag_news). It is
-# NOT chosen on accuracy — on ag_news's test split the two scored 0.804 and 0.788, a gap well
-# inside single-seed few-shot noise. Pass --body-model to try a larger body.
+# NOT chosen on accuracy — on ag_news's test split the two scored 0.804 and 0.788 in single-seed
+# runs, which do not establish a reliable ranking. Pass --body-model to try a larger body.
 DEFAULT_BODY = "sentence-transformers/all-MiniLM-L6-v2"
 
 
@@ -573,8 +573,9 @@ def build_card(args, label_names, metrics, per_class, train_seconds, eval_split)
         )
     caveats.append(
         f"Accuracy is reported against a majority-class baseline of "
-        f"`{metrics['majority_baseline']}`. The majority class is the LOWER floor — zero-shot "
-        "with no labels wins outright on some tasks and is the comparison that matters."
+        f"`{metrics['majority_baseline']}`. Also compare with a simple trained baseline on "
+        "the same rows, and consider a zero-shot comparison where suitable. A small "
+        "single-seed gain does not establish reliable improvement."
     )
     caveat_block = "\n".join(f"- {c}" for c in caveats)
 
@@ -778,11 +779,8 @@ def main(args) -> None:
     metrics = evaluate(model, eval_data, args.text_column, args.label_column)
     logger.info("Metrics: %s", metrics)
 
-    # Two floors matter, and the majority class is only the lower one. Single-seed few-shot
-    # results move by ~5 points on their own, so a lift inside that band is not a result.
-    # The floor that actually binds is the free zero-shot arm: on dair-ai/emotion this script
-    # scores 0.370 against a 0.352 majority — passing a naive check — while SetFit's templated
-    # zero-shot, which needs no labels at all, scores 0.591.
+    # A majority baseline is a useful first comparison. A small gain triggers review;
+    # the fixed threshold does not determine whether the difference is significant.
     lift = metrics["accuracy"] - metrics["majority_baseline"]
     if lift <= 0:
         logger.warning(
@@ -792,10 +790,10 @@ def main(args) -> None:
         )
     elif lift < NOISE_BAND:
         logger.warning(
-            "WITHIN NOISE OF FLOOR: accuracy %.3f versus a %.3f majority class is only %.1f "
-            "points, and single-seed few-shot results vary by about %.0f. Treat this as 'no "
-            "signal demonstrated', not as a working classifier. Re-run with other seeds before "
-            "believing it.",
+            "SMALL GAIN OVER BASELINE: accuracy %.3f versus a %.3f majority class is only %.1f "
+            "points, below the %.0f-point review threshold. This threshold is a heuristic, "
+            "not a significance test. Evaluate other seeds and matched baselines before "
+            "drawing conclusions.",
             metrics["accuracy"], metrics["majority_baseline"], lift * 100, NOISE_BAND * 100,
         )
     else:

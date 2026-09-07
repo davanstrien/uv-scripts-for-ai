@@ -83,20 +83,20 @@ logistic regression head on the resulting embeddings — no GPU required.
 - **Default body**: [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (22M), chosen for CPU speed. Swap it with `--body-model`.
 - **Evaluation split** follows the same precedence as `train-classifier.py`: `--eval-split` if given, else `validation`, else `test`, else a stratified carve-out of `--eval-fraction` from train.
 - **Single-label only.** A multi-label column exits with a pointer to `train-classifier.py`.
-- **Metrics match `train-classifier.py`** (accuracy + macro F1 on a held-out split), so the two rungs are directly comparable.
+- **Metrics match `train-classifier.py`** (accuracy + macro F1). Match evaluation rows and preprocessing when comparing runs.
 - **`--num-samples`** sets labelled examples per class (default 8). **`--sampling-strategy`** controls contrastive pairing: `oversampling` (default), `undersampling`, `unique`.
-- **Every run reports a floor.** `majority_baseline` sits next to accuracy, and the run warns when the model fails to beat it — or beats it by less than the ~5-point run-to-run noise of few-shot training.
-- **It refuses jobs it cannot finish.** Before training it encodes a sample of your actual texts on the actual hardware, projects the total, and exits above `--max-minutes` (default 60) rather than discovering it at the timeout.
+- **Every run reports a majority baseline.** The run warns when accuracy fails to beat it, or the gain is below five percentage points. That fixed threshold is a review heuristic, not a measured noise level or significance test.
+- **It estimates training time before starting.** The script times forward/backward passes on actual texts and hardware, then refuses training projected above `--max-minutes` (default 60). Setup, evaluation and upload take additional time. A measurement error can skip this guard; use Jobs `--timeout` to enforce a wall-clock limit.
 - **Rows with missing or blank labels or texts are dropped**, with a count. Missing labels include `ClassLabel`'s `-1` sentinel and numeric NaN; plain integer `-1` remains a valid class. Splits with no usable labelled text, fewer than two observed training classes, and missing or non-string text columns exit before model loading.
 
 ```bash
 # 8 labels per class, on CPU
-hf jobs uv run --flavor cpu-basic --secrets HF_TOKEN \
+hf jobs uv run --flavor cpu-basic --timeout 20m --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \
   fancyzhx/ag_news username/ag-news-setfit --num-samples 8
 
-# larger body on a GPU for the accuracy ceiling
-hf jobs uv run --flavor t4-small --secrets HF_TOKEN \
+# Try a larger body on a GPU; compare quality on the same evaluation rows
+hf jobs uv run --flavor t4-small --timeout 20m --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \
   fancyzhx/ag_news username/ag-news-setfit \
   --body-model sentence-transformers/paraphrase-mpnet-base-v2
@@ -119,22 +119,23 @@ substantially with which examples happen to get sampled; SetFit's own benchmarks
 standard deviation across ten seeds for exactly this reason. Run your own task before trusting
 any of these numbers.
 
-`emotion` is the honest counter-example: six overlapping affect classes are hard from 8 examples
-each, and swapping the body barely moved it (`bge-small` 0.418, `paraphrase-mpnet-base-v2` 0.410).
-SetFit's docs report **0.591 on this dataset with no labels at all**, using synthetic examples
-generated from the class names — so when classes are semantically well-named but hard to separate
-from a handful of samples, the zero-shot route may beat few-shot.
+### Compare more than the majority baseline
 
-### The majority class is the lower floor
+The `emotion` run reached **0.370** accuracy against a **0.352** majority baseline. Other
+single-seed body-model runs reached 0.418 (`bge-small`) and 0.410 (`paraphrase-mpnet-base-v2`).
+These results call for further evaluation; they do not establish a limit on the task or method.
 
-`dair-ai/emotion` is the cautionary case. This script scores **0.370** on it; the majority class
-is **0.352**, so a naive "did it beat the baseline" check passes. SetFit's own documentation
-reports **0.591 on the same dataset with no labels at all**, using examples templated from the
-class names. Swapping the body barely moves it (`bge-small` 0.418, `paraphrase-mpnet-base-v2`
-0.410), so this is the task resisting few-shot learning, not the model being wrong.
+SetFit's [zero-shot guide](https://huggingface.co/docs/setfit/how_to/zero_shot) reports **0.591**
+on emotion using BGE and training examples templated from the class names. It uses a different
+evaluation setup from the table above, so this is motivation for a matched comparison rather
+than a controlled comparison with this recipe. Templated training needs no labeled documents,
+but still uses compute.
 
-The lesson generalises: before spending labels, measure what free costs. When classes are
-well-named but semantically entangled, zero-shot can win outright.
+For your task, compare with a simple baseline such as TF-IDF plus logistic regression using
+the same training and evaluation rows. A zero-shot comparison can also be useful when class
+names describe the task well. Use repeated seeds and appropriate task metrics before drawing
+conclusions from small accuracy differences. This recipe trains and evaluates a supervised
+classifier; built-in templated zero-shot training is a separate possible extension.
 
 ### Real-world data: a worked failure
 
@@ -146,11 +147,12 @@ produces no score:
   comparable to anything published.
 - **~9.5% of rows have a blank `party`**, which without the drop trains an `""` class.
 - **28 parties after cleaning, nine of which cannot supply 8 examples** (`Respect` 4,
-  `Independent SDP` 2, `Change UK` 1). The few-shot framing does not hold at any budget.
+  `Independent SDP` 2, `Change UK` 1). The requested eight-example budget cannot be met for those classes.
 - **1,878 steps at ~11s/step on CPU** — the script refuses it, projecting well past an hour.
 
-The model card discloses the first three automatically, so a run on messy data cannot quietly
-report a clean-looking number.
+On completed runs, the model card discloses a carved evaluation split, per-class training counts
+and classes below the requested sample count. Dropped-row counts and measured truncation are
+reported in the logs; retain those logs alongside the model when documenting data preparation.
 
 ### Many classes: watch the pair count
 
@@ -165,8 +167,9 @@ script logs the estimate before training starts:
 | banking77 (77 classes x 8) | `undersampling` | 4,312 | 270 |
 
 At 77 classes the default would take roughly 15 hours on `cpu-basic`; `--sampling-strategy
-undersampling` finished in 18 seconds on a T4. Above 5,000 estimated steps the script warns and
-names the cheaper alternative.
+undersampling` finished in 18 seconds on a T4 in the recorded run. The script reports the pair
+and step counts, then measures step time to check `--max-minutes`. When it refuses training,
+it suggests undersampling where applicable and estimates whether that would fit the budget.
 
 > **Note**: a SetFit model is a sentence-transformer body plus a scikit-learn head. Load it with
 > `SetFitModel.from_pretrained(repo)`, not `AutoModelForSequenceClassification`.
