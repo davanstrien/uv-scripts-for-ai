@@ -10,19 +10,22 @@
 # ]
 # ///
 """
-Few-shot text classification with SetFit — train on 8-64 labelled examples per class, on CPU.
+Few-shot text classification with SetFit — train on 8-64 labelled examples per class, on CPU or GPU.
 
 SetFit fine-tunes a sentence-transformer body with contrastive pairs, then fits a logistic
-regression head on the embeddings. With a handful of examples per class it reaches a useful
-classifier in minutes without a GPU, which makes it the cheap middle rung between zero-shot
-LLM labelling and a full encoder fine-tune (`train-classifier.py`).
+regression head on the embeddings. It supports small labelled datasets between zero-shot LLM
+labelling and a full encoder fine-tune (`train-classifier.py`). CPU is practical for small
+experiments; use a GPU for faster training, particularly with larger models, longer texts or
+more classes.
 
-Run on HF Jobs (cpu-basic is enough; no GPU needed):
+Run a small experiment on HF Jobs:
 
     hf jobs uv run --flavor cpu-basic --secrets HF_TOKEN \\
         https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \\
         fancyzhx/ag_news username/ag-news-setfit \\
         --num-samples 8
+
+For faster training with the same model and settings, change --flavor to t4-small.
 
 Metrics match `train-classifier.py` (accuracy + macro F1 on a held-out split) so the two are
 directly comparable at equal eval settings.

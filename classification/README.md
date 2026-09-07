@@ -10,7 +10,7 @@ Text classification on [HF Jobs](https://huggingface.co/docs/huggingface_hub/gui
 | Script | What it does |
 |--------|--------------|
 | [`train-classifier.py`](#fine-tune-a-classifier-train-classifierpy) | **Fine-tune** an encoder into a classifier (default: [LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M)) and push it to the Hub |
-| [`train-setfit.py`](#few-shot-with-setfit-train-setfitpy) | **Few-shot** train a classifier from 8-64 labels per class with [SetFit](https://github.com/huggingface/setfit) — runs on CPU |
+| [`train-setfit.py`](#few-shot-with-setfit-train-setfitpy) | **Few-shot** train a classifier from 8-64 labels per class with [SetFit](https://github.com/huggingface/setfit) — runs on CPU or GPU |
 | [`classify-dataset.py`](#zero-shot-classification-classify-datasetpy) | **Zero-shot** classify a dataset with an instruction LLM (SmolLM3 + vLLM, structured outputs) |
 | `classify-dataset-sglang.py` | Zero-shot variant on SGLang (reasoning-aware `<think>` models) |
 
@@ -19,7 +19,7 @@ Pick by how many labels you have:
 | Labels you have | Use | Hardware |
 |---|---|---|
 | none | `classify-dataset.py` to bootstrap labels, or for one-off jobs | GPU |
-| ~8-64 per class | `train-setfit.py` | CPU |
+| ~8-64 per class | `train-setfit.py` | CPU supported; GPU for faster training |
 | a few thousand | `train-classifier.py` | GPU |
 
 The rungs chain: bootstrap labels with `classify-dataset.py`, review them, then train a small
@@ -78,7 +78,11 @@ produces a plain, vLLM-servable model — pair it with
 
 Trains a [SetFit](https://github.com/huggingface/setfit) classifier from a handful of labelled
 examples per class. SetFit finetunes a sentence-transformer body on contrastive pairs, then fits a
-logistic regression head on the resulting embeddings — no GPU required.
+logistic regression head on the resulting embeddings.
+
+**Runs on CPU or GPU.** CPU is practical for small few-shot experiments. Use a GPU for faster
+training, particularly with larger models, longer texts or more classes. The same model and
+training settings work on either; the recipe uses the available accelerator automatically.
 
 - **Default body**: [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (22M), chosen for CPU speed. Swap it with `--body-model`.
 - **Evaluation split** follows the same precedence as `train-classifier.py`: `--eval-split` if given, else `validation`, else `test`, else a stratified carve-out of `--eval-fraction` from train.
@@ -95,11 +99,10 @@ hf jobs uv run --flavor cpu-basic --timeout 20m --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \
   fancyzhx/ag_news username/ag-news-setfit --num-samples 8
 
-# Try a larger body on a GPU; compare quality on the same evaluation rows
+# Same model and training settings on a GPU for faster training
 hf jobs uv run --flavor t4-small --timeout 20m --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \
-  fancyzhx/ag_news username/ag-news-setfit \
-  --body-model sentence-transformers/paraphrase-mpnet-base-v2
+  fancyzhx/ag_news username/ag-news-setfit-gpu --num-samples 8
 ```
 
 ### Measured

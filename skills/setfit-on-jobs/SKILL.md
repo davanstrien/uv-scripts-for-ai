@@ -29,7 +29,7 @@ Use the tested recipe rather than recreating SetFit training code. The executabl
 
 https://raw.githubusercontent.com/davanstrien/uv-scripts-for-ai/d77b0338d577a9e5d35ead6df4ec681ca8e5c06e/classification/train-setfit.py
 
-Read its help for flags and check `hf jobs uv run --help` if needed. A small first run can use `cpu-basic`; adapt sample counts, body model and hardware to the data and user's budget. Four examples per class is a smoke test, not a quality target. `--num-samples` caps examples per class; it does not mean total training rows.
+Read its help for flags and check `hf jobs uv run --help` if needed. CPU is practical for small experiments; use a GPU for faster training, particularly with larger models, longer texts or more classes. A small first run can use `cpu-basic`; changing to `t4-small` accelerates the same model and training settings. Choose hardware within the user's budget. Four examples per class is a smoke test, not a quality target. `--num-samples` caps examples per class; it does not mean total training rows.
 
 Example for a small pilot (replace the output namespace):
 
