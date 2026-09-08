@@ -127,3 +127,39 @@ def test_help_renders_slice_example(monkeypatch, capsys):
         recipe.parse_args()
     assert result.value.code == 0
     assert "train[:10%]" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("job_id", "accelerator", "cuda", "expected"),
+    [
+        ("job-123", "l40sx1", True, "l40sx1"),
+        ("job-123", "a100-large", True, "a100-large"),
+        ("job-123", "none", False, "cpu-basic"),
+        ("job-123", "", False, "cpu-basic"),
+        ("", "l40sx1", True, "t4-small"),
+    ],
+)
+def test_reproduction_preserves_jobs_gpu_flavor(monkeypatch, job_id, accelerator, cuda, expected):
+    monkeypatch.setattr("sys.argv", [str(SCRIPT), "fixture", "user/model"])
+    monkeypatch.setenv("JOB_ID", job_id)
+    monkeypatch.setenv("ACCELERATOR", accelerator)
+    monkeypatch.setattr(recipe.torch.cuda, "is_available", lambda: cuda)
+    command = recipe.build_reproduce_command(recipe.parse_args())
+    assert command.startswith(f"hf jobs uv run --flavor {expected} --secrets HF_TOKEN")
+
+
+@pytest.mark.parametrize("is_private", [False, True])
+def test_private_destination_visibility_checked_before_loading_data(monkeypatch, is_private):
+    monkeypatch.setattr("sys.argv", [str(SCRIPT), "fixture", "user/model", "--private", "--hf-token", "fake"])
+    monkeypatch.setattr(recipe, "login", Mock())
+    api = Mock()
+    api.model_info.return_value.private = is_private
+    monkeypatch.setattr(recipe, "HfApi", Mock(return_value=api))
+    load_data = Mock(side_effect=RuntimeError("data loading reached"))
+    monkeypatch.setattr(recipe, "pick_eval_split", load_data)
+    error = RuntimeError if is_private else SystemExit
+    message = "data loading reached" if is_private else "is public"
+    with pytest.raises(error, match=message):
+        recipe.main(recipe.parse_args())
+    assert load_data.call_count == int(is_private)
+    api.create_repo.assert_called_once_with("user/model", repo_type="model", private=True, exist_ok=True)

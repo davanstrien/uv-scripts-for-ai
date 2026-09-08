@@ -92,6 +92,7 @@ training settings work on either; the recipe uses the available accelerator auto
 - **Every run reports a majority baseline.** The run warns when accuracy fails to beat it, or the gain is below five percentage points. That fixed threshold is a review heuristic, not a measured noise level or significance test.
 - **It estimates training time before starting.** The script times forward/backward passes on actual texts and hardware, then refuses training projected above `--max-minutes` (default 60). Setup, evaluation and upload take additional time. A measurement error can skip this guard; use Jobs `--timeout` to enforce a wall-clock limit.
 - **Rows with missing or blank labels or texts are dropped**, with a count. Missing labels include `ClassLabel`'s `-1` sentinel and numeric NaN; plain integer `-1` remains a valid class. Splits with no usable labelled text, fewer than two observed training classes, and missing or non-string text columns exit before model loading.
+- **`--private` verifies the output repository is private before training.** If the destination already exists publicly, choose a new repo or change its visibility first.
 
 ```bash
 # 8 labels per class, on CPU
@@ -104,6 +105,19 @@ hf jobs uv run --flavor t4-small --timeout 20m --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \
   fancyzhx/ag_news username/ag-news-setfit-gpu --num-samples 8
 ```
+
+### Choosing another body or longer context
+
+`--body-model` accepts a Sentence Transformer checkpoint. Set `--max-seq-length` within that
+model's supported context window; increasing it cannot extend a model's native limit or restore
+text already shortened during dataset preparation. Longer sequences can need a smaller
+`--batch-size` or more GPU memory. The recipe measures training cost on the selected hardware.
+
+Follow the body's task-prefix instructions when preparing inputs. For example,
+[`nomic-ai/modernbert-embed-base`](https://huggingface.co/nomic-ai/modernbert-embed-base)
+uses Nomic's task prefixes: classification inputs should begin with `classification: `.
+Include the same prefix during training, evaluation and inference. The recipe does not add it
+automatically. Retain the original texts and the preprocessing details with the model.
 
 ### Measured
 

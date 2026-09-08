@@ -335,7 +335,8 @@ def warn_on_truncation(model, texts, max_seq_length: int) -> None:
     logger.warning(
         "%d of %d sampled documents exceed --max-seq-length %d (median of those: %d tokens). "
         "Everything past the limit is discarded before training and before prediction. If the "
-        "signal for your labels sits late in the document, raise --max-seq-length.",
+        "signal for your labels sits late in the document, raise --max-seq-length within the "
+        "body model's supported context window, or choose a longer-context --body-model.",
         len(over), len(sample), max_seq_length, median_over,
     )
 
@@ -480,11 +481,15 @@ def estimate_training_steps(per_class, batch_size, num_epochs, strategy) -> tupl
 
 
 def build_reproduce_command(args) -> str:
-    """Rebuild the exact invocation, so the card's command produces the card's model.
+    """Rebuild recipe options for Jobs, preserving the recorded accelerator when available.
 
     Only non-default flags are appended, keeping the command short while staying faithful.
+    Outside Jobs, the hardware flavor is a suggested default rather than an exact record.
     """
     flavor = "t4-small" if torch.cuda.is_available() else "cpu-basic"
+    accelerator = os.environ.get("ACCELERATOR", "").strip()
+    if os.environ.get("JOB_ID") and accelerator.lower() not in ("", "none"):
+        flavor = accelerator
     parts = [
         f"hf jobs uv run --flavor {flavor} --secrets HF_TOKEN \\",
         f"  {SCRIPT_URL} \\",
@@ -647,9 +652,15 @@ def main(args) -> None:
 
     # Prove we can write the output repo BEFORE paying for training. A permissions failure
     # after trainer.train() costs the whole run and leaves no artifact behind.
-    HfApi(token=token).create_repo(
+    api = HfApi(token=token)
+    api.create_repo(
         args.output_repo, repo_type="model", private=args.private, exist_ok=True
     )
+    if args.private and not api.model_info(args.output_repo).private:
+        sys.exit(
+            f"Output repo '{args.output_repo}' is public. --private does not change an existing "
+            "repo's visibility. Choose a new output repo or make that repo private before training."
+        )
 
     logger.info("Loading %s", args.input_dataset)
     eval_split = pick_eval_split(

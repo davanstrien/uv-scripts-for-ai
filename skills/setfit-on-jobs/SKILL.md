@@ -23,6 +23,8 @@ Choose a held-out labeled split explicitly. The recipe otherwise prefers validat
 
 Measure text lengths with the selected body's tokenizer and check language suitability. Report truncation only when measured lengths exceed the configured limit; do not turn a possible limitation into an observed finding. The default English MiniLM body and 256-token truncation may not suit other languages or decisions requiring a whole document. Disclose material truncation or choose suitable settings within the budget.
 
+Keep `--max-seq-length` within the chosen body's supported context window. If prepared inputs were already shortened, restore the original text before testing longer context. Follow the body's task-prefix instructions consistently across training, evaluation and inference; the recipe does not add prefixes automatically. Record these preprocessing requirements in the handoff.
+
 ## Run the existing recipe
 
 Use the tested recipe rather than recreating SetFit training code. The executable link below pins a tested revision. The canonical recipe is https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py; verify it includes the pinned revision's input-validation fixes before switching to the mirror:
