@@ -71,6 +71,8 @@ A self-contained, pinned script is easy to run and reuse, for a few reasons:
 
 **Built for agents, too.** Every recipe takes its arguments in the same `input output` order and runs from a URL, so an AI agent can pick a tool from its header and run it with no setup. On Jobs the agent runs in a sandbox: a throwaway disk, access limited to what the token's repo permissions allow, and a cost cap per job — not arbitrary code on your machine. (Hugging Face also ships an [`hf` CLI skill for agents](https://huggingface.co/docs/hub/agents-cli) for driving Jobs from an editor.) This repo also ships a ready-to-use **[`uv-recipes` agent skill](skills/uv-recipes/)** — point your agent at it to discover, run, and adapt recipes.
 
+For few-shot text classification, the focused **[`setfit-on-jobs` skill](skills/setfit-on-jobs/)** prepares a small labeled sample when needed, runs SetFit on Jobs, and verifies the resulting model.
+
 ## Recipes
 
 | Domain | What it does | On the Hub |
@@ -82,7 +84,7 @@ A self-contained, pinned script is easy to run and reuse, for a few reasons:
 | **embeddings** | Embed text/images (auto-batch, prompt-aware); build a searchable Lance vector DB on the Hub | [`embeddings`](https://huggingface.co/datasets/uv-scripts/embeddings) |
 | **embeddings & atlas** | Embed a dataset; build an interactive map | [`build-atlas`](https://huggingface.co/datasets/uv-scripts/build-atlas) |
 | **data processing** | Filter / dedup / stats over large datasets | [`dataset-stats`](https://huggingface.co/datasets/uv-scripts/dataset-stats) · [`deduplication`](https://huggingface.co/datasets/uv-scripts/deduplication) |
-| **classification** | Fine-tune an encoder classifier (LFM2.5-Encoder, ModernBERT, …) or zero-shot classify with an LLM | [`classification`](https://huggingface.co/datasets/uv-scripts/classification) |
+| **classification** | Fine-tune an encoder classifier (LFM2.5-Encoder, ModernBERT, …), few-shot train one with SetFit on CPU or GPU, or zero-shot classify with an LLM | [`classification`](https://huggingface.co/datasets/uv-scripts/classification) |
 | **dataset creation** | Turn PDFs / image URLs into Hub datasets | [`dataset-creation`](https://huggingface.co/datasets/uv-scripts/dataset-creation) · [`iiif-tiles`](https://huggingface.co/datasets/uv-scripts/iiif-tiles) |
 | **synthetic data** | Generate datasets with LLMs | [`synthetic-data`](https://huggingface.co/datasets/uv-scripts/synthetic-data) |
 | **inference** | Run any open LLM / VLM over a dataset | [`vllm`](https://huggingface.co/datasets/uv-scripts/vllm) · [`openai-oss`](https://huggingface.co/datasets/uv-scripts/openai-oss) · [`transformers-inference`](https://huggingface.co/datasets/uv-scripts/transformers-inference) |

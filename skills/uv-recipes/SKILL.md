@@ -62,7 +62,7 @@ Keep the inline dependency block valid (new deps install at runtime); update the
 
 ## Compose a pipeline
 
-Each recipe's output dataset is the next recipe's input (handoff through the Hub): e.g. `dataset-creation` (PDFs→dataset) → `ocr/glm-ocr.py` (→`markdown`) → `deduplication` → `build-atlas` (embed + map). A pipeline can also end in a trained model. One pipeline ships pre-assembled as its own skill: `object-detection` carries a `SKILL.md` covering the full no-labels→detector loop (zero-shot teacher labels → validate → convert → train a small Apache-licensed detector) — fetch it from the repo when that is the task.
+Each recipe's output dataset is the next recipe's input (handoff through the Hub): e.g. `dataset-creation` (PDFs→dataset) → `ocr/glm-ocr.py` (→`markdown`) → `deduplication` → `build-atlas` (embed + map). A pipeline can also end in a trained model. For a small single-label text classifier, use the focused [setfit-on-jobs skill](../setfit-on-jobs/SKILL.md): it can prepare an agent-labeled sample, run SetFit on Jobs, and evaluate and reload the model. One pipeline ships pre-assembled as its own skill: `object-detection` carries a `SKILL.md` covering the full no-labels→detector loop (zero-shot teacher labels → validate → convert → train a small Apache-licensed detector) — fetch it from the repo when that is the task.
 
 ## Pre-label, then review
 
