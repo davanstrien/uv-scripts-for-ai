@@ -54,13 +54,13 @@
     "model_id": "tiiuae/Falcon-OCR",
     "revision": "fe757d59ecd79d4d68760162306a70a015761ad9",
     "params": "0.3B",
-    "backend": "vendor image: ghcr.io/tiiuae/falcon-ocr@sha256:d0b4120b… (vLLM fork float32 + falcon_ocr_sdk layout pipeline), HTTP driver",
+    "backend": "vendor image: ghcr.io/tiiuae/falcon-ocr@sha256:d0b4120b… (vLLM fork float32 + falcon_ocr_sdk layout pipeline), saturate driver",
     "image": "ghcr.io/tiiuae/falcon-ocr@sha256:d0b4120bfd7b6fafdd9ae95124d32e8abdbb710ada6b4a303b33fc7636b5e1d7",
     "task": "ocr | e2e (default) or layout pipeline",
     "output": "markdown",
     "license": "apache-2.0",
     "languages": { "evidence": "not-stated" },
-    "notes": "Weights are baked into the image; the script refuses to run unless model.safetensors hashes to the v1.5 LFS sha256 (--revision stages another Hub commit, hash-checked). The image ships no uv and a py3.10 without ensurepip, so `hf jobs uv run` cannot start on it: launch with `hf jobs run IMAGE -- bash -lc 'pip install uv && uv run URL'`. [tool.hf-jobs] header (image digest, a10g-small, HF_TOKEN) is documentation until the image ships uv."
+    "notes": "Weights are baked into the image; the script refuses to run unless model.safetensors hashes to the v1.5 LFS sha256 (--revision stages another Hub commit, hash-checked). The image ships no uv and a py3.10 without ensurepip, so `hf jobs uv run` cannot start on it: launch with `hf jobs run IMAGE -- bash -lc 'pip install uv && uv run URL'`. [tool.hf-jobs] header (image digest, a10g-small, HF_TOKEN) is documentation until the image ships uv. Output is the saturate shape (data/part-*.parquet keyed by id, error rows, resumable), not input+column."
   },
   "smoldocling-ocr.py": {
     "model_id": "ds4sd/SmolDocling-256M-preview",
