@@ -88,8 +88,9 @@ Legend: ✅ production-ready · ⚠️ works only with a required pinned image �
 | `nuextract3.py`, `lfm2-extract.py`, `lfm2-vl-extract.py` | ✅ | vLLM | l4x1 | structured extraction |
 | `hunyuan-ocr.py` | ✅ | vLLM | l4x1 | **1.0, revision-pinned** (root repo became 1.5 in-place); `transformers<5.13` cap — see gotcha |
 | `hunyuan-ocr-1.5.py` | ✅ | vLLM | l4x1 | tracks repo root (=1.5); task-locked prompts; `transformers<5.13` cap — see gotcha |
-| `rolm-ocr.py`, `smoldocling-ocr.py`, `numarkdown-ocr.py`, `qianfan-ocr.py`, `firered-ocr.py`, `abot-ocr.py`, `falcon-ocr.py`, `olmocr2-vllm.py`, `dots-mocr.py` | ✅ | vLLM | varies | see `README.md` for flags |
+| `rolm-ocr.py`, `smoldocling-ocr.py`, `numarkdown-ocr.py`, `qianfan-ocr.py`, `firered-ocr.py`, `abot-ocr.py`, `falcon-ocr.py`, `falcon-ocr-1.5.py`, `olmocr2-vllm.py`, `dots-mocr.py` | ✅ | vLLM | varies | see `README.md` for flags |
 | `pp-ocrv6.py`, `pp-doclayout.py` | ✅ | PaddleOCR / PaddleX | l4x1 | classical det+rec; dataset **or** bucket I/O |
+| `falcon-ocr-1.5-vendor.py` | 🧪+image | TII image (vLLM fork + pipeline) · saturate | a10g-small | no `uv` in image → `hf jobs run … pip install uv && uv run`; digest + weights-hash pinned; saturate output shape — see gotcha |
 
 **License note:** Surya and `lift` ship code as Apache-2.0 but **weights under a modified OpenRAIL-M**
 (research/personal/<$5M, no competitive use vs Datalab's API) — surfaced in each docstring + card.
@@ -186,6 +187,61 @@ ships in a stable wheel. 1.5 prompts are task-locked (12 types, Chinese wording,
 client's `hunyuan_tasks.py`) and sampling is card-locked (temp 0.0, rep-penalty 1.08) — don't
 "improve" either; upstream observed hand-tweaked prompts silently degrade quality.
 
+### `falcon-ocr.py` / `falcon-ocr-1.5.py` / `falcon-ocr-bucket.py` — upstream overwrote `main` with v1.5
+On 2026-09-11 TII pushed Falcon OCR **v1.5 onto `main` of `tiiuae/Falcon-OCR`** in three same-day
+commits (new `model.safetensors`, then small code edits; no tag, no branch). Same HunyuanOCR pattern,
+same fix: **one script per version identity, each pinned by commit.** `falcon-ocr.py` (+ the bucket
+variant) pins the last v1 commit `42ec56b7…`; `falcon-ocr-1.5.py` pins the v1.5 *release head*
+`fe757d59…` — not `d259a7fb`, the first v1.5 commit, whose code files were superseded the same day.
+Never loosen either pin to `main`; `--revision` exists for the caller (`--revision main` follows the
+root deliberately). The dataset recipes resolve the revision to a commit up front
+(`HfApi().model_info(...).sha`) and write `revision` + `model_commit` into `inference_info` and the
+card. Same engine, same flags, same tests across both — the split is identity, not code.
+`ocr-bench` mirrors it with `falcon-ocr` / `falcon-ocr-1.5` slugs that pass the pins explicitly.
+
+All three carry a **`[tool.hf-jobs]` header** (`flavor = "l4x1"`, dataset recipes also
+`secrets = ["HF_TOKEN"]`): `hf jobs uv run falcon-ocr-1.5.py IN OUT` needs no launch flags on
+hf ≥ 1.32 (the reader landed on `main` in huggingface_hub#4598 on 2026-09-10; not in v1.31.0).
+Verified 2026-09-12 with a main-branch CLI: dry-run shows `flavor l4x1 (from script)` /
+`secrets HF_TOKEN=*** (from script)`, `--flavor a10g-small` overrides, and a flagless launch ran and
+pushed. Older CLIs and plain `uv run` ignore the table (PEP 723 `[tool.*]`), so the header is purely
+additive — the docstrings keep the explicit-flags form for them. A secret named in the header that is
+not set locally is a launch-time error on the new CLI, not an empty value in the Job.
+
+Known engine gotcha (both versions): the `OCRInferenceEngine` default `max_seq_length=4096` counts
+image tokens, so dense pages can truncate silently; not changed here.
+
+### `falcon-ocr-1.5-vendor.py` — TII's own image, driven by saturate
+The third Falcon recipe runs the **vendor's deployable product** instead of the `falcon-perception`
+package: `ghcr.io/tiiuae/falcon-ocr` boots its own vLLM fork (float32, `max_model_len` 16k, own chat
+template) plus a FastAPI pipeline (PP-DocLayoutV3 layout → per-region OCR → markdown). The script
+boots `/app/entrypoint_single.sh` as a subprocess, gates on `:8000/health` and `:5002/health`, then
+hands the driver half to `saturate` (`pump` with `route="/falconocr/parse"`, the same shape as the
+`-saturate.py` companions: adaptive window, resumable `data/part-*.parquet` keyed by id, error rows,
+`--retry-errors`, `--shard RANK/WORLD`). `skip_layout` = the card-recommended e2e mode; `--layout`
+for the pipeline. Facts that shape it, all measured 2026-09-12 on digest `d0b4120b…`:
+- **No `uv` in the image, Python 3.10 with no ensurepip, `pip` works.** `hf jobs uv run` hardcodes
+  `uv run`, so it cannot start on this image at all — launch is `hf jobs run IMAGE -- bash -lc
+  'pip install -q uv && uv run <raw URL> IN OUT'`. The `[tool.hf-jobs]` header (image digest,
+  a10g-small, HF_TOKEN) is recorded for the day the image ships uv; today it is documentation.
+  (Upstream ask worth filing: let `hf jobs uv run` bootstrap uv on images that lack it.)
+- **Strip the driver venv from the services' environment.** `uv run` prepends its venv bin to PATH,
+  so the entrypoint's bare `python -m vllm…` resolved to the driver interpreter and died with
+  `No module named 'vllm'`. The script pops `PYTHONPATH`/`VIRTUAL_ENV` and removes the venv bin from
+  PATH before spawning the entrypoint.
+- **The image digest is the revision pin and it rots.** ghcr has only a moving `latest`; it moved
+  twice on 09-11/09-12 and the earlier v1.5 digest now 404s. So the recipe also hashes the baked
+  `model.safetensors` against the v1.5 LFS sha256 and refuses to run on a mismatch; `--revision`
+  stages another Hub commit over `/models/Falcon-OCR` with the same check. `inference_info` carries
+  image digest, weights sha256 and commit.
+- **Interpreter exit segfaults in this image** (pyarrow/torch atexit clash, exit 139 after a clean
+  push) → the script ends with `os._exit(0)` after flushing.
+- Window `Auto(initial=2, target_waiting=4, max_limit=8, step=1)`: at 8 in flight the
+  pipeline→vLLM hop returned HTTP 200 with an error body ("Can not write request body"). `parse`
+  raises on that body, so it becomes a durable error row rather than a silent empty page, and
+  `--retry-errors` re-admits only those rows. `--max-inflight` lowers the cap further.
+- **Smoke 2026-09-12**: hand-rolled driver first (job `6aa55b1c…`, 3 BHL pages, e2e: healthy in 95 s, 0 errors, identical to the bhl-ocr-eval v1.5 e2e column, difflib 1.000 ×3). Saturate driver (job 6aa5624a5527934177ed00b7, same 3 pages): 3 ok / 0 failed, window settled at 3, output identical to the hand-rolled run and the BYO column (1.000 x3), provenance columns on every row. Newspapers/huge pages: use `--layout` (e2e returned empty and crashed vLLM on 4.5–7k px pages in a separate test).
+
 ### `glm-ocr.py`
 Chatty on blank pages / can emit degenerate repeats — that's **model quality, not a crash**; don't
 re-debug it as a recipe bug. (The actual historical crash was the `pyarrow<18` cap — see Conventions.)
@@ -273,6 +329,13 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
 
 ## Change log
 
+- **2026-09-12** — Falcon OCR split by version identity after TII overwrote the repo root with v1.5 on
+  2026-09-11: `falcon-ocr.py` (+ bucket variant) now pins the last v1 commit, new `falcon-ocr-1.5.py`
+  pins the v1.5 release head; both take `--revision` and record the resolved commit in
+  `inference_info` + card. First recipes carrying a `[tool.hf-jobs]` header (flavor + HF_TOKEN),
+  verified against the huggingface_hub `main` CLI. Third recipe `falcon-ocr-1.5-vendor.py` drives
+  TII's own image (digest + weights-hash pinned; image lacks uv → `hf jobs run` + pip-bootstrapped
+  uv), driver half = `saturate` like the other `-saturate.py` recipes. See the per-script gotchas.
 - **2026-07-29** — added the first two **`-saturate.py` companions**: `lighton-ocr2-saturate.py` and
   `ovis-ocr2-saturate.py`. Same model/prompt/sampling/post-processing as their `-server.py` siblings;
   the driver half (concurrency, retries, output, resume) is the `saturate` package (pinned `>=0.1.1`,

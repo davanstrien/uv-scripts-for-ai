@@ -15,7 +15,7 @@
 # ///
 
 """
-Convert document images to text using Falcon OCR with the falcon-perception engine.
+Convert document images to text using Falcon OCR 1.5 with the falcon-perception engine.
 
 Uses the optimized OCRInferenceEngine with CUDA graphs and paged inference
 for much faster throughput than the raw transformers API.
@@ -26,37 +26,38 @@ Features:
 - Multi-format: Plain text, LaTeX formulas, HTML tables
 - Layout-aware: Optional 2-stage pipeline (layout detection + per-region OCR)
 
-Model: tiiuae/Falcon-OCR (pinned to the last v1 revision)
+Model: tiiuae/Falcon-OCR (pinned to the v1.5 release head)
 Backend: falcon-perception (OCRInferenceEngine)
 License: Apache 2.0
 
 Versions: TII released Falcon OCR v1.5 on 2026-09-11 by overwriting the weights on
-`main` of the same repo (no tag, no branch). This script is the **v1** recipe: it pins
-the last v1 commit (42ec56b7…) so its behaviour does not change under you. v1.5 is its
-own recipe, `falcon-ocr-1.5.py`. `--revision` overrides the pin (`--revision main`
+`main` of the same repo (no tag, no branch). This script is the **v1.5** recipe: it pins
+the v1.5 release head (fe757d59…, the third of three same-day commits — the first one,
+d259a7fb, has older code files) so the next in-place swap cannot change it silently.
+v1 is its own recipe, `falcon-ocr.py`. `--revision` overrides the pin (`--revision main`
 tracks whatever the repo root holds); the resolved commit is always recorded in
 `inference_info` and on the dataset card.
 
 Launch config: the `[tool.hf-jobs]` header carries the default flavor (l4x1) and the
-HF_TOKEN secret, so `hf jobs uv run falcon-ocr.py IN OUT` needs no flags on hf >= 1.32
+HF_TOKEN secret, so `hf jobs uv run falcon-ocr-1.5.py IN OUT` needs no flags on hf >= 1.32
 (read client-side by the CLI; older CLIs and plain `uv run` ignore it). Explicit flags
 still win.
 
 Examples:
     # Basic text OCR
-    uv run falcon-ocr.py input-dataset output-dataset
+    uv run falcon-ocr-1.5.py input-dataset output-dataset
 
     # Test with small sample
-    uv run falcon-ocr.py dataset test --max-samples 5 --shuffle
+    uv run falcon-ocr-1.5.py dataset test --max-samples 5 --shuffle
 
-    # Track the repo root instead of the v1 pin (v1.5 at the time of writing)
-    uv run falcon-ocr.py dataset out --revision main
+    # Track the repo root instead of the v1.5 pin
+    uv run falcon-ocr-1.5.py dataset out --revision main
 
     # Run on HF Jobs (flavor + HF_TOKEN come from the [tool.hf-jobs] header on hf >= 1.32)
-    hf jobs uv run falcon-ocr.py input-dataset output-dataset --max-samples 10
+    hf jobs uv run falcon-ocr-1.5.py input-dataset output-dataset --max-samples 10
 
     # Older hf CLI: pass the launch flags yourself
-    hf jobs uv run --flavor l4x1 -s HF_TOKEN falcon-ocr.py input-dataset output-dataset
+    hf jobs uv run --flavor l4x1 -s HF_TOKEN falcon-ocr-1.5.py input-dataset output-dataset
 """
 
 import argparse
@@ -79,11 +80,12 @@ logger = logging.getLogger(__name__)
 
 MODEL_ID = "tiiuae/Falcon-OCR"
 # Upstream swapped the weights in place (v1 -> v1.5) on 2026-09-11 with no tag or
-# branch, so `main` is a moving target. This pin IS this script's v1 identity — never
-# loosen it to "main" here; v1.5 lives in falcon-ocr-1.5.py. Override with --revision
-# only to reproduce old runs or to follow the repo root deliberately.
-DEFAULT_REVISION = "42ec56b72a23984ac059e7c8a6d397a8529423fe"  # last v1 commit, 2026-07-03
-MODEL_LABEL = "Falcon-OCR"
+# branch, so `main` is a moving target. This pin IS this script's v1.5 identity — the
+# release head, not the first v1.5 commit (d259a7fb) whose code files were superseded
+# the same day. Never loosen it to "main" here; v1 lives in falcon-ocr.py. Override
+# with --revision only to reproduce old runs or to follow the repo root deliberately.
+DEFAULT_REVISION = "fe757d59ecd79d4d68760162306a70a015761ad9"  # v1.5 release head, 2026-09-11
+MODEL_LABEL = "Falcon-OCR-1.5"
 
 TASK_MODES = {
     "plain": "Full-page text extraction",
@@ -150,14 +152,15 @@ tags:
 - ocr
 - document-processing
 - falcon-ocr
+- falcon-ocr-1.5
 - {task_mode}
 - uv-script
 - generated
 ---
 
-# Document Processing using Falcon OCR ({task_mode} mode)
+# Document Processing using Falcon OCR 1.5 ({task_mode} mode)
 
-This dataset contains OCR results from images in [{source_dataset}](https://huggingface.co/datasets/{source_dataset}) using [Falcon OCR](https://huggingface.co/tiiuae/Falcon-OCR), a 0.3B early-fusion vision-language model.
+This dataset contains OCR results from images in [{source_dataset}](https://huggingface.co/datasets/{source_dataset}) using [Falcon OCR 1.5](https://huggingface.co/tiiuae/Falcon-OCR), a 0.3B early-fusion vision-language model (v1.5 weights released 2026-09-11).
 
 ## Processing Details
 
@@ -173,7 +176,7 @@ This dataset contains OCR results from images in [{source_dataset}](https://hugg
 ## Reproduction
 
 ```bash
-uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/falcon-ocr.py \\
+uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/falcon-ocr-1.5.py \\
     {source_dataset} \\
     <output-dataset> \\
     --task-mode {task_mode} \\
@@ -493,7 +496,7 @@ if __name__ == "__main__":
         "--revision", default=None,
         help=f"Model repo revision (branch, tag or commit sha). Default: the {MODEL_LABEL} "
         f"pin {DEFAULT_REVISION[:10]}. Pass 'main' to follow the repo root (v1.5 since "
-        "2026-09-11) or any commit to reproduce a run; the resolved commit is recorded "
+        "2026-09-11; same as this pin today) or any commit to reproduce a run; the resolved commit is recorded "
         "in inference_info.",
     )
 
