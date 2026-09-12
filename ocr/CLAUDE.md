@@ -186,6 +186,18 @@ ships in a stable wheel. 1.5 prompts are task-locked (12 types, Chinese wording,
 client's `hunyuan_tasks.py`) and sampling is card-locked (temp 0.0, rep-penalty 1.08) — don't
 "improve" either; upstream observed hand-tweaked prompts silently degrade quality.
 
+### `falcon-ocr.py` / `falcon-ocr-bucket.py` — upstream overwrote `main` with v1.5
+On 2026-09-11 TII pushed Falcon OCR **v1.5 onto `main` of `tiiuae/Falcon-OCR`** (new
+`model.safetensors` + small code edits, no tag, no branch; v1 = `42ec56b7…`, v1.5 release head =
+`fe757d59…`). Same architecture and the same `falcon-perception` engine, so this is one recipe with a
+`--revision` flag (default `main`, i.e. whatever the root holds), not a second script like HunyuanOCR
+needed. The recipe resolves the revision to a commit up front (`HfApi().model_info(...).sha`) and writes
+`revision` + `model_commit` into `inference_info` and the card, so a "main" run is still reproducible
+after the next in-place swap. Pin explicitly for benchmarks — `ocr-bench` carries `falcon-ocr` (v1 pin)
+and `falcon-ocr-1.5` (v1.5 pin) as separate configs. Known engine gotcha (both versions): the
+`OCRInferenceEngine` default `max_seq_length=4096` counts image tokens, so dense pages can truncate
+silently; not changed here.
+
 ### `glm-ocr.py`
 Chatty on blank pages / can emit degenerate repeats — that's **model quality, not a crash**; don't
 re-debug it as a recipe bug. (The actual historical crash was the `pyarrow<18` cap — see Conventions.)
@@ -273,6 +285,9 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
 
 ## Change log
 
+- **2026-09-12** — `falcon-ocr.py` / `falcon-ocr-bucket.py`: added `--revision` (default `main`) and
+  recorded the resolved commit in `inference_info` + card, because TII overwrote the repo root with
+  v1.5 on 2026-09-11 and the recipe had silently switched weights. See the per-script gotcha.
 - **2026-07-29** — added the first two **`-saturate.py` companions**: `lighton-ocr2-saturate.py` and
   `ovis-ocr2-saturate.py`. Same model/prompt/sampling/post-processing as their `-server.py` siblings;
   the driver half (concurrency, retries, output, resume) is the `saturate` package (pinned `>=0.1.1`,

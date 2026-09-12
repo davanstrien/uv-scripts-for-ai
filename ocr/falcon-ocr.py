@@ -26,12 +26,23 @@ Model: tiiuae/Falcon-OCR
 Backend: falcon-perception (OCRInferenceEngine)
 License: Apache 2.0
 
+Versions: TII released Falcon OCR v1.5 on 2026-09-11 by overwriting the weights on
+`main` of the same repo (no tag, no branch). `--revision` selects which weights load;
+the default `main` tracks the repo root (v1.5 at the time of writing). Pin a commit to
+make a run reproducible:
+    v1   = 42ec56b72a23984ac059e7c8a6d397a8529423fe  (last v1 commit, 2026-07-03)
+    v1.5 = fe757d59ecd79d4d68760162306a70a015761ad9  (v1.5 release head, 2026-09-11)
+The resolved commit is recorded in `inference_info` and on the dataset card.
+
 Examples:
     # Basic text OCR
     uv run falcon-ocr.py input-dataset output-dataset
 
     # Test with small sample
     uv run falcon-ocr.py dataset test --max-samples 5 --shuffle
+
+    # Pin the v1 weights (repo root is v1.5 since 2026-09-11)
+    uv run falcon-ocr.py dataset out --revision 42ec56b72a23984ac059e7c8a6d397a8529423fe
 
     # Run on HF Jobs with GPU
     hf jobs uv run --flavor l4x1 \\
@@ -52,13 +63,17 @@ from typing import Any, Dict, Union
 
 import torch
 from datasets import load_dataset
-from huggingface_hub import DatasetCard, login
+from huggingface_hub import DatasetCard, HfApi, login
 from PIL import Image
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 MODEL_ID = "tiiuae/Falcon-OCR"
+# Upstream swapped the weights in place (v1 -> v1.5) on 2026-09-11; these are the
+# commit shas to pin. `main` is a moving target.
+FALCON_OCR_V1_REVISION = "42ec56b72a23984ac059e7c8a6d397a8529423fe"
+FALCON_OCR_V15_REVISION = "fe757d59ecd79d4d68760162306a70a015761ad9"
 
 TASK_MODES = {
     "plain": "Full-page text extraction",
@@ -115,8 +130,11 @@ def create_dataset_card(
     processing_time: str,
     image_column: str = "image",
     split: str = "train",
+    revision: str = "main",
+    model_commit: str | None = None,
 ) -> str:
     task_description = TASK_MODES[task_mode]
+    commit_note = f" (resolved to `{model_commit}`)" if model_commit else ""
     return f"""---
 tags:
 - ocr
@@ -135,6 +153,7 @@ This dataset contains OCR results from images in [{source_dataset}](https://hugg
 
 - **Source Dataset**: [{source_dataset}](https://huggingface.co/datasets/{source_dataset})
 - **Model**: [{MODEL_ID}](https://huggingface.co/{MODEL_ID})
+- **Model Revision**: `{revision}`{commit_note}
 - **Task Mode**: `{task_mode}` - {task_description}
 - **Number of Samples**: {num_samples:,}
 - **Processing Time**: {processing_time}
@@ -148,7 +167,8 @@ uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/falcon-ocr.py \\
     {source_dataset} \\
     <output-dataset> \\
     --task-mode {task_mode} \\
-    --image-column {image_column}
+    --image-column {image_column} \\
+    --revision {model_commit or revision}
 ```
 
 Generated with [UV Scripts](https://huggingface.co/uv-scripts)
@@ -174,6 +194,7 @@ def main(
     cudagraph: bool = True,
     progress: bool = False,
     verbose: bool = False,
+    revision: str = "main",
 ):
     check_cuda_availability()
     start_time = datetime.now()
@@ -210,6 +231,15 @@ def main(
         dataset = dataset.select(range(min(max_samples, len(dataset))))
         logger.info(f"Limited to {len(dataset)} samples")
 
+    # Resolve the revision to a commit sha up front so the run is reproducible even
+    # when `main` moves again (it did on 2026-09-11: v1 -> v1.5, same repo).
+    try:
+        model_commit = HfApi().model_info(MODEL_ID, revision=revision).sha
+    except Exception as e:  # offline / transient API error: run anyway, less provenance
+        logger.warning(f"Could not resolve revision {revision!r} to a commit: {e}")
+        model_commit = None
+    logger.info(f"Model revision: {revision} -> {model_commit or 'unresolved'}")
+
     # Load model using falcon-perception
     logger.info(f"Loading model: {MODEL_ID} via falcon-perception engine")
     from falcon_perception import load_and_prepare_model
@@ -218,6 +248,7 @@ def main(
 
     model, tokenizer, model_args = load_and_prepare_model(
         hf_model_id=MODEL_ID,
+        hf_revision=revision,
         device="cuda",
         dtype="bfloat16",
         compile=compile,
@@ -271,6 +302,8 @@ def main(
         "model_id": MODEL_ID,
         "model_name": "Falcon-OCR",
         "model_size": "0.3B",
+        "revision": revision,
+        "model_commit": model_commit,
         "task_mode": task_mode,
         "column_name": output_column,
         "timestamp": datetime.now().isoformat(),
@@ -333,6 +366,8 @@ def main(
         processing_time=processing_time_str,
         image_column=image_column,
         split=split,
+        revision=revision,
+        model_commit=model_commit,
     )
     card = DatasetCard(card_content)
     card.push_to_hub(output_dataset, token=HF_TOKEN)
@@ -364,7 +399,7 @@ if __name__ == "__main__":
         print("=" * 70)
         print("Falcon OCR - 0.3B Document OCR (falcon-perception engine)")
         print("=" * 70)
-        print(f"\nModel: {MODEL_ID}")
+        print(f"\nModel: {MODEL_ID} (--revision to pin v1 / v1.5, see --help)")
         print("License: Apache 2.0")
         print("\nTask Modes:")
         for mode, description in TASK_MODES.items():
@@ -441,6 +476,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--verbose", action="store_true", help="Log resolved package versions",
     )
+    parser.add_argument(
+        "--revision", default="main",
+        help="Model repo revision (branch, tag or commit sha) to load. Default 'main' "
+        "tracks the repo root, which became v1.5 on 2026-09-11. Pin "
+        f"{FALCON_OCR_V1_REVISION[:10]} for v1 or {FALCON_OCR_V15_REVISION[:10]} "
+        "for the v1.5 release head; the resolved commit is recorded in inference_info.",
+    )
 
     args = parser.parse_args()
 
@@ -463,4 +505,5 @@ if __name__ == "__main__":
         cudagraph=not args.no_cudagraph,
         progress=args.progress,
         verbose=args.verbose,
+        revision=args.revision,
     )
