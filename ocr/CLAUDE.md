@@ -88,7 +88,7 @@ Legend: ✅ production-ready · ⚠️ works only with a required pinned image �
 | `nuextract3.py`, `lfm2-extract.py`, `lfm2-vl-extract.py` | ✅ | vLLM | l4x1 | structured extraction |
 | `hunyuan-ocr.py` | ✅ | vLLM | l4x1 | **1.0, revision-pinned** (root repo became 1.5 in-place); `transformers<5.13` cap — see gotcha |
 | `hunyuan-ocr-1.5.py` | ✅ | vLLM | l4x1 | tracks repo root (=1.5); task-locked prompts; `transformers<5.13` cap — see gotcha |
-| `rolm-ocr.py`, `smoldocling-ocr.py`, `numarkdown-ocr.py`, `qianfan-ocr.py`, `firered-ocr.py`, `abot-ocr.py`, `falcon-ocr.py`, `olmocr2-vllm.py`, `dots-mocr.py` | ✅ | vLLM | varies | see `README.md` for flags |
+| `rolm-ocr.py`, `smoldocling-ocr.py`, `numarkdown-ocr.py`, `qianfan-ocr.py`, `firered-ocr.py`, `abot-ocr.py`, `falcon-ocr.py`, `falcon-ocr-1.5.py`, `olmocr2-vllm.py`, `dots-mocr.py` | ✅ | vLLM | varies | see `README.md` for flags |
 | `pp-ocrv6.py`, `pp-doclayout.py` | ✅ | PaddleOCR / PaddleX | l4x1 | classical det+rec; dataset **or** bucket I/O |
 
 **License note:** Surya and `lift` ship code as Apache-2.0 but **weights under a modified OpenRAIL-M**
@@ -186,17 +186,29 @@ ships in a stable wheel. 1.5 prompts are task-locked (12 types, Chinese wording,
 client's `hunyuan_tasks.py`) and sampling is card-locked (temp 0.0, rep-penalty 1.08) — don't
 "improve" either; upstream observed hand-tweaked prompts silently degrade quality.
 
-### `falcon-ocr.py` / `falcon-ocr-bucket.py` — upstream overwrote `main` with v1.5
-On 2026-09-11 TII pushed Falcon OCR **v1.5 onto `main` of `tiiuae/Falcon-OCR`** (new
-`model.safetensors` + small code edits, no tag, no branch; v1 = `42ec56b7…`, v1.5 release head =
-`fe757d59…`). Same architecture and the same `falcon-perception` engine, so this is one recipe with a
-`--revision` flag (default `main`, i.e. whatever the root holds), not a second script like HunyuanOCR
-needed. The recipe resolves the revision to a commit up front (`HfApi().model_info(...).sha`) and writes
-`revision` + `model_commit` into `inference_info` and the card, so a "main" run is still reproducible
-after the next in-place swap. Pin explicitly for benchmarks — `ocr-bench` carries `falcon-ocr` (v1 pin)
-and `falcon-ocr-1.5` (v1.5 pin) as separate configs. Known engine gotcha (both versions): the
-`OCRInferenceEngine` default `max_seq_length=4096` counts image tokens, so dense pages can truncate
-silently; not changed here.
+### `falcon-ocr.py` / `falcon-ocr-1.5.py` / `falcon-ocr-bucket.py` — upstream overwrote `main` with v1.5
+On 2026-09-11 TII pushed Falcon OCR **v1.5 onto `main` of `tiiuae/Falcon-OCR`** in three same-day
+commits (new `model.safetensors`, then small code edits; no tag, no branch). Same HunyuanOCR pattern,
+same fix: **one script per version identity, each pinned by commit.** `falcon-ocr.py` (+ the bucket
+variant) pins the last v1 commit `42ec56b7…`; `falcon-ocr-1.5.py` pins the v1.5 *release head*
+`fe757d59…` — not `d259a7fb`, the first v1.5 commit, whose code files were superseded the same day.
+Never loosen either pin to `main`; `--revision` exists for the caller (`--revision main` follows the
+root deliberately). The dataset recipes resolve the revision to a commit up front
+(`HfApi().model_info(...).sha`) and write `revision` + `model_commit` into `inference_info` and the
+card. Same engine, same flags, same tests across both — the split is identity, not code.
+`ocr-bench` mirrors it with `falcon-ocr` / `falcon-ocr-1.5` slugs that pass the pins explicitly.
+
+All three carry a **`[tool.hf-jobs]` header** (`flavor = "l4x1"`, dataset recipes also
+`secrets = ["HF_TOKEN"]`): `hf jobs uv run falcon-ocr-1.5.py IN OUT` needs no launch flags on
+hf ≥ 1.32 (the reader landed on `main` in huggingface_hub#4598 on 2026-09-10; not in v1.31.0).
+Verified 2026-09-12 with a main-branch CLI: dry-run shows `flavor l4x1 (from script)` /
+`secrets HF_TOKEN=*** (from script)`, `--flavor a10g-small` overrides, and a flagless launch ran and
+pushed. Older CLIs and plain `uv run` ignore the table (PEP 723 `[tool.*]`), so the header is purely
+additive — the docstrings keep the explicit-flags form for them. A secret named in the header that is
+not set locally is a launch-time error on the new CLI, not an empty value in the Job.
+
+Known engine gotcha (both versions): the `OCRInferenceEngine` default `max_seq_length=4096` counts
+image tokens, so dense pages can truncate silently; not changed here.
 
 ### `glm-ocr.py`
 Chatty on blank pages / can emit degenerate repeats — that's **model quality, not a crash**; don't
@@ -285,9 +297,11 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
 
 ## Change log
 
-- **2026-09-12** — `falcon-ocr.py` / `falcon-ocr-bucket.py`: added `--revision` (default `main`) and
-  recorded the resolved commit in `inference_info` + card, because TII overwrote the repo root with
-  v1.5 on 2026-09-11 and the recipe had silently switched weights. See the per-script gotcha.
+- **2026-09-12** — Falcon OCR split by version identity after TII overwrote the repo root with v1.5 on
+  2026-09-11: `falcon-ocr.py` (+ bucket variant) now pins the last v1 commit, new `falcon-ocr-1.5.py`
+  pins the v1.5 release head; both take `--revision` and record the resolved commit in
+  `inference_info` + card. First recipes carrying a `[tool.hf-jobs]` header (flavor + HF_TOKEN),
+  verified against the huggingface_hub `main` CLI. See the per-script gotcha.
 - **2026-07-29** — added the first two **`-saturate.py` companions**: `lighton-ocr2-saturate.py` and
   `ovis-ocr2-saturate.py`. Same model/prompt/sampling/post-processing as their `-server.py` siblings;
   the driver half (concurrency, retries, output, resume) is the `saturate` package (pinned `>=0.1.1`,

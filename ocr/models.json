@@ -30,14 +30,25 @@
   },
   "falcon-ocr.py": {
     "model_id": "tiiuae/Falcon-OCR",
-    "revision": "main",
+    "revision": "42ec56b72a23984ac059e7c8a6d397a8529423fe",
     "params": "0.3B",
     "backend": "falcon-perception",
     "task": "ocr",
     "output": "markdown",
     "license": "apache-2.0",
     "languages": { "evidence": "not-stated" },
-    "notes": "Repo root became v1.5 on 2026-09-11 (weights overwritten in place, no tag). --revision pins v1 = 42ec56b72a23984ac059e7c8a6d397a8529423fe, v1.5 = fe757d59ecd79d4d68760162306a70a015761ad9; resolved commit recorded in inference_info."
+    "notes": "v1 identity: pinned to the last v1 commit because the repo root became v1.5 in place on 2026-09-11 (no tag). --revision overrides; resolved commit recorded in inference_info. [tool.hf-jobs] header: flavor l4x1 + HF_TOKEN."
+  },
+  "falcon-ocr-1.5.py": {
+    "model_id": "tiiuae/Falcon-OCR",
+    "revision": "fe757d59ecd79d4d68760162306a70a015761ad9",
+    "params": "0.3B",
+    "backend": "falcon-perception",
+    "task": "ocr",
+    "output": "markdown",
+    "license": "apache-2.0",
+    "languages": { "evidence": "not-stated" },
+    "notes": "v1.5 identity: pinned to the v1.5 release head (third same-day commit; d259a7fb has superseded code files). Same engine and flags as falcon-ocr.py. [tool.hf-jobs] header: flavor l4x1 + HF_TOKEN."
   },
   "smoldocling-ocr.py": {
     "model_id": "ds4sd/SmolDocling-256M-preview",

@@ -7,6 +7,9 @@
 #     "torchvision",
 #     "falcon-perception[ocr]",
 # ]
+#
+# [tool.hf-jobs]
+# flavor  = "l4x1"
 # ///
 
 """
@@ -41,9 +44,10 @@ Model: tiiuae/Falcon-OCR (0.3B, 80.3% olmOCR, Apache 2.0)
 Backend: falcon-perception (OCRInferenceEngine with CUDA graphs)
 
 Versions: upstream overwrote `main` with the v1.5 weights on 2026-09-11 (same repo, no
-tag). `--revision` picks the weights; default `main` tracks the root (v1.5 now). Pin
-42ec56b72a23984ac059e7c8a6d397a8529423fe for v1 or
-fe757d59ecd79d4d68760162306a70a015761ad9 for the v1.5 release head. See falcon-ocr.py.
+tag). Like falcon-ocr.py this variant pins the last **v1** commit (42ec56b7…) by default;
+`--revision fe757d59ecd79d4d68760162306a70a015761ad9` runs the v1.5 release head and
+`--revision main` follows the repo root. The `[tool.hf-jobs]` header supplies the default
+flavor on hf >= 1.32; add `-s HF_TOKEN` yourself only if the bucket mounts need it.
 """
 
 import argparse
@@ -59,9 +63,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 MODEL_ID = "tiiuae/Falcon-OCR"
-# Upstream swapped the weights in place (v1 -> v1.5) on 2026-09-11; commit shas to pin.
-FALCON_OCR_V1_REVISION = "42ec56b72a23984ac059e7c8a6d397a8529423fe"
-FALCON_OCR_V15_REVISION = "fe757d59ecd79d4d68760162306a70a015761ad9"
+# Upstream swapped the weights in place (v1 -> v1.5) on 2026-09-11; this pin is the v1
+# identity shared with falcon-ocr.py. v1.5 release head = fe757d59ecd79d4d68760162306a70a015761ad9.
+DEFAULT_REVISION = "42ec56b72a23984ac059e7c8a6d397a8529423fe"  # last v1 commit, 2026-07-03
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp"}
 
 
@@ -166,11 +170,10 @@ def main():
         "--verbose", action="store_true", help="Print resolved package versions",
     )
     parser.add_argument(
-        "--revision", default="main",
-        help="Model repo revision (branch, tag or commit sha). Default 'main' tracks "
-        "the repo root, which became v1.5 on 2026-09-11. Pin "
-        f"{FALCON_OCR_V1_REVISION[:10]} for v1 or {FALCON_OCR_V15_REVISION[:10]} "
-        "for the v1.5 release head.",
+        "--revision", default=DEFAULT_REVISION,
+        help=f"Model repo revision (branch, tag or commit sha). Default: the v1 pin "
+        f"{DEFAULT_REVISION[:10]}. Pass fe757d59ec for the v1.5 release head or 'main' "
+        "to follow the repo root (v1.5 since 2026-09-11).",
     )
 
     args = parser.parse_args()
