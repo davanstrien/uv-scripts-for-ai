@@ -90,6 +90,7 @@ Legend: ✅ production-ready · ⚠️ works only with a required pinned image �
 | `hunyuan-ocr-1.5.py` | ✅ | vLLM | l4x1 | tracks repo root (=1.5); task-locked prompts; `transformers<5.13` cap — see gotcha |
 | `rolm-ocr.py`, `smoldocling-ocr.py`, `numarkdown-ocr.py`, `qianfan-ocr.py`, `firered-ocr.py`, `abot-ocr.py`, `falcon-ocr.py`, `falcon-ocr-1.5.py`, `olmocr2-vllm.py`, `dots-mocr.py` | ✅ | vLLM | varies | see `README.md` for flags |
 | `pp-ocrv6.py`, `pp-doclayout.py` | ✅ | PaddleOCR / PaddleX | l4x1 | classical det+rec; dataset **or** bucket I/O |
+| `falcon-ocr-1.5-vendor.py` | 🧪+image | TII image (vLLM fork + pipeline) | a10g-small | no `uv` in image → `hf jobs run … pip install uv && uv run`; digest + weights-hash pinned — see gotcha |
 
 **License note:** Surya and `lift` ship code as Apache-2.0 but **weights under a modified OpenRAIL-M**
 (research/personal/<$5M, no competitive use vs Datalab's API) — surfaced in each docstring + card.
@@ -210,6 +211,33 @@ not set locally is a launch-time error on the new CLI, not an empty value in the
 Known engine gotcha (both versions): the `OCRInferenceEngine` default `max_seq_length=4096` counts
 image tokens, so dense pages can truncate silently; not changed here.
 
+### `falcon-ocr-1.5-vendor.py` — TII's own image, driven over HTTP
+The third Falcon recipe runs the **vendor's deployable product** instead of the `falcon-perception`
+package: `ghcr.io/tiiuae/falcon-ocr` boots its own vLLM fork (float32, `max_model_len` 16k, own chat
+template) plus a FastAPI pipeline (PP-DocLayoutV3 layout → per-region OCR → markdown). The script
+boots `/app/entrypoint_single.sh` as a subprocess, gates on `:8000/health` and `:5002/health`, and
+posts pages to `/falconocr/parse` (`skip_layout` = the card-recommended e2e mode; `--layout` for the
+pipeline). Facts that shape it, all measured 2026-09-12 on digest `d0b4120b…`:
+- **No `uv` in the image, Python 3.10 with no ensurepip, `pip` works.** `hf jobs uv run` hardcodes
+  `uv run`, so it cannot start on this image at all — launch is `hf jobs run IMAGE -- bash -lc
+  'pip install -q uv && uv run <raw URL> IN OUT'`. The `[tool.hf-jobs]` header (image digest,
+  a10g-small, HF_TOKEN) is recorded for the day the image ships uv; today it is documentation.
+  (Upstream ask worth filing: let `hf jobs uv run` bootstrap uv on images that lack it.)
+- **Strip the driver venv from the services' environment.** `uv run` prepends its venv bin to PATH,
+  so the entrypoint's bare `python -m vllm…` resolved to the driver interpreter and died with
+  `No module named 'vllm'`. The script pops `PYTHONPATH`/`VIRTUAL_ENV` and removes the venv bin from
+  PATH before spawning the entrypoint.
+- **The image digest is the revision pin and it rots.** ghcr has only a moving `latest`; it moved
+  twice on 09-11/09-12 and the earlier v1.5 digest now 404s. So the recipe also hashes the baked
+  `model.safetensors` against the v1.5 LFS sha256 and refuses to run on a mismatch; `--revision`
+  stages another Hub commit over `/models/Falcon-OCR` with the same check. `inference_info` carries
+  image digest, weights sha256 and commit.
+- **Interpreter exit segfaults in this image** (pyarrow/torch atexit clash, exit 139 after a clean
+  push) → the script ends with `os._exit(0)` after flushing.
+- Concurrency default 4: at 8 the pipeline→vLLM hop returned 200s with an error body
+  ("Can not write request body"); the driver retries that class per page.
+- **Smoke 2026-09-12** (job `6aa55b1c5527934177ecfd9c`, a10g-small, 3 BHL pages, e2e): services healthy 95 s after start, 0 errors; output identical to the v1.5 e2e column collected through the bhl-ocr-eval driver (difflib 1.000 on all 3) and 0.998–1.000 vs the package-engine recipe. Newspapers/huge pages: use `--layout` (e2e returned empty and crashed vLLM on 4.5–7k px pages in a separate test).
+
 ### `glm-ocr.py`
 Chatty on blank pages / can emit degenerate repeats — that's **model quality, not a crash**; don't
 re-debug it as a recipe bug. (The actual historical crash was the `pyarrow<18` cap — see Conventions.)
@@ -301,7 +329,9 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
   2026-09-11: `falcon-ocr.py` (+ bucket variant) now pins the last v1 commit, new `falcon-ocr-1.5.py`
   pins the v1.5 release head; both take `--revision` and record the resolved commit in
   `inference_info` + card. First recipes carrying a `[tool.hf-jobs]` header (flavor + HF_TOKEN),
-  verified against the huggingface_hub `main` CLI. See the per-script gotcha.
+  verified against the huggingface_hub `main` CLI. Third recipe `falcon-ocr-1.5-vendor.py` drives
+  TII's own image (digest + weights-hash pinned; image lacks uv → `hf jobs run` + pip-bootstrapped
+  uv). See the per-script gotchas.
 - **2026-07-29** — added the first two **`-saturate.py` companions**: `lighton-ocr2-saturate.py` and
   `ovis-ocr2-saturate.py`. Same model/prompt/sampling/post-processing as their `-server.py` siblings;
   the driver half (concurrency, retries, output, resume) is the `saturate` package (pinned `>=0.1.1`,
