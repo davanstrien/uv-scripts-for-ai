@@ -1,11 +1,11 @@
 ---
 name: uv-recipes
-description: "Run self-contained UV-script recipes over Hugging Face datasets on Hugging Face Jobs (`hf jobs uv run <url>`): OCR & document extraction, audio transcription, object detection & segmentation, NER/entity extraction, text & image classification, embeddings & dataset maps, synthetic data, and batch LLM/VLM inference. Each recipe reads a Hub dataset and writes a new one, so recipes chain into pipelines. Use when the user wants to batch-process a dataset at scale, pre-label data for human review, run a model over many images/audio/documents/rows, or build a data pipeline on Hugging Face — locally with `uv run` or on a managed GPU with `hf jobs uv run`. Recipes live at huggingface.co/uv-scripts (one dataset repo per task family); discover them and read a recipe's header before running."
+description: "Run self-contained UV-script recipes over Hugging Face datasets on Hugging Face Jobs (`hf jobs uv run SCRIPT_URL`): OCR & document extraction, audio transcription, object detection & segmentation, NER/entity extraction, text & image classification, embeddings & dataset maps, synthetic data, and batch LLM/VLM inference. Each recipe reads a Hub dataset and writes a new one, so recipes chain into pipelines. Use when the user wants to batch-process a dataset at scale, pre-label data for human review, run a model over many images/audio/documents/rows, or build a data pipeline on Hugging Face — locally with `uv run` or on a managed GPU with `hf jobs uv run`. Recipes live at huggingface.co/uv-scripts (one dataset repo per task family); discover them and read a recipe's header before running."
 ---
 
 # uv-recipes
 
-A recipe is one self-contained Python file (a [PEP 723](https://peps.python.org/pep-0723/) [UV script](https://docs.astral.sh/uv/guides/scripts/)) that reads a Hugging Face dataset and writes a new one. Recipes take arguments in the same `INPUT_DATASET OUTPUT_DATASET` order and run straight from a URL — no clone, no venv, no install. They're self-describing: the dependency block, docstring, and `--help` say what each needs.
+A recipe is one self-contained Python file (a [PEP 723](https://peps.python.org/pep-0723/) [UV script](https://docs.astral.sh/uv/guides/scripts/)) that runs straight from a URL. Most take `INPUT_DATASET OUTPUT_DATASET`; directory recipes take input and output paths, and training recipes may produce a model. Read the dependency block, docstring and argument definitions to establish what the selected recipe accepts.
 
 ## Requires
 
@@ -30,7 +30,7 @@ hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
 - Track a run: `hf jobs logs <job-id>`, `hf jobs ps`, `hf jobs inspect <job-id>`.
 - Jobs concepts, hardware flavors, and pricing: https://huggingface.co/docs/hub/jobs
 
-**Or run locally** — the same file works with `uv run <url> INPUT OUTPUT` when your machine has the hardware it needs (usually a CUDA GPU). Inspect without running: `uv run <url> --help`.
+**Or run locally** — the same file works with `uv run <url> INPUT OUTPUT` when your machine has the hardware it needs (usually a CUDA GPU). Inspect the source first: `uv run <url> --help` resolves dependencies, and recipes such as GLM-OCR import GPU libraries before parsing arguments. This can fail on a laptop.
 
 ## Discover recipes (no fixed list — read it live)
 
@@ -42,8 +42,8 @@ curl -s "https://huggingface.co/api/datasets?author=uv-scripts" | jq -r '.[].id'
 curl -s "https://huggingface.co/api/datasets/uv-scripts/ocr/tree/main" \
   | jq -r '.[].path | select(endswith(".py"))'
 
-# what a specific recipe needs: args, required image, output column
-uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py --help
+# read a recipe without installing its dependencies
+curl -fsSL https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py
 ```
 
 Repo name is the task family (e.g. `ocr`, `transcription`, `sam3`, `gliner`, `classification`, `build-atlas`); a few repos are utilities, not recipes. Prefer a smaller model first (0.3–1B on `l4x1`); scale up only if quality demands it.
@@ -58,7 +58,7 @@ curl -sLO https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py
 hf jobs uv run --flavor l4x1 --secrets HF_TOKEN ./glm-ocr.py INPUT OUTPUT --max-samples 10
 ```
 
-Keep the inline dependency block valid (new deps install at runtime); update the docstring if you change behaviour; test on `--max-samples 10` first.
+Keep the inline dependency block valid (new deps install at runtime); update the docstring if you change behaviour; test on a small input first, using `--max-samples 10` when the recipe supports it.
 
 ## Compose a pipeline
 
@@ -74,7 +74,11 @@ To spend review effort well (active learning), order the queue by informativenes
 
 - Jobs disk is ephemeral — write outputs to the Hub, never local paths. The default pattern is **a dataset in, a dataset out** (`push_to_hub`). **Local input files** don't need an upload step: `-v ./scans:/input` syncs the folder to a private bucket and mounts it in the Job (re-runs only sync changed files; `huggingface_hub` ≥ 1.22). For data you rewrite often (mutable, incremental writes, checkpoints, one file per item), use a [storage bucket](https://huggingface.co/docs/hub/storage-buckets) — mount one with `-v hf://buckets/<user>/<bucket>:/mnt`, or read/write `hf://buckets/…` paths via fsspec. See [buckets.md](buckets.md).
 - GPU recipes check `torch.cuda.is_available()` and exit clearly if missing — match `--flavor` to the recipe.
-- Test on `--max-samples 10` first.
+- For OCR, `uv-scripts/ocr-demo` is a seven-image input with `train`/`image`; the matching PDF is in `hf://buckets/uv-scripts/ocr-demo/demo`. For larger dataset inputs that support it, test with `--max-samples 10`; check the input split and column names first. For `glm-ocr-bucket.py`, which has no sample-limit flag, use a folder with a few images or a short PDF. Create any local output folder before mounting it with `:rw`.
+
+## Verify the result
+
+Check the final Job status and retrieve the output before reporting success. For dataset output, inspect the expected column and row count; for folder output, use the CLI's printed sync command and check the expected files. GLM-OCR recipes can catch batch failures and exit normally with `[OCR ERROR]` markers, so check for errors or empty output and compare a few results with the inputs. Report any failed pages or batches separately.
 
 ## If a recipe fails
 
@@ -88,6 +92,6 @@ Most failures are environment or usage, not recipe bugs — triage before report
 - **Transient build failure on a nightly wheel** → wait and retry.
 - **Check the docs** — the recipe's `--help` / header and the [Jobs docs](https://huggingface.co/docs/hub/jobs) for the exact invocation and known constraints.
 
-If it still fails, reproduce minimally: re-run with `--max-samples 10` on a **small public dataset appropriate to the task** (e.g. `davanstrien/ufo-ColPali` for image/OCR recipes; a public audio set for transcription, a public text set for NER) to confirm it's the recipe, not your data.
+If it still fails, reproduce minimally: use `--max-samples 10` when supported, or prepare a small input folder for directory recipes. Use **small public inputs appropriate to the task** (e.g. `uv-scripts/ocr-demo`, seven page images, for OCR recipes; a public audio set for transcription, a public text set for NER) to confirm it's the recipe, not your data.
 
 **Only if that is a genuine, reproducible defect in the recipe itself**, open an issue at https://github.com/davanstrien/uv-scripts-for-ai/issues — but first **search existing issues** (one per distinct failure) and **confirm with the user**. The report must give a **full reproducer the maintainer can run as-is: a public input dataset** (one appropriate to the task) and the exact command — never the user's private data. **Redact every token/secret** from the command and logs. Include the recipe URL, flavor + image, the error tail, the job ID/URL, and what you already tried. Do **not** open issues for usage errors, flavor/OOM, gated models, or transient infra.

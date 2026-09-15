@@ -13,38 +13,31 @@ A **recipe** here is one such script. Most read and write the [Hugging Face Hub]
 
 ## Quickstart
 
-**First, install [uv](https://docs.astral.sh/uv/getting-started/installation/)** — it's the only thing you install; every script brings its own Python dependencies:
+Before starting, [install the `hf` CLI and sign in](https://huggingface.co/docs/hub/jobs-quickstart). Jobs needs a Hugging Face account with [pay-as-you-go credit](https://huggingface.co/pricing). Run `hf jobs hardware` for current hardware and prices.
+
+**Try OCR on seven scanned pages** from [NASA’s *Food for Space Flight* booklet](https://huggingface.co/datasets/uv-scripts/ocr-demo). Replace `your-username` with your Hugging Face username; the results will be saved as a new dataset in your namespace:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-**Run a recipe on a GPU** — point Hugging Face Jobs at the script's URL and it runs on managed hardware, no GPU of your own needed. Here `davanstrien/ufo-ColPali` is a small *public* image dataset you can use as-is; the output lands in your namespace:
-
-```bash
-hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
+hf jobs uv run --flavor a10g-small --timeout 15m --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \
-  davanstrien/ufo-ColPali your-username/ufo-ocr
+  uv-scripts/ocr-demo your-username/ocr-demo-results
 ```
 
-No `pip install`, no local setup. `--secrets HF_TOKEN` forwards your token so the job can write the output dataset back to the Hub. (Jobs needs the `hf` CLI — `uv tool install huggingface_hub` — and a Hugging Face account with [pay-as-you-go credit](https://huggingface.co/pricing) — no subscription needed; it's billed by the second, and a small CPU job costs ~$0.01/hr. Run `hf jobs hardware` for current flavors and prices.)
+`--secrets HF_TOKEN` forwards your token so the Job can save the output dataset. The script adds a `markdown` column containing the OCR text. Dependency installation and model loading can take a few minutes. Follow [Get and check your results](ocr/README.md#get-and-check-your-results), or [try the same pages as a PDF from a Bucket](ocr/README.md#try-the-same-pages-as-a-pdf).
 
-**Got local files instead of a Hub dataset?** Mount a folder straight into the job with `-v` — the CLI syncs it to a private bucket automatically, and re-runs only sync what changed (no "upload to a repo first" step; `huggingface_hub` ≥ 1.22):
+**Got local scans or PDFs?** Put a few images or a short PDF in `./my-scans` for your first run, then create the output directory:
 
 ```bash
-hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
+mkdir -p ./ocr-output
+hf jobs uv run --flavor a10g-small --timeout 15m --secrets HF_TOKEN \
   -v ./my-scans:/input -v ./ocr-output:/output:rw \
   https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr-bucket.py \
   /input /output
 ```
 
-Mounts are read-only unless you add `:rw`; for a read-write mount the CLI prints the `hf buckets sync` command that pulls the job's output back down when it's done.
+The CLI syncs these local folders to a private bucket. Local folder mounts are read-only unless you add `:rw`; the CLI prints the `hf buckets sync` command to retrieve the output after the Job finishes. See the [OCR walkthrough](ocr/README.md#use-your-own-documents) for inputs and results.
 
-**Prefer your own machine?** A recipe is just a UV script, so on a box with the hardware it needs — most recipes here want a CUDA GPU — you can run it (or inspect it with `--help`) directly, no Jobs required:
-
-```bash
-uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py --help
-```
+**Prefer your own machine?** With [uv](https://docs.astral.sh/uv/getting-started/installation/) and the required hardware installed, use `uv run` with the same script URL and arguments. Most recipes need a CUDA GPU. To inspect a recipe without installing its dependencies, open its [source](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/glm-ocr.py).
 
 ## What's a UV script?
 
@@ -114,10 +107,10 @@ A recipe is the same file wherever you run it — on a machine with the hardware
 SCRIPT=https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py
 
 # locally — needs the right hardware (a GPU for most recipes)
-uv run $SCRIPT davanstrien/ufo-ColPali your-username/ufo-ocr
+uv run $SCRIPT uv-scripts/ocr-demo your-username/ocr-demo-results
 
 # on a managed GPU — pick hardware with --flavor; --secrets forwards your write token
-hf jobs uv run --flavor l4x1 --secrets HF_TOKEN $SCRIPT davanstrien/ufo-ColPali your-username/ufo-ocr
+hf jobs uv run --flavor a10g-small --timeout 15m --secrets HF_TOKEN $SCRIPT uv-scripts/ocr-demo your-username/ocr-demo-results
 ```
 
 Why reach for [Jobs](https://huggingface.co/docs/hub/jobs):

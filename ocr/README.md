@@ -13,31 +13,74 @@ A model zoo of OCR scripts — one per model — that add a `markdown` column to
 
 ## Quick Start
 
-Run OCR on any dataset without needing your own GPU:
+First, [install the `hf` CLI and sign in](https://huggingface.co/docs/hub/jobs-quickstart). Jobs requires pay-as-you-go credit.
+
+Try GLM-OCR on seven scanned pages from [NASA’s *Food for Space Flight* booklet](https://huggingface.co/datasets/uv-scripts/ocr-demo). Replace `your-username` with your Hugging Face username:
 
 ```bash
-# Quick test with 10 samples
-hf jobs uv run --flavor l4x1 \
-    --secrets HF_TOKEN \
+hf jobs uv run --flavor a10g-small --timeout 15m --secrets HF_TOKEN \
     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \
-    your-input-dataset your-output-dataset \
-    --max-samples 10
+    uv-scripts/ocr-demo your-username/ocr-demo-results
 ```
 
-This will:
+The Job adds a `markdown` column to all seven rows and saves them in `your-username/ocr-demo-results`. Dependency installation and model loading can take a few minutes before OCR starts. The [dataset card](https://huggingface.co/datasets/uv-scripts/ocr-demo) documents the source and licence. Check the extracted text against the originals, especially tables and reading order.
 
-- Process the first 10 images from your dataset
-- Add OCR results as a new `markdown` column
-- Push the results to a new dataset
-- View results at: `https://huggingface.co/datasets/[your-output-dataset]`
+### Try the same pages as a PDF
 
-## Serve a model as a live endpoint
+The [OCR demo Bucket](https://huggingface.co/buckets/uv-scripts/ocr-demo) holds the
+original PDF, a seven-page extract matching the dataset, and the page images.
+Mount the `demo/` prefix to process just the extract, and create your own Bucket
+for the results:
 
-The recipes here run as batch jobs. Some models also have a **`-server.py` sibling recipe** that runs the same dataset→dataset batch job through an in-job `vllm serve` + concurrent driver — measurably faster (continuous batching stays fed) and more robust (one bad image fails one request, not a whole batch); see [SERVING.md](SERVING.md) for the architecture, A/B numbers, and which models officially document server mode. A third lane is starting: **`-saturate.py` companions** ([`lighton-ocr2-saturate.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr2-saturate.py), [`ovis-ocr2-saturate.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/ovis-ocr2-saturate.py)) keep the same model, prompt, and sampling but replace the hand-rolled driver half with the [saturate](https://github.com/davanstrien/saturate) library — adaptive concurrency (no `--concurrency` to tune), crash-safe resumable output (re-running skips finished rows), and durable per-row error records instead of `[OCR ERROR]` strings. Each carries a machine-readable `SERVING` dict (serve flags + sampling + context math) at the top of the script. To call a model interactively, from an agent, or with concurrent ad-hoc requests, you can instead run it as a temporary endpoint: [HF Jobs serving](https://huggingface.co/docs/hub/jobs-serving) exposes a port on a GPU Job, giving an OpenAI-compatible endpoint that runs until the job is cancelled or its `--timeout` is reached. See [serving-unlimited-ocr.md](serving-unlimited-ocr.md) for a worked example serving Baidu's [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) — with vLLM (official image) or SGLang. To OCR a whole corpus of single-page images instead, the batch recipe `unlimited-ocr-vllm.py` is the better fit (it's single-image only). **Multi-page** documents need a server: both vLLM and SGLang read clean multi-page docs, but **SGLang is the more robust** — on hard/degraded scans vLLM multi-page hallucinated in our tests while SGLang held up.
+```bash
+hf buckets create your-username/ocr-output --private
+hf jobs uv run --flavor a10g-small --timeout 15m --secrets HF_TOKEN \
+    -v hf://buckets/uv-scripts/ocr-demo/demo:/input:ro \
+    -v hf://buckets/your-username/ocr-output/pdf:/output:rw \
+    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr-bucket.py \
+    /input /output
+```
+
+This writes `food-for-space-flight/page_001.md` through `page_007.md` under your
+output Bucket's `pdf/` prefix. See [Get and check your results](#get-and-check-your-results)
+for how to download them.
+
+## Use your own documents
+
+**Images in a Hub dataset:** replace the input dataset ID in the [Quick Start](#quick-start) command and choose a new output dataset ID. Start with `--max-samples 10` to limit OCR processing; loading the input dataset may still download more rows. The defaults expect a `train` split and an `image` column; use `--split` and `--image-column` if yours differ. If the input already has a `markdown` column, choose a different `--output-column`, such as `glm_markdown`. Add `--private` to create a private output dataset.
+
+**Scans or PDFs on your machine:** put a few images or a short PDF in `./my-scans` for the first run. This recipe processes every supported file in that folder, including subfolders, and every page of each PDF. Create the output folder before launching:
+
+```bash
+mkdir -p ./ocr-output
+hf jobs uv run --flavor a10g-small --timeout 15m --secrets HF_TOKEN \
+    -v ./my-scans:/input -v ./ocr-output:/output:rw \
+    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr-bucket.py \
+    /input /output
+```
+
+The CLI uploads the local folders to a private bucket and makes them available inside the Job. `:rw` lets the Job write output. The script saves one `.md` file per image, or per PDF page. See [mounting local data](https://huggingface.co/docs/huggingface_hub/en/guides/jobs#mount-local-data) for more detail.
+
+## Get and check your results
+
+Open the Job page linked by the CLI to see its status and logs. You can also check from your terminal:
+
+```bash
+hf jobs inspect JOB_ID
+hf jobs logs JOB_ID
+```
+
+Once the Job has completed:
+
+- **Dataset output:** open `https://huggingface.co/datasets/your-username/ocr-demo-results` and inspect the images alongside their `markdown` results. Use your chosen dataset and column names if you changed them.
+- **Bucket output:** browse your output Bucket or download the files with `hf buckets sync hf://buckets/your-username/ocr-output/pdf ./ocr-output`.
+- **Local-folder output:** run the `hf buckets sync` command printed by the CLI at launch. It downloads the results into `./ocr-output`; they are not synced back automatically. Images produce files such as `page.md`; a PDF produces files such as `report/page_001.md`.
+
+Check for empty results or `[OCR ERROR]` markers and compare a few outputs with their source pages before scaling up. The GLM recipes can finish with failed batches, so a completed Job does not guarantee that every page was processed successfully.
 
 ## Models at a glance
 
-**Start here:** for a quick first run, try **`lighton-ocr2.py`** (1B, very fast), **`paddleocr-vl-1.6.py`** (0.9B, 96.33 OmniDocBench) or **`ovis-ocr2.py`** (0.9B, 96.58 OmniDocBench — current SOTA); for the smallest footprint, **`falcon-ocr.py`** (0.3B, strong on tables). Reach for a 7–8B model only when quality demands it. Several of these models sit on the public [olmOCR-Bench](https://huggingface.co/datasets/allenai/olmOCR-bench) — pull the live ranking from your terminal in one command:
+**Other models to try after the GLM-OCR example:** **`lighton-ocr2.py`** (1B, very fast), **`paddleocr-vl-1.6.py`** (0.9B, 96.33 OmniDocBench) or **`ovis-ocr2.py`** (0.9B, 96.58 OmniDocBench — current SOTA); for the smallest footprint, **`falcon-ocr.py`** (0.3B, strong on tables). Reach for a 7–8B model only when quality demands it. Several of these models sit on the public [olmOCR-Bench](https://huggingface.co/datasets/allenai/olmOCR-bench) — pull the live ranking from your terminal in one command:
 
 ```bash
 hf datasets leaderboard allenai/olmOCR-bench
@@ -169,11 +212,7 @@ The scripts aim to expose a **consistent interface**: every OCR model script tak
 | `--create-pr` | Push as PR instead of direct commit |
 | `--verbose` | Log resolved package versions after run |
 
-Every script supports `--help` to see all available options:
-
-```bash
-uv run glm-ocr.py --help
-```
+Open the [script source](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/glm-ocr.py) to inspect its arguments without installing dependencies. On a machine with compatible dependencies, `uv run <script-url> --help` shows its CLI options; `uv` resolves dependencies even for `--help`.
 
 ## NuExtract3: markdown OCR + structured extraction
 
@@ -238,6 +277,10 @@ Beyond the shared flags, some models add their own. Run `--help` on any script f
   ```
 - **Reproducible sampling** — `--shuffle` (with `--seed`, default 42) draws a representative sample instead of the first N rows.
 - **Automatic dataset cards** — every run writes a card with the model config, processing stats, column descriptions, and a reproduction command.
+
+## Serve a model as a live endpoint
+
+The recipes here run as batch jobs. Some models also have a **`-server.py` sibling recipe** that runs the same dataset→dataset batch job through an in-job `vllm serve` + concurrent driver — measurably faster (continuous batching stays fed) and more robust (one bad image fails one request, not a whole batch); see [SERVING.md](SERVING.md) for the architecture, A/B numbers, and which models officially document server mode. A third lane is starting: **`-saturate.py` companions** ([`lighton-ocr2-saturate.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr2-saturate.py), [`ovis-ocr2-saturate.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/ovis-ocr2-saturate.py)) keep the same model, prompt, and sampling but replace the hand-rolled driver half with the [saturate](https://github.com/davanstrien/saturate) library — adaptive concurrency (no `--concurrency` to tune), crash-safe resumable output (re-running skips finished rows), and durable per-row error records instead of `[OCR ERROR]` strings. Each carries a machine-readable `SERVING` dict (serve flags + sampling + context math) at the top of the script. To call a model interactively, from an agent, or with concurrent ad-hoc requests, you can instead run it as a temporary endpoint: [HF Jobs serving](https://huggingface.co/docs/hub/jobs-serving) exposes a port on a GPU Job, giving an OpenAI-compatible endpoint that runs until the job is cancelled or its `--timeout` is reached. See [serving-unlimited-ocr.md](serving-unlimited-ocr.md) for a worked example serving Baidu's [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) — with vLLM (official image) or SGLang. To OCR a whole corpus of single-page images instead, the batch recipe `unlimited-ocr-vllm.py` is the better fit (it's single-image only). **Multi-page** documents need a server: both vLLM and SGLang read clean multi-page docs, but **SGLang is the more robust** — on hard/degraded scans vLLM multi-page hallucinated in our tests while SGLang held up.
 
 ## More examples
 
