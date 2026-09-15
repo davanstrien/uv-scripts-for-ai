@@ -15,7 +15,7 @@ A model zoo of OCR scripts — one per model — that add a `markdown` column to
 
 First, [install the `hf` CLI and sign in](https://huggingface.co/docs/hub/jobs-quickstart). Jobs requires pay-as-you-go credit.
 
-Try GLM-OCR on seven scanned pages from [NASA’s *Food for Space Flight* booklet](https://huggingface.co/datasets/uv-scripts/ocr-demo). Replace `your-username` with your Hugging Face username:
+Try [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) on seven scanned pages from [NASA’s *Food for Space Flight* booklet](https://huggingface.co/datasets/uv-scripts/ocr-demo). Replace `your-username` with your Hugging Face username:
 
 ```bash
 hf jobs uv run --flavor a10g-small --timeout 15m --secrets HF_TOKEN \
@@ -278,9 +278,26 @@ Beyond the shared flags, some models add their own. Run `--help` on any script f
 - **Reproducible sampling** — `--shuffle` (with `--seed`, default 42) draws a representative sample instead of the first N rows.
 - **Automatic dataset cards** — every run writes a card with the model config, processing stats, column descriptions, and a reproduction command.
 
-## Serve a model as a live endpoint
+## Batch processing and live endpoints
 
-The recipes here run as batch jobs. Some models also have a **`-server.py` sibling recipe** that runs the same dataset→dataset batch job through an in-job `vllm serve` + concurrent driver — measurably faster (continuous batching stays fed) and more robust (one bad image fails one request, not a whole batch); see [SERVING.md](SERVING.md) for the architecture, A/B numbers, and which models officially document server mode. A third lane is starting: **`-saturate.py` companions** ([`lighton-ocr2-saturate.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr2-saturate.py), [`ovis-ocr2-saturate.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/ovis-ocr2-saturate.py)) keep the same model, prompt, and sampling but replace the hand-rolled driver half with the [saturate](https://github.com/davanstrien/saturate) library — adaptive concurrency (no `--concurrency` to tune), crash-safe resumable output (re-running skips finished rows), and durable per-row error records instead of `[OCR ERROR]` strings. Each carries a machine-readable `SERVING` dict (serve flags + sampling + context math) at the top of the script. To call a model interactively, from an agent, or with concurrent ad-hoc requests, you can instead run it as a temporary endpoint: [HF Jobs serving](https://huggingface.co/docs/hub/jobs-serving) exposes a port on a GPU Job, giving an OpenAI-compatible endpoint that runs until the job is cancelled or its `--timeout` is reached. See [serving-unlimited-ocr.md](serving-unlimited-ocr.md) for a worked example serving Baidu's [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) — with vLLM (official image) or SGLang. To OCR a whole corpus of single-page images instead, the batch recipe `unlimited-ocr-vllm.py` is the better fit (it's single-image only). **Multi-page** documents need a server: both vLLM and SGLang read clean multi-page docs, but **SGLang is the more robust** — on hard/degraded scans vLLM multi-page hallucinated in our tests while SGLang held up.
+Start with the batch examples above to process a collection of documents. For
+concurrent processing or an API for your application:
+
+- **Process a dataset:** `-server.py` recipes start vLLM inside the Job and send
+  page requests concurrently. See the [server-mode OCR guide](SERVING.md) for
+  supported models, setup and measured throughput. The
+  [LightOnOCR-2](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr2-saturate.py)
+  and [OvisOCR2](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/ovis-ocr2-saturate.py)
+  `-saturate.py` variants add automatic concurrency and resumable output; their
+  script headers explain how to run them and read their results.
+- **Call OCR from an app or agent:** expose a model server with
+  [Jobs serving](https://huggingface.co/docs/hub/jobs-serving). The endpoint stays
+  available until you cancel the Job or its timeout is reached. The
+  [Unlimited-OCR walkthrough](serving-unlimited-ocr.md) covers server setup,
+  requests and parsing several pages together in one request.
+
+The [PDF example above](#try-the-same-pages-as-a-pdf) processes pages independently
+in a batch Job.
 
 ## More examples
 
