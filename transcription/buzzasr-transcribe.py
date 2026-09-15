@@ -256,7 +256,8 @@ HF Jobs with bucket volumes:
         choices=["sequential", "chunked"],
         default="sequential",
         help="How files longer than 30 s are decoded: Whisper's sequential algorithm "
-        "(complete) or the transformers chunked pipeline (faster, drops text) (default: sequential)",
+        "(skipped no windows in our tests) or the transformers chunked pipeline "
+        "(faster, drops text at bad merges) (default: sequential)",
     )
     parser.add_argument(
         "--batch-size",
@@ -343,10 +344,13 @@ HF Jobs with bucket volumes:
     pending: dict = {}  # future -> file index
     decode_ahead = 2 * args.decode_workers
 
+    def timed_load(path: Path) -> tuple[np.ndarray, float]:
+        return load_audio(path), time.time()
+
     def top_up_decoding():
         while to_decode and len(pending) < decode_ahead:
             fi, path = to_decode.pop(0)
-            pending[pool.submit(load_audio, path)] = fi
+            pending[pool.submit(timed_load, path)] = fi
 
     top_up_decoding()
 
@@ -473,26 +477,32 @@ HF Jobs with bucket volumes:
         f"Transcribing (long_form={args.long_form}, batch_size={args.batch_size}, {model_id})..."
     )
     torch.cuda.reset_peak_memory_stats()
-    decode_time = None
+    last_decoded_at = decode_start
+
+    def flush_group():
+        nonlocal group_seconds
+        run_group()
+        write_group()
+        group.clear()
+        group_seconds = 0.0
+
     with torch.inference_mode():
         while pending:
             done, _ = wait(pending, return_when=FIRST_COMPLETED)
             for fut in done:
                 fi = pending.pop(fut)
-                audio = fut.result()
+                audio, decoded_at = fut.result()
+                last_decoded_at = max(last_decoded_at, decoded_at)
                 durations[fi] = len(audio) / SAMPLE_RATE
                 group.append((fi, audio))
                 group_seconds += durations[fi]
+                if group_seconds >= GROUP_SECONDS:
+                    flush_group()
             top_up_decoding()
-            if not pending and decode_time is None:
-                decode_time = time.time() - decode_start
-            if group_seconds >= GROUP_SECONDS or not pending:
-                run_group()
-                write_group()
-                group.clear()
-                group_seconds = 0.0
+            if not pending and group:
+                flush_group()
     pool.shutdown()
-    decode_time = decode_time or (time.time() - decode_start)
+    decode_time = last_decoded_at - decode_start
     total_audio = sum(durations)
     peak_gb = torch.cuda.max_memory_allocated() / 1e9
     import resource
