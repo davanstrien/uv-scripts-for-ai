@@ -46,11 +46,13 @@ Examples:
       -v hf://buckets/user/transcripts:/output \\
       buzzasr-transcribe.py /input /output --language dutch
 
-  # List the languages
-  uv run buzzasr-transcribe.py --list-languages
+  # Which model is Sorani Kurdish? Each card tags both the name and the ISO code
+  hf models list --author BuzzASR --filter ckb --format quiet     # -> BuzzASR/sorani-kurdish
+  uv run buzzasr-transcribe.py --list-languages                    # all of them, live from the Hub
 
 Models: https://huggingface.co/BuzzASR (MIT), 1.55B params each, fp16 safetensors
-  - `--language` takes the Hub slug (dutch, sorani-kurdish, ...) or its ISO code (nl, ckb, ...)
+  - `--language` takes the Hub name (dutch, sorani-kurdish, ...) or ISO code (nl, ckb, ...);
+    it is resolved against the org's model tags at run time, so new languages need no code change
   - `--model` runs any other Whisper checkpoint through the same loop (e.g. openai/whisper-large-v3
     as a zero-shot control)
 """
@@ -78,112 +80,7 @@ GROUP_SECONDS = 7200
 
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".wma", ".aac", ".opus"}
 
-# Hub slug -> language code from each model card's `language:` field (2026-09-15).
-LANGUAGES = {
-    "afrikaans": "af",
-    "amharic": "am",
-    "arabic": "ar",
-    "armenian": "hy",
-    "assamese": "as",
-    "asturian": "ast",
-    "azerbaijani": "az",
-    "belarusian": "be",
-    "bengali": "bn",
-    "bosnian": "bs",
-    "bulgarian": "bg",
-    "burmese": "my",
-    "cantonese": "yue",
-    "catalan": "ca",
-    "cebuano": "ceb",
-    "croatian": "hr",
-    "czech": "cs",
-    "danish": "da",
-    "dutch": "nl",
-    "english": "en",
-    "estonian": "et",
-    "filipino": "fil",
-    "finnish": "fi",
-    "french": "fr",
-    "fulah": "ff",
-    "galician": "gl",
-    "georgian": "ka",
-    "german": "de",
-    "greek": "el",
-    "gujarati": "gu",
-    "hausa": "ha",
-    "hebrew": "he",
-    "hindi": "hi",
-    "hungarian": "hu",
-    "icelandic": "is",
-    "igbo": "ig",
-    "indonesian": "id",
-    "irish": "ga",
-    "italian": "it",
-    "japanese": "ja",
-    "javanese": "jv",
-    "kabuverdianu": "kea",
-    "kamba": "kam",
-    "kannada": "kn",
-    "kazakh": "kk",
-    "khmer": "km",
-    "korean": "ko",
-    "kyrgyz": "ky",
-    "lao": "lo",
-    "latvian": "lv",
-    "lingala": "ln",
-    "lithuanian": "lt",
-    "luganda": "lg",
-    "luo": "luo",
-    "luxembourgish": "lb",
-    "macedonian": "mk",
-    "malay": "ms",
-    "malayalam": "ml",
-    "maltese": "mt",
-    "mandarin": "cmn",
-    "maori": "mi",
-    "marathi": "mr",
-    "mongolian": "mn",
-    "nepali": "ne",
-    "northern-sotho": "nso",
-    "norwegian": "nb",
-    "nyanja": "ny",
-    "occitan": "oc",
-    "oriya": "or",
-    "oromo": "om",
-    "pashto": "ps",
-    "persian": "fa",
-    "polish": "pl",
-    "portuguese": "pt",
-    "punjabi": "pa",
-    "romanian": "ro",
-    "russian": "ru",
-    "serbian": "sr",
-    "shona": "sn",
-    "sindhi": "sd",
-    "slovak": "sk",
-    "slovenian": "sl",
-    "somali": "so",
-    "sorani-kurdish": "ckb",
-    "spanish": "es",
-    "swahili": "sw",
-    "swedish": "sv",
-    "tajik": "tg",
-    "tamil": "ta",
-    "telugu": "te",
-    "thai": "th",
-    "turkish": "tr",
-    "ukrainian": "uk",
-    "umbundu": "umb",
-    "urdu": "ur",
-    "uzbek": "uz",
-    "vietnamese": "vi",
-    "welsh": "cy",
-    "wolof": "wo",
-    "xhosa": "xh",
-    "yoruba": "yo",
-    "zulu": "zu",
-}
-CODE_TO_SLUG = {code: slug for slug, code in LANGUAGES.items()}
+ORG = "BuzzASR"
 
 # From the model cards' usage snippet (greedy + anti-loop settings).
 GENERATE_KWARGS = {"num_beams": 1, "no_repeat_ngram_size": 3, "repetition_penalty": 1.2}
@@ -205,19 +102,54 @@ def check_cuda_availability():
     logger.info(f"CUDA available. GPU: {torch.cuda.get_device_name(0)}")
 
 
+def list_org_models() -> list[tuple[str, str, str]]:
+    """(name, language code, repo id) for every model in the org, from the card metadata."""
+    from huggingface_hub import HfApi
+
+    rows = []
+    for m in HfApi().list_models(author=ORG, expand=["cardData"], limit=1000):
+        code = (m.card_data or {}).get("language") or "?"
+        if isinstance(code, list):
+            code = code[0]
+        rows.append((m.id.split("/", 1)[1], code, m.id))
+    return sorted(rows)
+
+
 def resolve_model(language: str | None, model: str | None) -> str:
-    """Map --language (slug or ISO code) to BuzzASR/<slug>, unless --model overrides."""
+    """Map --language to the org's repo for it, unless --model overrides.
+
+    Every BuzzASR card tags both the language name and its ISO code, so a Hub
+    tag filter on the org resolves either spelling (`hf models list --author
+    BuzzASR --filter nl`). No table to keep in sync with the org.
+    """
     if model:
         return model
     if not language:
         logger.error("--language is required (or pass --model). See --list-languages.")
         sys.exit(1)
+    from huggingface_hub import HfApi
+
+    api = HfApi()
     key = language.strip().lower()
-    slug = key if key in LANGUAGES else CODE_TO_SLUG.get(key)
-    if slug is None:
-        logger.error(f"Unknown language {language!r}. See --list-languages.")
-        sys.exit(1)
-    return f"BuzzASR/{slug}"
+    # Tag filter first (name and ISO code are both tags on every card), then a
+    # name search for repo names the tag filter misses (hyphenated ones).
+    matches = [m.id for m in api.list_models(author=ORG, filter=key, limit=10)]
+    if not matches:
+        found = [m.id for m in api.list_models(author=ORG, search=key, limit=10)]
+        exact = [i for i in found if i.split("/", 1)[1] == key]
+        matches = exact or found
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        logger.error(
+            f"No {ORG} model is tagged {key!r}. Try the language name or ISO code, "
+            f"`hf models list --author {ORG} --search {key}`, or --list-languages."
+        )
+    else:
+        logger.error(
+            f"{key!r} matches several {ORG} models: {', '.join(matches)}. Pass --model."
+        )
+    sys.exit(1)
 
 
 def discover_audio_files(input_dir: Path) -> list[Path]:
@@ -299,7 +231,7 @@ HF Jobs with bucket volumes:
     )
     parser.add_argument(
         "--language",
-        help="BuzzASR language: Hub slug (dutch, sorani-kurdish) or ISO code (nl, ckb)",
+        help="Language name (dutch, sorani-kurdish) or ISO code (nl, ckb); resolved via the org's model tags",
     )
     parser.add_argument(
         "--model",
@@ -308,7 +240,7 @@ HF Jobs with bucket volumes:
     parser.add_argument(
         "--list-languages",
         action="store_true",
-        help="Print the 102 supported languages and exit",
+        help="List the org's models with their language codes (live from the Hub) and exit",
     )
     parser.add_argument(
         "--long-form",
@@ -344,8 +276,8 @@ HF Jobs with bucket volumes:
     args = parser.parse_args()
 
     if args.list_languages:
-        for slug, code in sorted(LANGUAGES.items()):
-            print(f"{slug:16s} {code:4s} BuzzASR/{slug}")
+        for name, code, repo_id in list_org_models():
+            print(f"{name:16s} {code:4s} {repo_id}")
         sys.exit(0)
 
     if not args.input_dir or not args.output_dir:
@@ -574,6 +506,9 @@ if __name__ == "__main__":
         print("Usage:")
         print("  uv run buzzasr-transcribe.py INPUT_DIR OUTPUT_DIR --language dutch")
         print("  uv run buzzasr-transcribe.py --list-languages")
+        print(
+            "  hf models list --author BuzzASR --filter ckb --format quiet   # name from ISO code"
+        )
         print()
         print("HF Jobs with bucket volumes:")
         print("  hf jobs uv run --flavor l4x1 -s HF_TOKEN -e UV_TORCH_BACKEND=cu128 \\")
