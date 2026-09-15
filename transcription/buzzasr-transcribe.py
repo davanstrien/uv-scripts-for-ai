@@ -16,14 +16,13 @@ Transcribe audio files in one of 102 languages with a BuzzASR monolingual model.
 BuzzASR (lemn-lab, Findings of EMNLP 2026) is one Whisper-large-v3 fine-tune
 per FLEURS language, published as BuzzASR/<language> on the Hub. Pick the
 language and the script loads that checkpoint; the language/task prompt is
-baked into each model, so nothing is auto-detected and nothing can drift to
-the wrong language.
+baked into each model, so the model is never asked to detect the language.
 
 Long audio: --long-form picks how files longer than Whisper's 30 s window are
 decoded. `sequential` (default) is Whisper's own long-form algorithm: timestamp
 tokens place each next window and degenerate windows are re-decoded at higher
-temperature, so nothing is skipped. `chunked` is the transformers pipeline
-(overlapping 30 s windows merged on the overlap): ~3.5x faster, but the merge
+temperature (no window was skipped in our tests). `chunked` is the transformers pipeline
+(overlapping 30 s windows merged on the overlap): ~2.5x faster, but the merge
 drops sentences when a window decodes badly (measured 14% fewer words on
 Dutch audiobooks). Files are batched together; audio decoding runs in a thread
 pool while the model loads.
@@ -63,7 +62,7 @@ import logging
 import os
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import numpy as np
@@ -84,13 +83,16 @@ ORG = "BuzzASR"
 
 # From the model cards' usage snippet (greedy + anti-loop settings).
 GENERATE_KWARGS = {"num_beams": 1, "no_repeat_ngram_size": 3, "repetition_penalty": 1.2}
-# Whisper's long-form fallbacks (from the transformers Whisper docs): retry a
-# window at higher temperature when the output looks degenerate.
+# Whisper's long-form fallback (from the transformers Whisper docs): retry a
+# window at higher temperature when its output looks degenerate. The docs also
+# set logprob_threshold=-1.0, but that makes transformers keep every token's
+# full-vocabulary scores on the host for the whole batch (measured 17.6 GB
+# peak RSS for 178 min of audio vs 4.7 GB on the GPU), so only the
+# compression-ratio check is used here.
 SEQUENTIAL_KWARGS = {
     "return_timestamps": True,
     "condition_on_prev_tokens": False,
     "compression_ratio_threshold": 1.35,
-    "logprob_threshold": -1.0,
     "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
 }
 
@@ -133,11 +135,18 @@ def resolve_model(language: str | None, model: str | None) -> str:
     key = language.strip().lower()
     # Tag filter first (name and ISO code are both tags on every card), then a
     # name search for repo names the tag filter misses (hyphenated ones).
-    matches = [m.id for m in api.list_models(author=ORG, filter=key, limit=10)]
-    if not matches:
-        found = [m.id for m in api.list_models(author=ORG, search=key, limit=10)]
-        exact = [i for i in found if i.split("/", 1)[1] == key]
-        matches = exact or found
+    try:
+        matches = [m.id for m in api.list_models(author=ORG, filter=key, limit=10)]
+        if not matches:
+            found = [m.id for m in api.list_models(author=ORG, search=key, limit=10)]
+            exact = [i for i in found if i.split("/", 1)[1] == key]
+            matches = exact or found
+    except Exception as err:  # network / Hub API failure, not "no such language"
+        logger.error(
+            f"Could not query the Hub to resolve --language {key!r} ({err}). "
+            f"Pass --model {ORG}/<name> to skip the lookup."
+        )
+        sys.exit(1)
     if len(matches) == 1:
         return matches[0]
     if not matches:
@@ -308,14 +317,38 @@ HF Jobs with bucket volumes:
 
     logger.info(f"Found {len(files)} audio file(s)")
 
+    # Output is <name>.txt, so episode.mp3 and episode.wav in one directory
+    # would overwrite each other. Refuse up front rather than lose a transcript.
+    out_paths = [
+        output_dir / f.relative_to(input_dir).with_suffix(".txt") for f in files
+    ]
+    seen: dict[Path, Path] = {}
+    for src, dst in zip(files, out_paths):
+        if dst in seen:
+            logger.error(f"{src} and {seen[dst]} would both write {dst}; rename one.")
+            sys.exit(1)
+        seen[dst] = src
+
     wall_start = time.time()
 
-    # Decode in a thread pool while the model loads; files are grouped as they
-    # land and each group is transcribed as one batched call.
+    # Decode in a thread pool while the model loads. Only a few files are in
+    # flight at once (decoded audio is 3.8 MB/min), and each group is
+    # transcribed and written out as soon as it is full, so memory is bounded
+    # by GROUP_SECONDS plus the decode-ahead window and a crash keeps the
+    # transcripts already written.
     logger.info(f"Decoding audio with {args.decode_workers} worker(s)...")
     decode_start = time.time()
     pool = ThreadPoolExecutor(max_workers=args.decode_workers)
-    futures = {pool.submit(load_audio, path): fi for fi, path in enumerate(files)}
+    to_decode = list(enumerate(files))
+    pending: dict = {}  # future -> file index
+    decode_ahead = 2 * args.decode_workers
+
+    def top_up_decoding():
+        while to_decode and len(pending) < decode_ahead:
+            fi, path = to_decode.pop(0)
+            pending[pool.submit(load_audio, path)] = fi
+
+    top_up_decoding()
 
     logger.info(f"Loading {model_id}...")
     from transformers import WhisperForConditionalGeneration, WhisperProcessor
@@ -357,17 +390,20 @@ HF Jobs with bucket volumes:
             padding="longest",
             return_attention_mask=True,
         )
-        input_features = inputs.input_features.to("cuda:0", torch.float16)
-        attention_mask = inputs.attention_mask.to("cuda:0")
-        if input_features.shape[-1] <= 3000:  # every file fits one window: short-form
+        if inputs.input_features.shape[-1] <= 3000:
+            # Every file fits one window: short-form. Re-extract padded to the
+            # full 30 s window (3000 frames); the encoder and Whisper's language
+            # detection (used by non-BuzzASR checkpoints) expect exactly that.
+            feats = processor(audios, sampling_rate=SAMPLE_RATE, return_tensors="pt")
             ids = model.generate(
-                input_features=input_features,
-                attention_mask=attention_mask,
+                input_features=feats.input_features.to("cuda:0", torch.float16),
                 **GENERATE_KWARGS,
             )
             return [
                 t.strip() for t in processor.batch_decode(ids, skip_special_tokens=True)
             ]
+        input_features = inputs.input_features.to("cuda:0", torch.float16)
+        attention_mask = inputs.attention_mask.to("cuda:0")
         # Decode segment by segment: the fine-tunes start a segment without a
         # leading-space token, so decoding the whole sequence at once glues the
         # last word of one segment to the first word of the next.
@@ -404,9 +440,34 @@ HF Jobs with bucket volumes:
         torch.cuda.synchronize()
         gpu_time += time.time() - t
         logger.info(
-            f"  group of {len(group)} file(s), {group_seconds / 60:.1f} min audio done "
-            f"({len(texts)}/{len(files)} files)"
+            f"  group of {len(group)} file(s), {group_seconds / 60:.1f} min audio done"
         )
+
+    summary_path = output_dir / "summary.jsonl"
+    summary_path.write_text("", encoding="utf-8")
+
+    def write_group():
+        """Write this group's transcripts and append their summary rows, in file order."""
+        with open(summary_path, "a", encoding="utf-8") as f:
+            for fi, _ in sorted(group):
+                text = texts.pop(fi)
+                rel = files[fi].relative_to(input_dir)
+                txt_path = out_paths[fi]
+                txt_path.parent.mkdir(parents=True, exist_ok=True)
+                txt_path.write_text(text, encoding="utf-8")
+                row = {
+                    "file": str(rel),
+                    "model": model_id,
+                    "long_form": args.long_form,
+                    "duration_s": round(durations[fi], 1),
+                    "transcript_length": len(text),
+                    "word_count": len(text.split()),
+                }
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+                logger.info(
+                    f"  {rel} -> {txt_path.name} ({len(text.split())} words, "
+                    f"{durations[fi]:.0f}s audio)"
+                )
 
     logger.info(
         f"Transcribing (long_form={args.long_form}, batch_size={args.batch_size}, {model_id})..."
@@ -414,51 +475,31 @@ HF Jobs with bucket volumes:
     torch.cuda.reset_peak_memory_stats()
     decode_time = None
     with torch.inference_mode():
-        for fut in as_completed(futures):
-            fi = futures[fut]
-            audio = fut.result()
-            durations[fi] = len(audio) / SAMPLE_RATE
-            group.append((fi, audio))
-            group_seconds += durations[fi]
-            if all(f.done() for f in futures) and decode_time is None:
+        while pending:
+            done, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for fut in done:
+                fi = pending.pop(fut)
+                audio = fut.result()
+                durations[fi] = len(audio) / SAMPLE_RATE
+                group.append((fi, audio))
+                group_seconds += durations[fi]
+            top_up_decoding()
+            if not pending and decode_time is None:
                 decode_time = time.time() - decode_start
-            if group_seconds >= GROUP_SECONDS:
+            if group_seconds >= GROUP_SECONDS or not pending:
                 run_group()
+                write_group()
                 group.clear()
                 group_seconds = 0.0
-        if group:
-            run_group()
-            group.clear()
     pool.shutdown()
     decode_time = decode_time or (time.time() - decode_start)
     total_audio = sum(durations)
     peak_gb = torch.cuda.max_memory_allocated() / 1e9
+    import resource
 
-    # Write outputs
-    results = []
-    for fi, path in enumerate(files):
-        text = texts[fi]
-        rel = path.relative_to(input_dir)
-        txt_path = output_dir / rel.with_suffix(".txt")
-        txt_path.parent.mkdir(parents=True, exist_ok=True)
-        txt_path.write_text(text, encoding="utf-8")
-        results.append(
-            {
-                "file": str(rel),
-                "model": model_id,
-                "long_form": args.long_form,
-                "duration_s": round(durations[fi], 1),
-                "transcript_length": len(text),
-                "word_count": len(text.split()),
-            }
-        )
-        logger.info(
-            f"  {rel} -> {txt_path.name} ({len(text.split())} words, {durations[fi]:.0f}s audio)"
-        )
-
-    summary_path = output_dir / "summary.jsonl"
-    with open(summary_path, "w", encoding="utf-8") as f:
-        f.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in results)
+    peak_rss_gb = (
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
+    )  # kB on Linux
 
     wall = time.time() - wall_start
     logger.info("=" * 50)
@@ -476,7 +517,7 @@ HF Jobs with bucket volumes:
         f"  Wall (incl. decode + model load): {wall:.1f}s -> RTFx {total_audio / wall:.0f}x"
     )
     logger.info(
-        f"  Peak GPU memory: {peak_gb:.2f} GB "
+        f"  Peak GPU memory: {peak_gb:.2f} GB, peak host RSS: {peak_rss_gb:.1f} GB "
         f"(long_form={args.long_form}, batch_size={args.batch_size})"
     )
     logger.info(f"  Summary: {summary_path}")
