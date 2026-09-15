@@ -15,21 +15,23 @@ Each recipe is a single self-contained [UV script](https://docs.astral.sh/uv/gui
 
 ## Quickstart
 
+For GPU runs, [install the `hf` CLI and sign in](https://huggingface.co/docs/hub/jobs-quickstart). Jobs requires pay-as-you-go credit.
+
 **See every recipe** — locally, no GPU or token:
 
 ```bash
 uv run https://huggingface.co/datasets/uv-scripts/jobs-utils/raw/main/list-recipes.py
 ```
 
-**Run one on a GPU** — the flagship, OCR an image dataset to text:
+**Run one on a GPU** — extract text from [seven scanned NASA booklet pages](https://huggingface.co/datasets/uv-scripts/ocr-demo):
 
 ```bash
-hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
+hf jobs uv run --flavor a10g-small --timeout 15m --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \
-  davanstrien/ufo-ColPali your-username/ufo-ocr --max-samples 10
+  uv-scripts/ocr-demo your-username/ocr-demo-results
 ```
 
-One command → a new dataset with a `markdown` column. Pay-per-second, no hardware of your own.
+Replace `your-username` with your Hugging Face username. The Job saves a new dataset with a `markdown` column. Follow the [OCR walkthrough](https://huggingface.co/datasets/uv-scripts/ocr#use-your-own-documents) to use your own scans or PDFs and retrieve and check the results.
 
 ## Drive it with your coding agent
 
@@ -49,9 +51,9 @@ and the GitHub repo https://github.com/davanstrien/uv-scripts-for-ai.
 
 ```
 Using uv-scripts, OCR a sample dataset on Hugging Face Jobs:
-  hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
+  hf jobs uv run --flavor a10g-small --timeout 15m --secrets HF_TOKEN \
     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \
-    davanstrien/ufo-ColPali $MY_HF_USERNAME/ufo-ocr-test --max-samples 10
+    uv-scripts/ocr-demo $MY_HF_USERNAME/ocr-demo-results
 Then open the output dataset and show me the `markdown` column.
 ```
 
