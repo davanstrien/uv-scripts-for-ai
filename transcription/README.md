@@ -6,11 +6,12 @@ tags:
   - transcription
   - automatic-speech-recognition
   - speaker-diarization
+  - multilingual
 ---
 
 # Transcription
 
-Scripts for transcribing — and diarizing — audio files using HF Buckets and Jobs.
+Scripts for transcribing — and diarizing — audio files using HF Buckets and Jobs. English and the major European/Asian languages via Cohere Transcribe; 102 languages via the BuzzASR monolingual Whisper fine-tunes.
 
 ## Quick Start
 
@@ -55,6 +56,7 @@ Audio already on your machine? Mount the folder directly — `-v ./audio:/input`
 | `cohere-transcribe.py` | Cohere Transcribe (2B) | transformers | `.txt` | 161x RT (A100) |
 | `cohere-transcribe-vllm.py` | Cohere Transcribe (2B) | vLLM nightly | `.txt` | 214x RT (A100) |
 | `granite-turboctc-transcribe.py` | [Granite Speech 5.0 TurboCTC](https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc) (470M, English) | transformers (pinned `main`) | `.txt` (lowercase, no punctuation) | 594x RT wall / ~5000x GPU-only (A100); 504x RT wall (A10G) |
+| `buzzasr-transcribe.py` | [BuzzASR](https://huggingface.co/BuzzASR) (102 monolingual Whisper-large-v3 fine-tunes, 1.55B) | transformers | `.txt` (mostly lowercase, no punctuation) | 20x RT (L4, sequential) / 51x RT (L4, chunked) |
 | `easytranscriber-transcribe.py` | Cohere Transcribe 2B (default) or Whisper variants | [easytranscriber](https://github.com/kb-labb/easytranscriber) | JSON word timestamps (+ optional `.txt` / `.srt`) | 42.9x RT (L4) |
 | `moss-transcribe-diarize.py` | [MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize) (0.9B) | transformers (remote code) | JSON speaker segments `{start, end, speaker, text}` (+ optional `.txt` / `.srt`) | 3.2x RT (A10G, 74-min file) |
 | `moss-transcribe-diarize-server.py` | [MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize) (0.9B) | in-job sgl-omni server | JSON speaker segments (+ optional `.txt`) | 47.4x RT aggregate (A100, 6 streams) |
@@ -64,6 +66,8 @@ Audio already on your machine? Mount the folder directly — `-v ./audio:/input`
 **`cohere-transcribe-vllm.py`** — experimental vLLM variant. Faster but requires nightly vLLM and has minor duplication at chunk boundaries.
 
 **`granite-turboctc-transcribe.py`** — when you have **a lot of English audio** and want raw text fast. Encoder-only CTC (one forward pass + argmax, no autoregressive decoding), so it cannot loop or hallucinate and the GPU is essentially idle: 5 hours of 1940s radio ran in 3.2 s of GPU time on an A100 (~30x Cohere), with the job's wall time dominated by mp3 decoding and model load. Output is lowercase without punctuation or casing, and quality is a step below Cohere on hard audio (~8.5% word disagreement with Cohere's transcripts on the same episodes, no ground truth). Files are fed whole by default — block attention makes cost linear in length and a 30-min file needs ~2.5 GB — with `--chunk-seconds 30` for hour-plus files or a 24 GB card. Needs `transformers` from `main` (support landed 2026-08-25, pinned to a commit) until the next release; English only.
+
+**`buzzasr-transcribe.py`** — when the audio is in **a language Cohere doesn't cover** (Armenian, Amharic, Georgian, Khmer, Lao, Sorani Kurdish, Wolof, Yoruba, …): one model per language for 102 FLEURS languages. [BuzzASR](https://lemn-lab.github.io/buzz-asr/) (Findings of EMNLP 2026, MIT) fine-tunes Whisper-large-v3 once per FLEURS language, with a native tokenizer for the languages Whisper's tokenizer fragments; the authors report lower CER than Whisper-large-v3 zero-shot on 89/102 languages and the lowest of any open system on 31. Pass `--language armenian` (or the ISO code `hy`) and the matching `BuzzASR/<language>` checkpoint is loaded: every card tags both the name and the code, so the recipe resolves either with a tag filter on the org at run time (no table to maintain; new languages just work). Finding a model by hand is the same one-liner: `hf models list --author BuzzASR --filter ckb --format quiet` → `BuzzASR/sorani-kurdish`, or `--search kurdish` by name. The language prompt is baked into each model, so the model is never asked to detect the language. Default long-form decoding is Whisper's sequential algorithm (timestamps place each window, degenerate windows are re-decoded at higher temperature), which skipped no windows in our tests but is ~2.5x slower than `--long-form chunked` (the transformers pipeline), whose overlap merge drops text: on 3 h of Dutch audiobook the chunked run produced 14% fewer words than sequential, with whole sentences missing. Generation uses the authors' settings (greedy, no repeated 3-gram, repetition penalty 1.2), which also stop a genuinely repeated phrase from being written twice inside one 30 s window. Output is normalised like the training data (mostly lowercase, no punctuation); for a language Whisper already covers well, `openai/whisper-large-v3` through the same recipe gives punctuated, cased text of the same completeness (see Benchmarks), so reach for BuzzASR where Whisper is weak. The recipe rebuilds each model's `generation_config.json` on load: the native-tokenizer checkpoints ship it flagged `_from_model_config`, which makes transformers drop the language prompt and timestamp ids and breaks long-form generation. `--model openai/whisper-large-v3` runs the zero-shot base through the same loop as a control.
 
 **`easytranscriber-transcribe.py`** — when you need **word-level timestamps** (subtitles, search indexing, forced alignment). Runs VAD → ASR → wav2vec2 emissions → forced alignment. Defaults to the Cohere backend so you get the same model as the other scripts with alignment on top; swap to `--backend ct2` + a Whisper model for languages Cohere doesn't cover (e.g. Swedish via `KBLab/kb-whisper-large`).
 
@@ -87,6 +91,17 @@ Audio already on your machine? Mount the folder directly — `-v ./audio:/input`
 | `--chunk-seconds` | 0 (whole file) | Cut files into N-second windows; use 30 for hour-plus files or 24 GB cards (2.2 GB peak at batch 32 vs 10.3 GB for four 30-min files) |
 | `--batch-size` | 4 | Files (or windows) per forward pass; 32-64 with `--chunk-seconds 30` |
 | `--decode-workers` | CPU count | Threads for mp3/wav decoding, overlapped with model load and inference |
+| `--max-files` | all | Limit files to process (for testing) |
+
+#### Options — `buzzasr-transcribe.py`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--language` | required | Language name (`dutch`, `sorani-kurdish`) or ISO code (`nl`, `ckb`), resolved via the org's model tags; `--list-languages` prints all of them live from the Hub |
+| `--model` | `BuzzASR/<language>` | Any Whisper checkpoint on the Hub (e.g. `openai/whisper-large-v3` as a zero-shot control) |
+| `--long-form` | `sequential` | `sequential` (Whisper's own long-form decoding with timestamps + temperature fallback; skipped no windows in our tests) or `chunked` (transformers pipeline, 30 s windows with 5 s overlap; ~2.5x faster, drops text at bad merges) |
+| `--batch-size` | 16 | Files per generate call (sequential) or 30 s windows per forward pass (chunked) |
+| `--decode-workers` | CPU count | Threads for mp3/wav decoding, overlapped with model load |
 | `--max-files` | all | Limit files to process (for testing) |
 
 #### Options — `easytranscriber-transcribe.py`
@@ -137,6 +152,19 @@ CBS Suspense (1940s radio drama), 66 episodes, 33 hours of audio.
 |-----|------|------|
 | A100-SXM4-80GB | 12.3 min | 161x realtime |
 | L4 | ~64s / 30 min episode | 28x realtime |
+
+**`buzzasr-transcribe.py`** (Dutch LibriVox audiobook, 4 chapters, 178 min; Armenian CC0 news/talk from the Internet Archive, 3 files, 25 min):
+
+| Run | GPU | Time | RTFx | Peak GPU | Words out |
+|-----|-----|------|------|----------|-----------|
+| `BuzzASR/dutch`, sequential (default) | L4 | 8.9 min | 20x | 4.5 GB | 27,438 |
+| `BuzzASR/dutch`, `--long-form chunked` | L4 | 3.5 min | 51x | 7.5 GB | 23,669 (−14%; sentences dropped at merges) |
+| `openai/whisper-large-v3` control, sequential | L4 | 13.4 min | 13x | 4.3 GB | 27,688 (punctuated + cased; 14% word disagreement with BuzzASR; single-file batches, before the batching refactor) |
+| `openai/whisper-large-v3` control, chunked | L4 | 4.5 min | 40x | 7.6 GB | 19,925 (−28% vs its own sequential run) |
+| `BuzzASR/armenian`, sequential (25 min, 3 files) | L4 | 1.9 min | 13x | 4.1 GB | 2,198 words on the 19.5-min programme, coherent Armenian |
+| `openai/whisper-large-v3` control, sequential, same files | L4 | 14.8 min | 2x | 4.5 GB | 582 words on the same programme, garbled + mojibake |
+
+Peak host memory for the 178-min sequential batch was 9.0 GB; with the transformers docs' `logprob_threshold` fallback it was 17.6 GB, because that setting keeps every token's full-vocabulary scores on the host, and the output was identical without it, so the recipe leaves it out. No ground truth for either set: word counts and per-file diffs measure completeness, not accuracy. Two things follow. The chunked pipeline's losses are the pipeline's, not the model's (Whisper-large-v3 loses 28% of its words the same way), so `sequential` is the default for both. And on Dutch, a language Whisper already handles well (the authors report a 1.3x CER gain), zero-shot Whisper-large-v3 with the same sequential decoding was as complete and kept punctuation and casing, so the fine-tunes earn their place on the languages Whisper handles badly: on Armenian (6.8x claimed CER gain) the control produced a quarter of the words, garbled, at 2x realtime because its temperature fallback fired on almost every window.
 
 **`easytranscriber-transcribe.py`** (JSON alignments + optional .txt/.srt; VAD → ASR → wav2vec2 → forced alignment):
 
