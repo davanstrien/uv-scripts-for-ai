@@ -494,10 +494,12 @@ HF Jobs with bucket volumes:
                 audio, decoded_at = fut.result()
                 last_decoded_at = max(last_decoded_at, decoded_at)
                 durations[fi] = len(audio) / SAMPLE_RATE
+                # Flush before an addition would push the group past its budget;
+                # a single file longer than the budget is a group on its own.
+                if group and group_seconds + durations[fi] > GROUP_SECONDS:
+                    flush_group()
                 group.append((fi, audio))
                 group_seconds += durations[fi]
-                if group_seconds >= GROUP_SECONDS:
-                    flush_group()
             top_up_decoding()
             if not pending and group:
                 flush_group()
