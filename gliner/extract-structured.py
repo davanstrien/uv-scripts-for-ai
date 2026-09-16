@@ -328,8 +328,11 @@ def main():
             if not isinstance(results, list):
                 results = [results]
         except Exception as e:
-            # One bad row should not sink the batch: retry one at a time.
+            # One bad row should not sink the batch: retry one at a time. Free the failed
+            # batch's GPU memory first, or a CUDA OOM repeats on every single row.
             log.warning("batch extraction failed (%s); retrying rows individually", e)
+            if device == "cuda":
+                torch.cuda.empty_cache()
             results = []
             for text in texts:
                 try:
@@ -338,9 +341,13 @@ def main():
                             model.structure(text, schema, threshold=args.threshold)
                         )
                 except Exception as e2:
-                    log.warning("row extraction failed: %s", e2)
+                    log.warning(
+                        "row extraction failed (%d chars): %s", len(text), str(e2)[:200]
+                    )
                     n_failed += 1
                     results.append({})
+                    if device == "cuda":
+                        torch.cuda.empty_cache()
         counts = [count_records(r) for r in results]
         n_records += sum(counts)
         return {
