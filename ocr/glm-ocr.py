@@ -15,6 +15,10 @@
 # [tool.uv]
 # prerelease = "allow"
 # override-dependencies = ["transformers>=5.1.0"]
+#
+# [tool.hf-jobs]
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -527,11 +531,10 @@ if __name__ == "__main__":
         print("   uv run glm-ocr.py docs results --task table")
         print("\n4. Test with small sample:")
         print("   uv run glm-ocr.py large-dataset test --max-samples 10 --shuffle")
-        print("\n5. Running on HF Jobs:")
-        print("   hf jobs uv run --flavor l4x1 \\")
-        print("     -s HF_TOKEN \\")
+        print("\n5. Running on HF Jobs (hardware and HF_TOKEN come from the")
+        print("   script's [tool.hf-jobs] header; --flavor/--timeout override it):")
         print(
-            "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \\"
+            "   hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \\"
         )
         print("       input-dataset output-dataset --batch-size 16")
         print("\nFor full help: uv run glm-ocr.py --help")
