@@ -56,7 +56,6 @@ import sys
 from datetime import datetime
 from typing import Any, Dict, Union
 
-import torch
 from datasets import load_dataset
 from huggingface_hub import DatasetCard, login, snapshot_download
 from PIL import Image
@@ -66,6 +65,9 @@ from tqdm.auto import tqdm
 # The default uv-script image has no nvcc; vLLM's FlashInfer sampler would JIT a
 # kernel and crash engine init. Greedy OCR does not need it. No-op on vllm images.
 os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
+# register() adds architectures to this process's ModelRegistry; the engine worker only
+# sees them if it is forked, not spawned. Nothing below initialises CUDA before LLM().
+os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "fork")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -76,10 +78,27 @@ SCRIPT_URL = f"https://huggingface.co/datasets/uv-scripts/ocr/raw/main/{SCRIPT_N
 
 
 def check_cuda_availability():
-    if not torch.cuda.is_available():
-        logger.error("CUDA is not available. This script requires a GPU.")
+    """GPU check WITHOUT initialising CUDA in this process.
+
+    torch.cuda.is_available() would initialise CUDA here, and vLLM then forces the
+    `spawn` start method for its engine worker. A spawned worker does not inherit the
+    ModelRegistry entries that register() adds in this process, so the custom
+    architecture is "not supported" in the worker (seen on the first smoke run).
+    nvidia-smi answers the same question with no CUDA context.
+    """
+    import shutil
+    import subprocess
+
+    if shutil.which("nvidia-smi") is None:
+        logger.error("nvidia-smi not found. This script requires a GPU.")
         sys.exit(1)
-    logger.info(f"CUDA is available. GPU: {torch.cuda.get_device_name(0)}")
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=30, check=True).stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        logger.error(f"nvidia-smi failed: {e}. This script requires a GPU.")
+        sys.exit(1)
+    logger.info(f"GPU: {out.splitlines()[0] if out else 'unknown'}")
 
 
 def ensure_output_columns_free(dataset, columns, overwrite=False):
