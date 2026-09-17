@@ -4,6 +4,11 @@
 #     "saturate[hf]>=0.1.1",
 #     "pillow>=10",
 # ]
+#
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:latest"
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 """
 Convert document images to markdown using OvisOCR2 via saturate.
@@ -22,11 +27,11 @@ What that buys over the -server recipe:
   an `[OCR ERROR]` string in the text column; `--retry-errors` re-admits only
   those rows on a later run.
 
-Run on HF Jobs (the script starts `vllm serve` itself; the --image flag
-provides the `vllm` binary):
+Run on HF Jobs. The script starts `vllm serve` itself; its [tool.hf-jobs] header
+declares the image that provides the `vllm` binary, the hardware and the HF_TOKEN
+secret (`hf` CLI 1.32+). Pass --timeout for a long run; flags override the header:
 
-  hf jobs uv run --detach --flavor a10g-small -s HF_TOKEN --timeout 4h \\
-      --image vllm/vllm-openai:latest \\
+  hf jobs uv run --detach --timeout 4h \\
       https://huggingface.co/datasets/uv-scripts/ocr/raw/main/ovis-ocr2-saturate.py \\
       <input-dataset> <output-dataset>
 
