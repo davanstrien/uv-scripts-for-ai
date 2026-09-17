@@ -225,6 +225,7 @@ def main():
     ap.add_argument("--output-column", default="markdown")
     ap.add_argument("--overwrite", action="store_true", help="Replace an existing output column")
     ap.add_argument("--split", default="train")
+    ap.add_argument("--input-config", default=None, help="Config (subset) name of the input dataset")
     ap.add_argument("--config", default=None, help="Config name for the output dataset")
     ap.add_argument("--max-samples", type=int, default=None)
     ap.add_argument("--shuffle", action="store_true")
@@ -251,7 +252,7 @@ def main():
         login(token=hf_token)
 
     logger.info(f"Loading dataset: {args.input_dataset}")
-    dataset = load_dataset(args.input_dataset, split=args.split)
+    dataset = load_dataset(args.input_dataset, name=args.input_config, split=args.split)
     if args.image_column not in dataset.column_names:
         raise ValueError(f"Column '{args.image_column}' not found. Available: {dataset.column_names}")
     dataset = ensure_output_columns_free(dataset, [args.output_column], overwrite=args.overwrite)
