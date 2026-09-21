@@ -1,0 +1,13 @@
+name: Sync parquet → HF
+on:
+  push:
+    branches: [main]
+    paths: ['parquet/**', '.github/workflows/sync-parquet.yml']
+
+jobs:
+  sync:
+    uses: ./.github/workflows/_sync-folder.yml
+    with:
+      folder: parquet
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
