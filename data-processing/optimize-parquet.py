@@ -16,7 +16,7 @@ Setup (once):
     #    the script as a volume, and webhook runs don't keep volumes.
     hf jobs run --flavor cpu-upgrade --timeout 2h -e OUTPUT_BUCKET=<user>/<output-bucket> \\
         ghcr.io/astral-sh/uv:python3.12-bookworm \\
-        uv run https://huggingface.co/datasets/uv-scripts/parquet/raw/main/optimize-parquet.py
+        uv run https://huggingface.co/datasets/uv-scripts/data-processing/raw/main/optimize-parquet.py
 
     # 2. A webhook on the input bucket that re-runs that Job on every change.
     from huggingface_hub import create_webhook
