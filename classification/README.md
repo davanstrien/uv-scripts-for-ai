@@ -1,6 +1,6 @@
 ---
 viewer: false
-tags: [uv-script, classification, fine-tuning, few-shot, setfit, vllm, structured-outputs, hf-jobs]
+tags: [uv-script, classification, fine-tuning, few-shot, zero-shot, setfit, gliner2, vllm, structured-outputs, hf-jobs]
 ---
 
 # Classification Scripts
@@ -11,6 +11,8 @@ Text classification on [HF Jobs](https://huggingface.co/docs/huggingface_hub/gui
 |--------|--------------|
 | [`train-classifier.py`](#fine-tune-a-classifier-train-classifierpy) | **Fine-tune** an encoder into a classifier (default: [LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M)) and push it to the Hub |
 | [`train-setfit.py`](#few-shot-with-setfit-train-setfitpy) | **Few-shot** train a classifier from 8-64 labels per class with [SetFit](https://github.com/huggingface/setfit) — runs on CPU or GPU |
+| [`train-gliner2.py`](#zero-shot-first-then-fine-tune-gliner2) | **Fine-tune** [GLiNER2](https://github.com/fastino-ai/GLiNER2), a ~300M model that already classifies zero-shot, and report the zero-shot score next to the fine-tuned one |
+| [`classify-gliner2.py`](#zero-shot-first-then-fine-tune-gliner2) | **Label a dataset** with GLiNER2: zero-shot from label names, or with a `train-gliner2.py` model |
 | [`classify-dataset.py`](#zero-shot-classification-classify-datasetpy) | **Zero-shot** classify a dataset with an instruction LLM (SmolLM3 + vLLM, structured outputs) |
 | `classify-dataset-sglang.py` | Zero-shot variant on SGLang (reasoning-aware `<think>` models) |
 
@@ -18,9 +20,10 @@ Pick by how many labels you have:
 
 | Labels you have | Use | Hardware |
 |---|---|---|
-| none | `classify-dataset.py` to bootstrap labels, or for one-off jobs | GPU |
+| none | `classify-gliner2.py --labels ...` for a cheap first pass; `classify-dataset.py` when the task needs an LLM's reasoning | small GPU (CPU works at ~1.4 rows/s); GPU |
 | ~8-64 per class | `train-setfit.py` | CPU supported; GPU for faster training |
-| a few thousand | `train-classifier.py` | GPU |
+| a few hundred to a few thousand | `train-gliner2.py`, which also shows you what zero-shot already gets | small GPU (`t4-small`) |
+| a few thousand or more | `train-classifier.py` | GPU |
 
 The rungs chain: bootstrap labels with `classify-dataset.py`, review them, then train a small
 dedicated model on what you kept.
@@ -196,6 +199,68 @@ it suggests undersampling where applicable and estimates whether that would fit 
 # Zero-shot classification (`classify-dataset.py`)
 
 GPU-accelerated text classification for Hugging Face datasets with guaranteed valid outputs through structured generation. Powered by SmolLM3-3B's advanced reasoning capabilities.
+
+## Zero-shot first, then fine-tune (GLiNER2)
+
+[GLiNER2](https://github.com/fastino-ai/GLiNER2) is a small encoder (default
+[`fastino/gliner2.5-multi-v1`](https://huggingface.co/fastino/gliner2.5-multi-v1), 287M, multilingual,
+Apache-2.0) that reads the label names as part of its input. So it classifies with no training,
+and it fine-tunes on a `t4-small` in a few minutes. Two scripts:
+
+- **`train-gliner2.py`** scores the base model zero-shot, fine-tunes it on your labels, and scores
+  it again on the same held-out rows. The model card reports both, next to the majority-class
+  floor, so you can see what the labels bought you.
+- **`classify-gliner2.py`** labels a whole dataset. Pass `--labels` for zero-shot, or `--model`
+  with a `train-gliner2.py` output — the tasks and labels are read from the model repo.
+
+```bash
+# fine-tune: British Library book titles -> Fiction / Non-fiction
+hf jobs uv run --flavor t4-small --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-gliner2.py \
+  biglam/blbooksgenre username/gliner2-blbooks-genre \
+  --dataset-config title_genre_classifiction --text-column title
+
+# label a dataset with that model
+hf jobs uv run --flavor t4-small --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-gliner2.py \
+  biglam/blbooksgenre username/blbooks-genre-predictions \
+  --dataset-config title_genre_classifiction --text-column title --model username/gliner2-blbooks-genre
+
+# or skip training: zero-shot from label names
+hf jobs uv run --flavor t4-small --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-gliner2.py \
+  fancyzhx/ag_news username/ag-news-topics --split test \
+  --labels World Sports Business "Science and technology" --task-name topic
+```
+
+- **Single-label and multi-label**, auto-detected from the label column (a list per row is multi-label). An empty list is kept as a valid "none of these" answer.
+- **Several tasks in one model.** Repeat `--label-column` and each column becomes a task; the model answers all of them in one pass. `classify-gliner2.py` then writes one `predicted_<task>` and one `predicted_<task>_confidence` column per task.
+- **Evaluation split and metrics match `train-classifier.py` and `train-setfit.py`** (`--eval-split`, else `validation`, else `test`, else a carve-out; accuracy + macro F1), so the rungs are comparable. Multi-label tasks report micro/macro F1 and exact match.
+- **Label names are part of the prompt.** Real names (`Fiction`, `Sports`) work; integer codes make zero-shot meaningless, and the script warns. Brackets are stripped from label names because GLiNER2 rejects them at inference.
+- **It stops instead of training on nothing.** The GLiNER2 trainer catches a CUDA out-of-memory error, skips the batch and carries on, so an undersized GPU looks like a healthy job that produces an untrained model. The script aborts after 5 out-of-memory steps, before anything is pushed, and tells you which `--batch-size` / `--grad-accum` to try. Memory grows with batch size × number of labels × text length: tasks with 2, 4 and 28 labels fit a `t4-small` at the default batch size of 16; 56 labels did not.
+- **Texts are truncated** to `--max-text-chars` (default 2000), with a count.
+- **It is a GLiNER2 checkpoint**, loaded with `gliner2.classification.Classifier.from_pretrained(repo)`, not `AutoModelForSequenceClassification`. `gliner2` pins `transformers<5`; the script's own environment keeps that from mattering.
+
+### Measured
+
+All on `t4-small`, single seed, default learning rates. "Zero-shot" and "fine-tuned" are scored on the same held-out rows.
+
+| Dataset | Task | Labels | Train rows × epochs | Train time | Metric | Majority floor | Zero-shot | Fine-tuned |
+|---|---|---|---|---|---|---|---|---|
+| [`biglam/blbooksgenre`](https://huggingface.co/datasets/biglam/blbooksgenre) (book titles) | single-label | 2 | 1,562 × 5 | 143s | accuracy | 0.747 | 0.793 | **0.925** |
+| [`fancyzhx/ag_news`](https://huggingface.co/datasets/fancyzhx/ag_news) | single-label | 4 | 2,000 × 2 | 125s | accuracy | 0.268 | 0.718 | **0.852** |
+| [`google-research-datasets/go_emotions`](https://huggingface.co/datasets/google-research-datasets/go_emotions) | multi-label | 28 | 2,000 × 2 | 216s | micro F1 | — | 0.265 | **0.464** |
+| [`SetFit/TREC-QC`](https://huggingface.co/datasets/SetFit/TREC-QC), two tasks in one model | single-label ×2 | 6 + 50 | 5,452 × 3 | 1,761s | accuracy | 0.276 / 0.246 | 0.542 / 0.468 | **0.954 / 0.876** |
+
+TREC needed `--batch-size 4 --grad-accum 4`: at the default batch size of 16, its 56 labels ran the
+T4 out of memory and the script stopped. Before that guard existed, the same run "completed" with
+1,006 of 1,020 steps skipped and scored 0.576 / 0.484 — barely above zero-shot. Many labels are also
+slow: TREC trained at 9 rows/s against 55 rows/s for the 2-label task, because every label is part
+of the input. For hundreds of labels, use `train-classifier.py`.
+
+The ag_news, go_emotions and TREC rows are deliberately small runs (capped training rows, 2–3 epochs) that
+test the script, not tuned results. The BL books row trains on the full 1,562 titles; its eval is a 10%
+carve-out, so it is not comparable with published numbers for that dataset.
 
 ## 🚀 Quick Start
 
