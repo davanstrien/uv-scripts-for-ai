@@ -1,0 +1,13 @@
+name: Sync data-processing → HF
+on:
+  push:
+    branches: [main]
+    paths: ['data-processing/**', '.github/workflows/sync-data-processing.yml']
+
+jobs:
+  sync:
+    uses: ./.github/workflows/_sync-folder.yml
+    with:
+      folder: data-processing
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
