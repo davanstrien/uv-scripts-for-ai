@@ -25,6 +25,9 @@ Run on HF Jobs (t4-small is enough for a few thousand short texts):
         biglam/blbooksgenre username/gliner2-blbooks-genre \\
         --dataset-config title_genre_classifiction --text-column title
 
+Jobs stop after 30 minutes by default and the model is pushed at the end, so add `--timeout 1h`
+for larger datasets or tasks with many labels (56 labels x 5,452 rows x 3 epochs took 31 minutes).
+
 Metrics match `train-classifier.py` and `train-setfit.py` (accuracy + macro F1 on a held-out
 split), so the three are directly comparable at equal eval settings.
 
