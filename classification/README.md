@@ -247,7 +247,7 @@ All on `t4-small`, single seed, default learning rates. "Zero-shot" and "fine-tu
 
 | Dataset | Task | Labels | Train rows × epochs | Train time | Metric | Majority floor | Zero-shot | Fine-tuned |
 |---|---|---|---|---|---|---|---|---|
-| [`biglam/blbooksgenre`](https://huggingface.co/datasets/biglam/blbooksgenre) (book titles) | single-label | 2 | 1,562 × 5 | 143s | accuracy | 0.747 | 0.793 | **0.925** |
+| [`biglam/blbooksgenre`](https://huggingface.co/datasets/biglam/blbooksgenre) (book titles) | single-label | 2 | 1,562 × 5 | 141s | accuracy | 0.747 | 0.767 (0.753–0.782) | **0.907** (0.897–0.925) |
 | [`fancyzhx/ag_news`](https://huggingface.co/datasets/fancyzhx/ag_news) | single-label | 4 | 2,000 × 2 | 125s | accuracy | 0.268 | 0.718 | **0.852** |
 | [`google-research-datasets/go_emotions`](https://huggingface.co/datasets/google-research-datasets/go_emotions) | multi-label | 28 | 2,000 × 2 | 216s | micro F1 | — | 0.265 | **0.464** |
 | [`SetFit/TREC-QC`](https://huggingface.co/datasets/SetFit/TREC-QC), two tasks in one model | single-label ×2 | 6 + 50 | 5,452 × 3 | 1,761s | accuracy | 0.276 / 0.246 | 0.542 / 0.468 | **0.954 / 0.876** |
@@ -257,6 +257,12 @@ T4 out of memory and the script stopped. Before that guard existed, the same run
 1,006 of 1,020 steps skipped and scored 0.576 / 0.484 — barely above zero-shot. Many labels are also
 slow: TREC trained at 9 rows/s against 55 rows/s for the 2-label task, because every label is part
 of the input. For hundreds of labels, use `train-classifier.py`.
+
+The BL books row is the mean and range of five seeds; the other rows are one seed each. Read the
+range before you compare two runs: `--seed` also picks the carve-out rows, and the zero-shot model
+never changes, so its 3-point spread is what 174 eval rows do to the number on their own. A
+difference smaller than that between two runs is not a result. Use a dataset with a fixed
+`--eval-split`, and as many eval rows as you can get, when you want to compare runs.
 
 The ag_news, go_emotions and TREC rows are deliberately small runs (capped training rows, 2–3 epochs) that
 test the script, not tuned results. The BL books row trains on the full 1,562 titles; its eval is a 10%
