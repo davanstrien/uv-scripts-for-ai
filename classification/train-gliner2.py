@@ -8,6 +8,11 @@
 #     "scikit-learn",
 #     "huggingface-hub",
 # ]
+#
+# [tool.hf-jobs]
+# flavor = "t4-small"
+# timeout = "1h"
+# secrets = ["HF_TOKEN"]
 # ///
 """
 Fine-tune GLiNER2 into a text classifier — a ~300M model that already works zero-shot.
@@ -25,8 +30,10 @@ Run on HF Jobs (t4-small is enough for a few thousand short texts):
         biglam/blbooksgenre username/gliner2-blbooks-genre \\
         --dataset-config title_genre_classifiction --text-column title
 
-Jobs stop after 30 minutes by default and the model is pushed at the end, so add `--timeout 1h`
-for larger datasets or tasks with many labels (56 labels x 5,452 rows x 3 epochs took 31 minutes).
+The [tool.hf-jobs] header above gives `hf` CLI 1.32+ the defaults (t4-small, a 1 hour timeout,
+the HF_TOKEN secret), so there `hf jobs uv run <script> <args>` is enough. Flags always win:
+pass `--flavor a10g-small` for more memory and bf16, or `--timeout 3h` for a big run. Older CLIs
+ignore the header, and Jobs then stops after 30 minutes; the model is pushed at the end.
 
 Metrics match `train-classifier.py` and `train-setfit.py` (accuracy + macro F1 on a held-out
 split), so the three are directly comparable at equal eval settings.
@@ -373,6 +380,20 @@ class StopOnRepeatedOOM(logging.Handler):
             raise TrainingOutOfMemory()
 
 
+def resolve_precision(requested: str) -> str:
+    """Pick the training precision: bf16 where the GPU does it in hardware, else fp32.
+
+    gliner2 itself defaults the 2.5 models to bf16. torch.cuda.is_bf16_supported() also says yes
+    on a T4, where bf16 is emulated and slow, so this checks the compute capability instead
+    (8.0+ = Ampere and newer: A10G, L4, A100, ...). fp16 is not offered: it overflowed on T4.
+    """
+    if requested != "auto":
+        return requested
+    if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8:
+        return "bf16"
+    return "fp32"
+
+
 def evaluate(model_path: str, texts: list, gold_by_task: dict, tasks: list, batch_size: int) -> dict:
     """Load a GLiNER2 checkpoint, predict every task in one pass, and score each task."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -419,15 +440,30 @@ def evaluate(model_path: str, texts: list, gold_by_task: dict, tasks: list, batc
     return {"tasks": metrics, "eval_examples": len(texts), "predict_seconds": round(elapsed, 1)}
 
 
+# The smallest Jobs flavor for each GPU, keyed by a fragment of the GPU's name. "L40" comes
+# before "L4" because the first match wins.
+GPU_NAME_TO_FLAVOR = {"T4": "t4-small", "A10G": "a10g-small", "L40": "l40sx1", "L4": "l4x1", "A100": "a100-large"}
+
+
 def jobs_flavor() -> str:
     """Return the Jobs hardware flavor, or "" when it is not known.
 
-    Jobs sets ACCELERATOR to the flavor on some hardware ("a10g-small", "l4x1") but to a bare
-    "gpu" on others (seen on t4-small), and a bare "gpu" is not a valid --flavor.
+    The docs say ACCELERATOR holds the flavor ("a10g-small"). On the t4-small and a10g-small
+    jobs that tested this script it held a bare "gpu", which is not a valid --flavor. So use
+    ACCELERATOR when it looks like a flavor, and otherwise name the smallest flavor that has
+    this GPU. A larger flavor of the same GPU reproduces the same result.
     """
     hardware = os.environ.get("ACCELERATOR") or ""
     looks_like_flavor = "-" in hardware or any(character.isdigit() for character in hardware)
-    return hardware if looks_like_flavor else ""
+    if looks_like_flavor:
+        return hardware
+    if not torch.cuda.is_available():
+        return ""
+    gpu_name = torch.cuda.get_device_name(0)
+    for fragment, flavor in GPU_NAME_TO_FLAVOR.items():
+        if fragment in gpu_name:
+            return flavor
+    return ""
 
 
 def build_reproduce_command(args) -> str:
@@ -477,6 +513,8 @@ def build_reproduce_command(args) -> str:
         flags.append(f"--task-lr {args.task_lr}")
     if args.seed != 42:
         flags.append(f"--seed {args.seed}")
+    if args.precision != "auto":
+        flags.append(f"--precision {args.precision}")
     if args.skip_zero_shot:
         flags.append("--skip-zero-shot")
     if args.private:
@@ -635,6 +673,10 @@ def main(args) -> None:
                 "Jobs. Pass --allow-cpu to run anyway (only sensible with a tiny --max-train-samples)."
             )
         logger.warning("No GPU found; training on CPU because --allow-cpu was passed.")
+    else:
+        logger.info(
+            "GPU: %s (ACCELERATOR=%s)", torch.cuda.get_device_name(0), os.environ.get("ACCELERATOR")
+        )
 
     # Prove we can write the output repo BEFORE paying for training.
     api = HfApi(token=token)
@@ -671,6 +713,8 @@ def main(args) -> None:
         logger.info("Zero-shot: %s", json.dumps(zero_shot["tasks"]))
 
     examples = build_training_examples(train_texts, train_gold, tasks)
+    precision = resolve_precision(args.precision)
+    logger.info("Training precision: %s", precision)
     model = AutoExtractor.from_pretrained(args.base_model)
     config = TrainingConfig(
         output_dir=args.output_dir,
@@ -682,8 +726,8 @@ def main(args) -> None:
         seed=args.seed,
         # We score the held-out split ourselves, before and after, with the same code.
         eval_strategy="no",
-        # Mixed precision is on by default in gliner2; fp32 avoids fp16 overflow on T4.
         fp16=False,
+        bf16=(precision == "bf16"),
         logging_steps=20,
     )
     logger.info("Training for %d epochs on %d examples.", args.epochs, len(examples))
@@ -698,7 +742,8 @@ def main(args) -> None:
             f"Stopped: the GPU ran out of memory on {MAX_OOM_STEPS} training steps, so nothing was "
             f"pushed. Memory grows with batch size x number of labels x text length. Try "
             f"`--batch-size {smaller} --grad-accum {args.grad_accum * (args.batch_size // smaller)}` "
-            "(same effective batch), a lower --max-text-chars, or a larger --flavor such as a10g-small."
+            "(same effective batch), a lower --max-text-chars, or `--flavor a10g-small` (24 GB; it fit 56 "
+            "labels at batch size 16 where a t4-small did not)."
         )
     train_seconds = time.time() - started
     logger.info("Training took %.0f seconds.", train_seconds)
@@ -766,6 +811,11 @@ def parse_args():
     parser.add_argument("--encoder-lr", type=float, default=1e-5, help="Encoder learning rate (default: 1e-5)")
     parser.add_argument("--task-lr", type=float, default=5e-4, help="Task-head learning rate (default: 5e-4)")
     parser.add_argument("--seed", type=int, default=42, help="Seed (default: 42)")
+    parser.add_argument(
+        "--precision", choices=["auto", "fp32", "bf16"], default="auto",
+        help="Training precision (default: auto = bf16 on Ampere or newer GPUs such as A10G and L4, fp32 on T4 and CPU)",
+    )
+
     parser.add_argument("--skip-zero-shot", action="store_true", help="Skip the zero-shot score of the base model")
     parser.add_argument("--allow-cpu", action="store_true", help="Train without a GPU (slow)")
     parser.add_argument("--output-dir", default="./output", help="Local checkpoint directory (default: ./output)")
