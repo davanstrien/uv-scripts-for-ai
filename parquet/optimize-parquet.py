@@ -19,7 +19,6 @@ Setup (once):
         uv run https://huggingface.co/datasets/uv-scripts/parquet/raw/main/optimize-parquet.py
 
     # 2. A webhook on the input bucket that re-runs that Job on every change.
-    #    Webhook runs don't keep the Job's secrets: pass a token as the webhook secret.
     from huggingface_hub import create_webhook
     create_webhook(
         job_id="<job id from step 1>",
@@ -41,7 +40,7 @@ from pathlib import PurePosixPath
 
 from datasets import load_dataset
 
-# Webhook runs don't keep the Job's secrets: the token arrives as the webhook secret.
+# Use the webhook secret as the token when HF_TOKEN is not set.
 if "HF_TOKEN" not in os.environ and "WEBHOOK_SECRET" in os.environ:
     os.environ["HF_TOKEN"] = os.environ["WEBHOOK_SECRET"]
 

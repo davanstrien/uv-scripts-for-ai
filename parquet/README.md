@@ -52,7 +52,7 @@ create_webhook(
 )
 ```
 
-Webhook runs don't keep the Job's secrets, so the token goes in the webhook `secret`. The Job receives it as `WEBHOOK_SECRET` and uses it to read and write the buckets. Use a fine-grained token, not your main one.
+The Job uses the webhook `secret` as its token to read and write the buckets. Use a fine-grained token, not your main one.
 
 **3. Upload a file:**
 
