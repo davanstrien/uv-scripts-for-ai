@@ -102,7 +102,7 @@ DEFAULT_BASE_MODEL = "fastino/gliner2.5-multi-v1"
 # was trained on, so classify-gliner2.py can rebuild the same schema without any flags.
 SCHEMA_FILENAME = "classification_schema.json"
 
-# Give up after this many out-of-memory training steps. See StopOnRepeatedOOM.
+# After this many out-of-memory training steps, stop and retry smaller. See StopOnRepeatedOOM.
 MAX_OOM_STEPS = 5
 
 # GLiNER2 puts label names into the model prompt verbatim. Its inference schema rejects these
@@ -392,6 +392,68 @@ def resolve_precision(requested: str) -> str:
     if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8:
         return "bf16"
     return "fp32"
+
+
+def train_with_batch_fallback(args, examples: list, precision: str) -> int:
+    """Train, and if the GPU runs out of memory, restart the script at a quarter of the batch size.
+
+    Gradient accumulation grows by the same factor, so the effective batch size (and the
+    number of optimizer steps) stays the same: the fallback costs time, not comparability.
+
+    The restart is a whole new process (os.execv). Retrying inside this process was tried and
+    does not work: after a failed run the gliner2 trainer's model and optimizer state stay on
+    the GPU (about 4.6 GB per attempt), so each retry starts with less memory than the last.
+    A new process gets a clean GPU. It parses the new --batch-size / --grad-accum itself, so
+    the model card's reproduce command describes the run that produced the model. The restart
+    also repeats the zero-shot scoring; that gives the same number and takes under a minute.
+
+    Returns the number of training steps that were skipped for lack of memory.
+    """
+    model = AutoExtractor.from_pretrained(args.base_model)
+    config = TrainingConfig(
+        output_dir=args.output_dir,
+        num_epochs=args.epochs,
+        batch_size=args.batch_size,
+        gradient_accumulation_steps=args.grad_accum,
+        encoder_lr=args.encoder_lr,
+        task_lr=args.task_lr,
+        seed=args.seed,
+        # We score the held-out split ourselves, before and after, with the same code.
+        eval_strategy="no",
+        fp16=False,
+        bf16=(precision == "bf16"),
+        logging_steps=20,
+    )
+    oom_guard = StopOnRepeatedOOM(limit=MAX_OOM_STEPS)
+    logging.getLogger("gliner2.training.trainer").addHandler(oom_guard)
+    try:
+        ExtractorTrainer(model, config).train(train_data=examples)
+        return oom_guard.oom_steps
+    except TrainingOutOfMemory:
+        pass
+
+    if args.batch_size == 1:
+        sys.exit(
+            "Stopped: the GPU ran out of memory even at batch size 1, so nothing was pushed. "
+            "Memory grows with number of labels x text length. Lower --max-text-chars, or use a "
+            "GPU with more memory (`--flavor a10g-small` has 24 GB, `--flavor a100-large` 80 GB)."
+        )
+    smaller = max(1, args.batch_size // 4)
+    grad_accum = args.grad_accum * (args.batch_size // smaller)
+    on_t4 = "T4" in torch.cuda.get_device_name(0)
+    logger.warning(
+        "The GPU ran out of memory at batch size %d. Restarting at batch size %d with %d gradient "
+        "accumulation steps (same effective batch).%s",
+        args.batch_size, smaller, grad_accum,
+        " `--flavor a10g-small` (24 GB) would be faster." if on_t4 else "",
+    )
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # argparse keeps the LAST value of a repeated flag, so appending these overrides the originals.
+    os.execv(
+        sys.executable,
+        [sys.executable, *sys.argv, "--batch-size", str(smaller), "--grad-accum", str(grad_accum)],
+    )
 
 
 def evaluate(model_path: str, texts: list, gold_by_task: dict, tasks: list, batch_size: int) -> dict:
@@ -715,48 +777,18 @@ def main(args) -> None:
     examples = build_training_examples(train_texts, train_gold, tasks)
     precision = resolve_precision(args.precision)
     logger.info("Training precision: %s", precision)
-    model = AutoExtractor.from_pretrained(args.base_model)
-    config = TrainingConfig(
-        output_dir=args.output_dir,
-        num_epochs=args.epochs,
-        batch_size=args.batch_size,
-        gradient_accumulation_steps=args.grad_accum,
-        encoder_lr=args.encoder_lr,
-        task_lr=args.task_lr,
-        seed=args.seed,
-        # We score the held-out split ourselves, before and after, with the same code.
-        eval_strategy="no",
-        fp16=False,
-        bf16=(precision == "bf16"),
-        logging_steps=20,
-    )
     logger.info("Training for %d epochs on %d examples.", args.epochs, len(examples))
     started = time.time()
-    oom_guard = StopOnRepeatedOOM(limit=MAX_OOM_STEPS)
-    logging.getLogger("gliner2.training.trainer").addHandler(oom_guard)
-    try:
-        ExtractorTrainer(model, config).train(train_data=examples)
-    except TrainingOutOfMemory:
-        smaller = max(1, args.batch_size // 4)
-        sys.exit(
-            f"Stopped: the GPU ran out of memory on {MAX_OOM_STEPS} training steps, so nothing was "
-            f"pushed. Memory grows with batch size x number of labels x text length. Try "
-            f"`--batch-size {smaller} --grad-accum {args.grad_accum * (args.batch_size // smaller)}` "
-            "(same effective batch), a lower --max-text-chars, or `--flavor a10g-small` (24 GB; it fit 56 "
-            "labels at batch size 16 where a t4-small did not)."
-        )
+    oom_steps = train_with_batch_fallback(args, examples, precision)
     train_seconds = time.time() - started
     logger.info("Training took %.0f seconds.", train_seconds)
-    if oom_guard.oom_steps:
+    if oom_steps:
         logger.warning(
             "%d training step(s) were skipped after running out of GPU memory. The model trained "
-            "on the rest. Lower --batch-size to avoid this.", oom_guard.oom_steps,
+            "on the rest. Lower --batch-size to avoid this.", oom_steps,
         )
 
-    # Release the training copy, then score the checkpoint that will actually be uploaded.
-    del model
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    # Score the checkpoint that will actually be uploaded.
     final_dir = os.path.join(args.output_dir, "final")
     fine_tuned = evaluate(final_dir, eval_texts, eval_gold, tasks, args.eval_batch_size)
     logger.info("Fine-tuned: %s", json.dumps(fine_tuned["tasks"]))
@@ -771,7 +803,7 @@ def main(args) -> None:
     with open(os.path.join(final_dir, SCHEMA_FILENAME), "w") as handle:
         json.dump(schema_record, handle, indent=2)
     card = build_card(
-        args, tasks, zero_shot, fine_tuned, len(examples), train_seconds, eval_split, oom_guard.oom_steps
+        args, tasks, zero_shot, fine_tuned, len(examples), train_seconds, eval_split, oom_steps
     )
     with open(os.path.join(final_dir, "README.md"), "w") as handle:
         handle.write(card)

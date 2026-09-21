@@ -237,15 +237,15 @@ hf jobs uv run --flavor t4-small --secrets HF_TOKEN \
 - **Several tasks in one model.** Repeat `--label-column` and each column becomes a task; the model answers all of them in one pass. `classify-gliner2.py` then writes one `predicted_<task>` and one `predicted_<task>_confidence` column per task.
 - **Evaluation split and metrics match `train-classifier.py` and `train-setfit.py`** (`--eval-split`, else `validation`, else `test`, else a carve-out; accuracy + macro F1), so the rungs are comparable. Multi-label tasks report micro/macro F1 and exact match.
 - **Label names are part of the prompt.** Real names (`Fiction`, `Sports`) work; integer codes make zero-shot meaningless, and the script warns. Brackets are stripped from label names because GLiNER2 rejects them at inference.
-- **It stops instead of training on nothing.** The GLiNER2 trainer catches a CUDA out-of-memory error, skips the batch and carries on, so an undersized GPU looks like a healthy job that produces an untrained model. The script aborts after 5 out-of-memory steps, before anything is pushed, and tells you which `--batch-size` / `--grad-accum` to try. Memory grows with batch size × number of labels × text length: tasks with 2, 4 and 28 labels fit a `t4-small` at the default batch size of 16; 56 labels did not.
+- **It does not train on nothing.** The GLiNER2 trainer catches a CUDA out-of-memory error, skips the batch and carries on, so an undersized GPU looks like a healthy job that produces an untrained model. After 5 out-of-memory steps the script restarts itself at a quarter of the batch size, with 4× the gradient accumulation, so the effective batch size stays the same. It goes down to batch size 1, then stops before anything is pushed. The model card's reproduce command records the batch size that worked. Memory grows with batch size × number of labels × text length.
 - **The launch config ships with the script.** Both scripts carry a [`[tool.hf-jobs]` header](https://huggingface.co/docs/hub/jobs-configuration#define-the-launch-config-in-the-script) (`t4-small`, a 1 hour timeout, the `HF_TOKEN` secret). With `hf` CLI 1.32 or newer, `hf jobs uv run <script-url> <args>` is enough, and `--dry-run` shows what it resolves to. Flags still win, and the examples here keep them so they also work on older CLIs — which ignore the header and stop the Job after 30 minutes, before the model is pushed.
-- **Pick the GPU by label count.** A `t4-small` fit tasks with 2, 4 and 28 labels at the default batch size. `a10g-small` (24 GB) trains about 2.3× faster and fit the 56-label TREC run at the default batch size, in 509s against 1,761s on the T4 at batch size 4. `--precision auto` uses bf16 on Ampere or newer GPUs (A10G, L4) and fp32 on a T4; on the A10G bf16 and fp32 ran at the same speed (62s and 59s), so bf16 there buys memory, not time.
+- **Pick the GPU by label count and text length.** A `t4-small` fit short texts with 2, 4 and 28 labels at the default batch size. The 56-label TREC task and 2,000-character IMDB reviews both fell back to batch size 4, and IMDB did so on the A10G too. `a10g-small` (24 GB) trains about 2.3× faster and fit the 56-label TREC run at the default batch size, in 509s against 1,761s on the T4 at batch size 4. `--precision auto` uses bf16 on Ampere or newer GPUs (A10G, L4) and fp32 on a T4; on the A10G bf16 and fp32 ran at the same speed (62s and 59s), so bf16 there buys memory, not time.
 - **Texts are truncated** to `--max-text-chars` (default 2000), with a count.
 - **It is a GLiNER2 checkpoint**, loaded with `gliner2.classification.Classifier.from_pretrained(repo)`, not `AutoModelForSequenceClassification`. `gliner2` pins `transformers<5`; the script's own environment keeps that from mattering.
 
 ### Measured
 
-All on `t4-small`, single seed, default learning rates. "Zero-shot" and "fine-tuned" are scored on the same held-out rows.
+On `t4-small` unless stated, single seed, default learning rates. "Zero-shot" and "fine-tuned" are scored on the same held-out rows.
 
 | Dataset | Task | Labels | Train rows × epochs | Train time | Metric | Majority floor | Zero-shot | Fine-tuned |
 |---|---|---|---|---|---|---|---|---|
@@ -253,14 +253,15 @@ All on `t4-small`, single seed, default learning rates. "Zero-shot" and "fine-tu
 | [`fancyzhx/ag_news`](https://huggingface.co/datasets/fancyzhx/ag_news) | single-label | 4 | 2,000 × 2 | 125s | accuracy | 0.268 | 0.718 | **0.852** |
 | [`google-research-datasets/go_emotions`](https://huggingface.co/datasets/google-research-datasets/go_emotions) | multi-label | 28 | 2,000 × 2 | 216s | micro F1 | — | 0.265 | **0.464** |
 | [`SetFit/TREC-QC`](https://huggingface.co/datasets/SetFit/TREC-QC), two tasks in one model | single-label ×2 | 6 + 50 | 5,452 × 3 | 1,761s | accuracy | 0.276 / 0.246 | 0.542 / 0.468 | **0.954 / 0.876** |
-
 | same, on `a10g-small`, default batch size, bf16 | single-label ×2 | 6 + 50 | 5,452 × 3 | 509s | accuracy | 0.276 / 0.246 | not run | **0.944 / 0.872** |
+| [`stanfordnlp/imdb`](https://huggingface.co/datasets/stanfordnlp/imdb) (reviews; 15% truncated at 2,000 characters) | single-label | 2 | 1,000 × 1 | 122s | accuracy | 0.500 | 0.777 | **0.840** |
 
-On the T4, TREC needed `--batch-size 4 --grad-accum 4`: at the default batch size of 16, its 56 labels ran the
-T4 out of memory and the script stopped. Before that guard existed, the same run "completed" with
-1,006 of 1,020 steps skipped and scored 0.576 / 0.484 — barely above zero-shot. Many labels are also
-slow: TREC trained at 9 rows/s against 55 rows/s for the 2-label task, because every label is part
-of the input. For hundreds of labels, use `train-classifier.py`.
+On the T4, TREC and IMDB ran out of memory at the default batch size of 16, and the script restarted
+them at batch size 4 with 4 gradient accumulation steps. Before that fallback existed, the TREC run
+"completed" with 1,006 of 1,020 steps skipped and scored 0.576 / 0.484, barely above zero-shot. Many
+labels are also slow: TREC trained at 9 rows/s against 55 rows/s for the 2-label task, because every
+label is part of the input. For hundreds of labels, use `train-classifier.py`. Prediction was not the
+limit: the 300 IMDB reviews were scored at batch size 32 on the T4 with no fallback.
 
 The same BL books run (seed 42) scored 0.925 on a T4, 0.937 on an A10G in fp32 and 0.931 on an A10G in
 bf16 — one or two eval rows apart, so hardware and precision are not a way to gain accuracy, but they
