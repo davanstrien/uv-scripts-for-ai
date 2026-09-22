@@ -11,7 +11,7 @@ Text classification on [HF Jobs](https://huggingface.co/docs/huggingface_hub/gui
 |--------|--------------|
 | [`train-classifier.py`](#fine-tune-a-classifier-train-classifierpy) | **Fine-tune** an encoder into a classifier (default: [LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M)) and push it to the Hub |
 | [`train-setfit.py`](#few-shot-with-setfit-train-setfitpy) | **Few-shot** train a classifier from 8-64 labels per class with [SetFit](https://github.com/huggingface/setfit) — runs on CPU or GPU |
-| [`train-gliner2.py`](#zero-shot-first-then-fine-tune-gliner2) | **Fine-tune** [GLiNER2](https://github.com/fastino-ai/GLiNER2), a ~300M model that already classifies zero-shot, and report the zero-shot score next to the fine-tuned one |
+| [`train-gliner2.py`](#zero-shot-first-then-fine-tune-gliner2) | **Fine-tune** [GLiNER2](https://github.com/fastino-ai/GLiNER2), a small model (74M–287M) that already classifies zero-shot, and report the zero-shot score next to the fine-tuned one |
 | [`classify-gliner2.py`](#zero-shot-first-then-fine-tune-gliner2) | **Label a dataset** with GLiNER2: zero-shot from label names, or with a `train-gliner2.py` model |
 | [`classify-dataset.py`](#zero-shot-classification-classify-datasetpy) | **Zero-shot** classify a dataset with an instruction LLM (SmolLM3 + vLLM, structured outputs) |
 | `classify-dataset-sglang.py` | Zero-shot variant on SGLang (reasoning-aware `<think>` models) |
@@ -215,19 +215,19 @@ and it fine-tunes on a `t4-small` in a few minutes. Two scripts:
 
 ```bash
 # fine-tune: British Library book titles -> Fiction / Non-fiction
-hf jobs uv run --flavor t4-small --secrets HF_TOKEN \
+hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-gliner2.py \
   biglam/blbooksgenre username/gliner2-blbooks-genre \
   --dataset-config title_genre_classifiction --text-column title
 
 # label a dataset with that model
-hf jobs uv run --flavor t4-small --secrets HF_TOKEN \
+hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-gliner2.py \
   biglam/blbooksgenre username/blbooks-genre-predictions \
   --dataset-config title_genre_classifiction --text-column title --model username/gliner2-blbooks-genre
 
 # or skip training: zero-shot from label names
-hf jobs uv run --flavor t4-small --secrets HF_TOKEN \
+hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-gliner2.py \
   fancyzhx/ag_news username/ag-news-topics --split test \
   --labels World Sports Business "Science and technology" --task-name topic
@@ -238,7 +238,26 @@ hf jobs uv run --flavor t4-small --secrets HF_TOKEN \
 - **Evaluation split and metrics match `train-classifier.py` and `train-setfit.py`** (`--eval-split`, else `validation`, else `test`, else a carve-out; accuracy + macro F1), so the rungs are comparable. Multi-label tasks report micro/macro F1 and exact match.
 - **Label names are part of the prompt.** Real names (`Fiction`, `Sports`) work; integer codes make zero-shot meaningless, and the script warns. Brackets are stripped from label names because GLiNER2 rejects them at inference.
 - **It does not train on nothing.** The GLiNER2 trainer catches a CUDA out-of-memory error, skips the batch and carries on, so an undersized GPU looks like a healthy job that produces an untrained model. After 5 out-of-memory steps the script restarts itself at a quarter of the batch size, with 4× the gradient accumulation, so the effective batch size stays the same. It goes down to batch size 1, then stops before anything is pushed. The model card's reproduce command records the batch size that worked. Memory grows with batch size × number of labels × text length.
-- **The launch config ships with the script.** Both scripts carry a [`[tool.hf-jobs]` header](https://huggingface.co/docs/hub/jobs-configuration#define-the-launch-config-in-the-script) (`t4-small`, a 1 hour timeout, the `HF_TOKEN` secret). With `hf` CLI 1.32 or newer, `hf jobs uv run <script-url> <args>` is enough, and `--dry-run` shows what it resolves to. Flags still win, and the examples here keep them so they also work on older CLIs — which ignore the header and stop the Job after 30 minutes, before the model is pushed.
+- **The launch config ships with the script.** Both scripts carry a [`[tool.hf-jobs]` header](https://huggingface.co/docs/hub/jobs-configuration#define-the-launch-config-in-the-script) (`t4-small`, a 1 hour timeout, the `HF_TOKEN` secret). With `hf` CLI 1.32 or newer, `hf jobs uv run <script-url> <args>` is enough, and `--dry-run` shows what it resolves to. Flags still win, and the examples here keep them so they also work on older CLIs — which ignore the header and stop the Job after 30 minutes, before the model is pushed. Pass `--timeout` explicitly (the examples use `1h`; a large run needs more) whenever you cannot be sure which CLI launches the job.
+- **Outputs are private by default.** `train-gliner2.py` creates a private model repo and `classify-gliner2.py` a private dataset; pass `--public` to opt out. If the target repo already exists and is public, both scripts stop before doing any work. (`--private` is still accepted, and does nothing.)
+- **Local files, several eval splits, exported predictions.** Instead of a Hub dataset, `train-gliner2.py` can read JSON Lines files, for example from a bucket mounted with `-v`:
+
+  ```bash
+  hf jobs uv run --flavor a10g-small --timeout 2h --secrets HF_TOKEN \
+    -v hf://buckets/username/my-bucket:/bucket \
+    https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-gliner2.py \
+    --train-file /bucket/train.jsonl \
+    --eval-file calibration=/bucket/calibration.jsonl --eval-file development=/bucket/development.jsonl \
+    --labels-file /bucket/labels.json --label-column labels --label-augmentation off \
+    --no-push --output-dir /bucket/runs/gliner2 --export-predictions /bucket/runs/gliner2/predictions
+  ```
+
+  - `--eval-file NAME=PATH` (repeatable): each file is an eval split, scored zero-shot and fine-tuned, in full and in file order.
+  - `--labels-file`: a JSON list or one label per line. It fixes the label set and its order for training, zero-shot and evaluation; a label in the data that is not in the file stops the run.
+  - `--export-predictions DIR`: writes `DIR/{base,finetuned}-<split>/predictions.jsonl`, one line per row: `{"row": i, "probabilities": {task: {label: p}}, "logits": {task: {label: logit}}}` with every label. Probabilities are gliner2's (softmax for a single-label task, a sigmoid per label for multi-label); logits are the raw per-label scores. Exporting also switches off the `--max-eval-samples` cap for a Hub eval split.
+  - `--no-push`: no Hub repo is created or written; the model stays in `--output-dir/final`.
+  - `--label-augmentation off`: gliner2's trainer by default renames the labels to "label 1", "label 2", ... in half of the training rows and drops up to half of the labels (`upstream`). With a fixed label set that is always scored in full, `off` trains on the real, complete label set every time; label-order shuffling stays on.
+  - A `run_manifest.json` (all arguments except the token, the label-augmentation config, precision, device and package versions, then the results) is written to `--output-dir`, the export directory and the model folder.
 - **Pick the GPU by label count and text length.** A `t4-small` fit short texts with 2, 4 and 28 labels at the default batch size. The 56-label TREC task and 2,000-character IMDB reviews both fell back to batch size 4, and IMDB did so on the A10G too. `a10g-small` (24 GB) trains about 2.3× faster and fit the 56-label TREC run at the default batch size, in 509s against 1,761s on the T4 at batch size 4. `--precision auto` uses bf16 on Ampere or newer GPUs (A10G, L4) and fp32 on a T4; on the A10G bf16 and fp32 ran at the same speed (62s and 59s), so bf16 there buys memory, not time.
 - **Texts are truncated** to `--max-text-chars` (default 2000), with a count.
 - **It is a GLiNER2 checkpoint**, loaded with `gliner2.classification.Classifier.from_pretrained(repo)`, not `AutoModelForSequenceClassification`. `gliner2` pins `transformers<5`; the script's own environment keeps that from mattering.
