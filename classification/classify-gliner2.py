@@ -16,8 +16,8 @@
 """
 Classify a text column of a Hub dataset with GLiNER2 — zero-shot, or with your fine-tuned model.
 
-GLiNER2 is a ~300M encoder that reads the label names as part of its input. That gives two ways
-to use this script:
+GLiNER2 is a small encoder (74M to 287M parameters) that reads the label names as part of its
+input. That gives two ways to use this script:
 
 1. Zero-shot: pass the label names with --labels. No training and no LLM. A t4-small does about
    33 rows/s; cpu-basic works but manages about 1.4 rows/s, so keep CPU for a few hundred rows.
@@ -39,7 +39,11 @@ With a fine-tuned model:
         --model username/gliner2-blbooks-genre --text-column title
 
 Output: the original columns, plus `predicted_<task>` (a label, or a list of labels for a
-multi-label task) and `predicted_<task>_confidence` for every task.
+multi-label task) and `predicted_<task>_confidence` for every task. The output dataset is
+PRIVATE unless you pass --public.
+
+Pass `--timeout` to `hf jobs uv run` for a big dataset: CLIs older than 1.32 ignore the
+[tool.hf-jobs] header above and stop the job after 30 minutes, before anything is pushed.
 """
 
 import argparse
@@ -60,7 +64,7 @@ from gliner2.classification import (
     ClassificationSchema,
     Classifier,
 )
-from huggingface_hub import DatasetCard, hf_hub_download, login
+from huggingface_hub import DatasetCard, HfApi, hf_hub_download, login
 from huggingface_hub.utils import EntryNotFoundError, disable_progress_bars
 
 
@@ -213,8 +217,8 @@ def build_reproduce_command(args) -> str:
         flags.append(f"--max-samples {args.max_samples}")
     if args.max_text_chars != 2000:
         flags.append(f"--max-text-chars {args.max_text_chars}")
-    if args.private:
-        flags.append("--private")
+    if args.public:
+        flags.append("--public")
     if flags:
         parts[-1] += " \\"
         parts.append("  " + " ".join(flags))
@@ -299,6 +303,15 @@ def main(args) -> None:
         sys.exit("No HF token. Pass --hf-token or run with --secrets HF_TOKEN.")
     login(token=token)
 
+    # push_to_hub(private=True) leaves an existing repo's visibility alone, so check before the work.
+    api = HfApi(token=token)
+    if not args.public and api.repo_exists(args.output_dataset, repo_type="dataset"):
+        if not api.repo_info(args.output_dataset, repo_type="dataset").private:
+            sys.exit(
+                f"{args.output_dataset} already exists and is public. Pass --public to push there "
+                "anyway, or choose a new dataset name."
+            )
+
     tasks = resolve_tasks(args)
     for task in tasks:
         logger.info("Task '%s': %s", task["name"], task["labels"])
@@ -373,7 +386,7 @@ def main(args) -> None:
     for task in tasks:
         logger.info("Task '%s' distribution: %s", task["name"], dict(counts_by_task[task["name"]].most_common(10)))
 
-    dataset.push_to_hub(args.output_dataset, private=args.private)
+    dataset.push_to_hub(args.output_dataset, private=not args.public)
     card = build_card(args, tasks, counts_by_task, len(dataset), seconds, zero_shot=bool(args.labels))
     DatasetCard(card).push_to_hub(args.output_dataset, repo_type="dataset")
     logger.info("Pushed to https://huggingface.co/datasets/%s", args.output_dataset)
@@ -393,9 +406,13 @@ def parse_args():
     parser.add_argument("--max-samples", type=int, help="Classify only the first N rows")
     parser.add_argument("--max-text-chars", type=int, default=2000, help="Truncate texts to this many characters (default: 2000)")
     parser.add_argument("--batch-size", type=int, default=32, help="Model batch size (default: 32)")
-    parser.add_argument("--private", action="store_true", help="Make the output dataset private")
+    parser.add_argument("--public", action="store_true", help="Make the output dataset public (default: private)")
+    parser.add_argument("--private", action="store_true", help="Accepted for older commands; private is now the default")
     parser.add_argument("--hf-token", help="HF token (or set HF_TOKEN)")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.public and args.private:
+        parser.error("Pass --public or --private, not both.")
+    return args
 
 
 if __name__ == "__main__":
