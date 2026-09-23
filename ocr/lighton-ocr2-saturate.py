@@ -6,7 +6,7 @@
 # ]
 #
 # [tool.hf-jobs]
-# image = "vllm/vllm-openai:latest"
+# image = "vllm/vllm-openai:v0.22.1"
 # flavor = "a10g-small"
 # secrets = ["HF_TOKEN"]
 # ///
@@ -71,7 +71,7 @@ import sys
 # Throughput receipt (a10g-small): 0.955 img/s at 1k pages incl. streaming.
 SERVING = {
     "model": "lightonai/LightOnOCR-2-1B",
-    "image": "vllm/vllm-openai:latest",
+    "image": "vllm/vllm-openai:v0.22.1",
     "max_model_len": 8192,
     "serve_args": [
         "--limit-mm-per-prompt", '{"image": 1}',

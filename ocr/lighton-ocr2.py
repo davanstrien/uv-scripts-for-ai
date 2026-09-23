@@ -4,11 +4,16 @@
 #     "datasets>=4.0.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm>=0.15.1",
 #     "tqdm",
 #     "toolz",
-#     "torch",
 # ]
+#
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.22.1"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -18,8 +23,16 @@ LightOnOCR-2 is a compact 1B multilingual OCR model optimized for production spe
 Combines Pixtral ViT encoder with Qwen3 language model for efficient document parsing.
 Uses Reinforcement Learning with Verifiable Rewards (RLVR) for improved quality.
 
-NOTE: Requires vLLM nightly wheels for LightOnOCR-2 support. First run may take
-a few minutes to download and install dependencies.
+Run on HF Jobs. vLLM and torch come from the vllm/vllm-openai:v0.22.1 image declared
+in the [tool.hf-jobs] header (`hf` CLI 1.32+), which also sets the hardware and the
+HF_TOKEN secret. The tag is pinned: unpinned vLLM 0.29/0.30 with current transformers
+fails to import LightOnOCR-2 (PixtralRotaryEmbedding). Pass --timeout for a long run:
+
+  hf jobs uv run --timeout 1h \\
+      https://huggingface.co/datasets/uv-scripts/ocr/raw/main/lighton-ocr2.py \\
+      <input-dataset> <output-dataset>
+
+To run on your own GPU, add the engine: `uv run --with vllm==0.22.1 lighton-ocr2.py ...`.
 
 Features:
 - ⚡ Fastest: 42.8 pages/sec on H100 GPU (7× faster than v1)
@@ -33,7 +46,7 @@ Features:
 - 💪 Production-ready: Outperforms models 9× larger
 
 Model: lightonai/LightOnOCR-2-1B
-vLLM: Requires vLLM nightly build
+vLLM: vllm/vllm-openai:v0.22.1 image (see the header)
 Performance: 83.2 ± 0.9% on OlmOCR-Bench
 """
 
@@ -530,8 +543,8 @@ if __name__ == "__main__":
         print("\n4. Original image size (no resize):")
         print("   uv run lighton-ocr2.py docs output --no-resize")
         print("\n5. Running on HF Jobs:")
-        print("   hf jobs uv run --flavor l4x1 \\")
-        print("     -s HF_TOKEN \\")
+        print("   (image, hardware and HF_TOKEN come from the script's [tool.hf-jobs] header)")
+        print("   hf jobs uv run \\")
         print(
             "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/lighton-ocr2.py \\"
         )
