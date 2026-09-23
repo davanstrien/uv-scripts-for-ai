@@ -4,19 +4,18 @@
 #     "datasets>=4.0.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm",
 #     "tqdm",
 #     "toolz",
-#     "torch",
 #     "addict",
 #     "matplotlib",
 # ]
 #
-# [[tool.uv.index]]
-# url = "https://wheels.vllm.ai/nightly/cu129"
-#
-# [tool.uv]
-# prerelease = "allow"
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.29.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -30,8 +29,11 @@ Uses the official vLLM offline pattern: llm.generate() with PIL images
 and NGramPerReqLogitsProcessor to prevent repetition on complex documents.
 See: https://docs.vllm.ai/projects/recipes/en/latest/DeepSeek/DeepSeek-OCR.html
 
-NOTE: Uses vLLM nightly wheels. First run may take a few minutes to download
-and install dependencies.
+Run on HF Jobs. vLLM and torch come from the vllm/vllm-openai:v0.29.0 image declared
+in the [tool.hf-jobs] header (`hf` CLI 1.32+), which also sets the hardware and the
+HF_TOKEN secret. The tag is pinned: vLLM 0.30 breaks the DeepEncoder Triton kernel
+(LOG2E NameError), and nightly wheels moved the logits-processor API. Pass --timeout
+for a long run. To run on your own GPU: `uv run --with vllm==0.29.0 deepseek-ocr2-vllm.py ...`.
 
 Features:
 - Visual Causal Flow architecture for enhanced visual encoding
@@ -498,8 +500,8 @@ if __name__ == "__main__":
             "   uv run deepseek-ocr2-vllm.py large-dataset test-output --max-samples 10"
         )
         print("\n4. Running on HF Jobs:")
-        print("   hf jobs uv run --flavor l4x1 \\")
-        print("     -s HF_TOKEN \\")
+        print("   (image, hardware and HF_TOKEN come from the script's [tool.hf-jobs] header)")
+        print("   hf jobs uv run \\")
         print(
             "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/deepseek-ocr2-vllm.py \\"
         )
@@ -531,7 +533,7 @@ Examples:
   uv run deepseek-ocr2-vllm.py dataset output --batch-size 16 --max-model-len 16384
 
   # Running on HF Jobs
-  hf jobs uv run --flavor l4x1 -s HF_TOKEN \\
+  hf jobs uv run \\
       https://huggingface.co/datasets/uv-scripts/ocr/raw/main/deepseek-ocr2-vllm.py \\
       my-dataset my-output --max-samples 10
         """,
