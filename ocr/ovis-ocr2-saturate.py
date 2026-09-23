@@ -6,7 +6,7 @@
 # ]
 #
 # [tool.hf-jobs]
-# image = "vllm/vllm-openai:latest"
+# image = "vllm/vllm-openai:v0.22.1"
 # flavor = "a10g-small"
 # secrets = ["HF_TOKEN"]
 # ///
@@ -34,6 +34,10 @@ secret (`hf` CLI 1.32+). Pass --timeout for a long run; flags override the heade
   hf jobs uv run --detach --timeout 4h \\
       https://huggingface.co/datasets/uv-scripts/ocr/raw/main/ovis-ocr2-saturate.py \\
       <input-dataset> <output-dataset>
+
+Smoke test first with --max-samples 3. On your own GPU (vllm on PATH):
+
+  uv run --with vllm==0.22.1 ovis-ocr2-saturate.py <input-dataset> <output-dataset>
 
 Output layout (differs from the -server recipe, which pushes input+markdown):
 the output repo holds `data/part-*.parquet` with rows
@@ -78,7 +82,7 @@ import sys
 # Throughput receipt (a10g-small, 20 pages): 4,057 tok/s, window ramped to 32.
 SERVING = {
     "model": "ATH-MaaS/OvisOCR2",
-    "image": "vllm/vllm-openai:latest",
+    "image": "vllm/vllm-openai:v0.22.1",
     "max_model_len": 32768,
     "serve_args": [
         "--limit-mm-per-prompt", '{"image": 1}',
@@ -183,7 +187,8 @@ def main():
     ap.add_argument("--split", default="train")
     ap.add_argument("--id-column", default=None,
                     help="Column to use as row id (default: split-index ids)")
-    ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--max-samples", "--limit", dest="limit", type=int, default=None,
+                    help="Process only the first N rows (smoke test)")
     ap.add_argument("--max-tokens", type=int, default=SERVING["max_tokens"])
     ap.add_argument("--keep-image-tags", action="store_true",
                     help="Keep the bbox <img> placeholder blocks in the output")

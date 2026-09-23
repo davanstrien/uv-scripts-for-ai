@@ -28,6 +28,10 @@
 #
 # [tool.uv.sources]
 # paddlepaddle-gpu = { index = "paddle" }
+#
+# [tool.hf-jobs]
+# flavor = "t4-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -51,22 +55,22 @@ Output schema (column `layout` is a JSON string):
 
 Coordinates are in the original input-image pixel space.
 
-Example commands:
+Example commands (the [tool.hf-jobs] header sets flavor + secrets; needs `hf` CLI 1.32+):
 
-  # Dataset -> dataset (smoke on L4)
-  hf jobs uv run --flavor l4x1 -s HF_TOKEN https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \\
+  # Dataset -> dataset (smoke test)
+  hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \\
       davanstrien/ufo-ColPali pp-doclayout-smoke \\
       --max-samples 3 --shuffle --seed 42 --private
 
   # Dataset -> bucket (incremental shards, resumable)
   hf buckets create davanstrien/pp-doclayout-scratch --exist-ok
-  hf jobs uv run --flavor l4x1 -s HF_TOKEN https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \\
+  hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \\
       davanstrien/ufo-ColPali \\
       hf://buckets/davanstrien/pp-doclayout-scratch/run1 \\
       --max-samples 20 --shard-size 5
 
   # Bucket of images -> dataset
-  hf jobs uv run --flavor l4x1 -s HF_TOKEN https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \\
+  hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \\
       hf://buckets/davanstrien/pp-doclayout-images \\
       pp-doclayout-from-bucket --private
 """
@@ -840,7 +844,7 @@ for det in detections:
 ## Reproduction
 
 ```bash
-hf jobs uv run --flavor l4x1 -s HF_TOKEN \\
+hf jobs uv run \\
     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \\
     {source} <output> --model-name {model_name}
 ```
@@ -1078,13 +1082,13 @@ def _print_usage_banner() -> None:
     print("  - HF bucket (incremental shards, resumable):")
     print("      hf://buckets/namespace/bucket/run-name")
     print("\nExamples:")
-    print("\n  # Smoke test on L4 (dataset -> dataset)")
-    print("  hf jobs uv run --flavor l4x1 -s HF_TOKEN https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \\")
+    print("\n  # Smoke test (dataset -> dataset; header needs hf CLI 1.32+)")
+    print("  hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \\")
     print("      davanstrien/ufo-ColPali pp-doclayout-smoke \\")
     print("      --max-samples 3 --shuffle --seed 42 --private")
     print("\n  # Dataset -> bucket (incremental shards)")
     print(
-        "  hf jobs uv run --flavor l4x1 -s HF_TOKEN https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \\"
+        "  hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \\"
     )
     print("      davanstrien/ufo-ColPali \\")
     print(
@@ -1093,7 +1097,7 @@ def _print_usage_banner() -> None:
     print("      --max-samples 20 --shard-size 5")
     print("\n  # Bucket of images -> dataset")
     print(
-        "  hf jobs uv run --flavor l4x1 -s HF_TOKEN https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \\"
+        "  hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \\"
     )
     print(
         "      hf://buckets/davanstrien/pp-doclayout-images \\"

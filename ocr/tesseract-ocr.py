@@ -7,6 +7,10 @@
 #     "pillow",
 #     "tqdm",
 # ]
+#
+# [tool.hf-jobs]
+# flavor = "cpu-upgrade"
+# secrets = ["HF_TOKEN"]
 # ///
 """
 Plain-text OCR with **Tesseract** — the classical CPU OCR engine, as a baseline.
@@ -26,9 +30,10 @@ root). For non-English languages it also tries to install the matching
 `tesseract-ocr-<lang>` data pack. If your Jobs image blocks apt, bake Tesseract
 into a custom `--image` instead.
 
-HF Jobs (CPU — no GPU needed):
+HF Jobs (CPU — no GPU needed). The script header sets the flavor
+(`cpu-upgrade`) and the HF_TOKEN secret; this needs `hf` CLI 1.32+:
 
-    hf jobs uv run --flavor cpu-upgrade -s HF_TOKEN \\
+    hf jobs uv run \\
         https://huggingface.co/datasets/uv-scripts/ocr/raw/main/tesseract-ocr.py \\
         input-dataset output-dataset \\
         --max-samples 100 --shuffle
@@ -512,8 +517,8 @@ if __name__ == "__main__":
         print("\n3. Test with a small sample, no push:")
         print("   uv run tesseract-ocr.py large-dataset out --max-samples 5 --dry-run")
         print("\n4. Running on HF Jobs (CPU flavor):")
-        print("   hf jobs uv run --flavor cpu-upgrade \\")
-        print("     -s HF_TOKEN \\")
+        print("   # header sets flavor + HF_TOKEN secret (hf CLI 1.32+)")
+        print("   hf jobs uv run \\")
         print(
             "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/tesseract-ocr.py \\"
         )

@@ -13,13 +13,16 @@
 # [tool.uv]
 # prerelease = "allow"
 # override-dependencies = ["transformers>=5.1.0"]
+#
+# [tool.hf-jobs]
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
 OCR images and PDFs from a directory using GLM-OCR, writing markdown files.
 
-Designed to work with HF Buckets mounted as volumes via `hf jobs uv run -v ...`
-(requires huggingface_hub with PR #3936 volume mounting support).
+Designed to work with HF Buckets mounted as volumes via `hf jobs uv run -v ...`.
 
 The script reads images/PDFs from INPUT_DIR, runs GLM-OCR via vLLM, and writes
 one .md file per image (or per PDF page) to OUTPUT_DIR, preserving directory structure.
@@ -36,11 +39,11 @@ Examples:
   # Local test
   uv run glm-ocr-bucket.py ./test-images ./test-output
 
-  # HF Jobs with bucket volumes (PR #3936)
-  hf jobs uv run --flavor l4x1 \\
-      -s HF_TOKEN \\
-      -v bucket/user/ocr-input:/input:ro \\
-      -v bucket/user/ocr-output:/output \\
+  # HF Jobs with bucket volumes (flavor + secrets come from the
+  # [tool.hf-jobs] header; needs hf CLI 1.32+)
+  hf jobs uv run \\
+      -v hf://buckets/user/ocr-input:/input:ro \\
+      -v hf://buckets/user/ocr-output:/output \\
       glm-ocr-bucket.py /input /output
 
 Model: zai-org/GLM-OCR (0.9B, 94.62% OmniDocBench V1.5, MIT licensed)
@@ -102,15 +105,26 @@ def make_ocr_message(image: Image.Image, task: str = "ocr") -> list[dict]:
     ]
 
 
-def discover_files(input_dir: Path) -> list[Path]:
-    """Walk input_dir recursively, returning sorted list of image and PDF files."""
+def discover_files(input_dir: Path, limit: int | None = None) -> list[Path]:
+    """Discover image and PDF files under input_dir.
+
+    Without `limit`, returns the full sorted list (deterministic order).
+    With `limit`, stops scanning once `limit` matching files are found
+    and returns them in filesystem order (much faster on huge mounted
+    buckets, but ordering is not deterministic).
+    """
     files = []
-    for path in sorted(input_dir.rglob("*")):
+    iterator = (
+        input_dir.rglob("*") if limit is not None else sorted(input_dir.rglob("*"))
+    )
+    for path in iterator:
         if not path.is_file():
             continue
         ext = path.suffix.lower()
         if ext in IMAGE_EXTENSIONS or ext == ".pdf":
             files.append(path)
+            if limit is not None and len(files) >= limit:
+                break
     return files
 
 
@@ -175,10 +189,10 @@ Examples:
   uv run glm-ocr-bucket.py ./images ./output
   uv run glm-ocr-bucket.py /input /output --task table --pdf-dpi 200
 
-HF Jobs with bucket volumes (requires huggingface_hub PR #3936):
-  hf jobs uv run --flavor l4x1 -s HF_TOKEN \\
-      -v bucket/user/input-bucket:/input:ro \\
-      -v bucket/user/output-bucket:/output \\
+HF Jobs with bucket volumes (flavor + secrets from the [tool.hf-jobs] header; hf CLI 1.32+):
+  hf jobs uv run \\
+      -v hf://buckets/user/input-bucket:/input:ro \\
+      -v hf://buckets/user/output-bucket:/output \\
       glm-ocr-bucket.py /input /output
         """,
     )
@@ -233,6 +247,14 @@ HF Jobs with bucket volumes (requires huggingface_hub PR #3936):
         help="Repetition penalty (default: 1.1)",
     )
     parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="Limit the number of input files to process (files, not pages; "
+        "a PDF still yields all its pages). Stops scanning early once the "
+        "limit is reached; file order is then filesystem-dependent.",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Print resolved package versions",
@@ -254,8 +276,14 @@ HF Jobs with bucket volumes (requires huggingface_hub PR #3936):
     # Discover and prepare
     start_time = time.time()
 
-    logger.info(f"Scanning {input_dir} for images and PDFs...")
-    files = discover_files(input_dir)
+    if args.max_samples is not None:
+        logger.info(
+            f"Scanning {input_dir} for up to {args.max_samples} images/PDFs "
+            f"(early termination, --max-samples)..."
+        )
+    else:
+        logger.info(f"Scanning {input_dir} for images and PDFs...")
+    files = discover_files(input_dir, limit=args.max_samples)
     if not files:
         logger.error(f"No image or PDF files found in {input_dir}")
         sys.exit(1)
@@ -348,7 +376,7 @@ if __name__ == "__main__":
         print("GLM-OCR Bucket Script")
         print("=" * 60)
         print("\nOCR images/PDFs from a directory → markdown files.")
-        print("Designed for HF Buckets mounted as volumes (PR #3936).")
+        print("Designed for HF Buckets mounted as volumes.")
         print()
         print("Usage:")
         print("  uv run glm-ocr-bucket.py INPUT_DIR OUTPUT_DIR")
@@ -357,10 +385,11 @@ if __name__ == "__main__":
         print("  uv run glm-ocr-bucket.py ./images ./output")
         print("  uv run glm-ocr-bucket.py /input /output --task table")
         print()
-        print("HF Jobs with bucket volumes:")
-        print("  hf jobs uv run --flavor l4x1 -s HF_TOKEN \\")
-        print("      -v bucket/user/ocr-input:/input:ro \\")
-        print("      -v bucket/user/ocr-output:/output \\")
+        print("HF Jobs with bucket volumes (flavor + secrets from the")
+        print("[tool.hf-jobs] header; needs hf CLI 1.32+):")
+        print("  hf jobs uv run \\")
+        print("      -v hf://buckets/user/ocr-input:/input:ro \\")
+        print("      -v hf://buckets/user/ocr-output:/output \\")
         print("      glm-ocr-bucket.py /input /output")
         print()
         print("For full help: uv run glm-ocr-bucket.py --help")

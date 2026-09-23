@@ -4,11 +4,16 @@
 #     "datasets>=3.1.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm",
 #     "toolz",
-#     "torch",
 #     "numind",
 # ]
+#
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.29.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -36,18 +41,15 @@ Modes are selected via flags:
 schema can be hosted (e.g. on an HF dataset's raw URL) and reused across jobs:
     --template https://huggingface.co/datasets/ORG/REPO/raw/main/card.json
 
-HF Jobs invocation (recommended): use the vllm/vllm-openai:latest image so the
-pre-built CUDA kernels (flashinfer etc.) are reused — the default uv-script
-image lacks nvcc and flashinfer's JIT compile fails at engine warmup.
+HF Jobs invocation: the [tool.hf-jobs] header above sets the vllm/vllm-openai
+image (vLLM + torch come from the image, with pre-built CUDA kernels), the
+flavor and the HF_TOKEN secret. Needs `hf` CLI 1.32+.
 
     hf jobs uv run \\
-        --image vllm/vllm-openai:latest \\
-        --flavor a100-large \\
-        --python /usr/bin/python3 \\
-        -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \\
-        -s HF_TOKEN \\
         https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nuextract3.py \\
         INPUT_DATASET OUTPUT_DATASET --max-samples 5 --shuffle --seed 42
+
+On your own GPU: uv run --with vllm==0.29.0 nuextract3.py INPUT_DATASET OUTPUT_DATASET
 
 Model: numind/NuExtract3
 License: Apache-2.0
@@ -601,12 +603,8 @@ if __name__ == "__main__":
         print("   uv run nuextract3.py input output --enable-thinking")
         print("\n5. Test with 10 samples:")
         print("   uv run nuextract3.py large-ds test --max-samples 10 --shuffle")
-        print("\n6. Running on HF Jobs (use vllm/vllm-openai image for built kernels):")
-        print("   hf jobs uv run --flavor a100-large \\")
-        print("     --image vllm/vllm-openai:latest \\")
-        print("     --python /usr/bin/python3 \\")
-        print("     -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \\")
-        print("     -s HF_TOKEN \\")
+        print("\n6. Running on HF Jobs (image/flavor/secrets from the script header, hf 1.32+):")
+        print("   hf jobs uv run \\")
         print(
             "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nuextract3.py \\"
         )

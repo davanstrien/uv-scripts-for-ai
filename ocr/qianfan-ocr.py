@@ -4,11 +4,16 @@
 #     "datasets>=4.0.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm>=0.15.1",
 #     "tqdm",
 #     "toolz",
-#     "torch",
 # ]
+#
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.29.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -28,6 +33,16 @@ Features:
 Model: baidu/Qianfan-OCR
 License: Apache 2.0
 Paper: https://arxiv.org/abs/2603.13398
+
+Run on HF Jobs (the [tool.hf-jobs] header sets image, flavor and secrets;
+needs `hf` CLI 1.32+):
+
+    hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/qianfan-ocr.py \
+        input-dataset output-dataset --max-samples 10
+
+Run on your own GPU:
+
+    uv run --with vllm==0.29.0 qianfan-ocr.py input-dataset output-dataset
 """
 
 import argparse
@@ -495,13 +510,14 @@ if __name__ == "__main__":
         print(
             '   uv run qianfan-ocr.py invoices output --prompt-mode kie --custom-prompt "Extract: name, date, total. Output JSON."'
         )
-        print("\n6. Running on HF Jobs:")
-        print("   hf jobs uv run --flavor l4x1 \\")
-        print("     -s HF_TOKEN \\")
+        print("\n6. Running on HF Jobs (header sets image/flavor/secrets; hf CLI 1.32+):")
+        print("   hf jobs uv run \\")
         print(
             "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/qianfan-ocr.py \\"
         )
         print("       input-dataset output-dataset --max-samples 10")
+        print("\n7. Running on your own GPU:")
+        print("   uv run --with vllm==0.29.0 qianfan-ocr.py input-dataset output-dataset")
         print("\nFor full help, run: uv run qianfan-ocr.py --help")
         sys.exit(0)
 

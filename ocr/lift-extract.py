@@ -8,6 +8,10 @@
 #     "toolz",
 #     "tqdm",
 # ]
+#
+# [tool.hf-jobs]
+# flavor = "a100-large"
+# secrets = ["HF_TOKEN"]
 # ///
 """
 Extract structured JSON from document images OR multi-page PDFs using Datalab's
@@ -46,15 +50,19 @@ OpenRAIL-M license — free for research, personal use, and startups under $5M
 funding/revenue, but restricted from competitive use against Datalab's API.
 Confirm you are within those terms before using it. https://huggingface.co/datalab-to/lift
 
-HF Jobs — HF backend (default image is fine; 9B needs a roomy GPU):
+HF Jobs — HF backend. The [tool.hf-jobs] header above sets the flavor
+(a100-large; 9B needs a roomy GPU) and the HF_TOKEN secret, so no flags are
+needed (requires `hf` CLI 1.32+):
 
-    hf jobs uv run --flavor a100-large -s HF_TOKEN \\
+    hf jobs uv run \\
         https://huggingface.co/datasets/uv-scripts/ocr/raw/main/lift-extract.py \\
         INPUT_DATASET OUTPUT_DATASET \\
         --schema '{"type":"object","properties":{"title":{"type":"string"}}}' \\
         --max-samples 5 --shuffle --seed 42
 
-HF Jobs — vLLM offline backend (use the vllm image so vLLM is present):
+HF Jobs — vLLM offline backend (use the vllm image so vLLM is present). The
+header does not cover this path: pass the image flags explicitly. This path is
+not tested with the header; treat it as unsupported for now:
 
     hf jobs uv run --flavor a100-large -s HF_TOKEN \\
         --image vllm/vllm-openai --python /usr/bin/python3 \\
@@ -105,7 +113,8 @@ def check_cuda_availability() -> None:
     if not torch.cuda.is_available():
         logger.error("CUDA is not available. This script requires a GPU.")
         logger.error(
-            "Run on Hugging Face Jobs with: hf jobs uv run --flavor a100-large ..."
+            "Run on Hugging Face Jobs with: hf jobs uv run lift-extract.py ... "
+            "(the script header sets flavor a100-large; hf CLI 1.32+)"
         )
         sys.exit(1)
     logger.info(f"CUDA is available. GPU: {torch.cuda.get_device_name(0)}")

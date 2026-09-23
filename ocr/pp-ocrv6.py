@@ -29,6 +29,10 @@
 #
 # [tool.uv.sources]
 # paddlepaddle-gpu = { index = "paddle" }
+#
+# [tool.hf-jobs]
+# flavor = "t4-small"
+# secrets = ["HF_TOKEN"]
 # ///
 """
 OCR images with PP-OCRv6 — a lightweight detection+recognition pipeline from
@@ -46,16 +50,17 @@ Model tiers (pick with `--model-tier`):
 All tiers are Apache 2.0 licensed. Runs via PaddleOCR's default Paddle engine
 (`paddle_static`) — same proven header pattern as `pp-doclayout.py`.
 
-HF Jobs examples:
+HF Jobs examples (flavor and secrets come from the [tool.hf-jobs] header,
+which needs `hf` CLI 1.32+):
 
     # Tiny on a cheap GPU
-    hf jobs uv run --flavor t4-small -s HF_TOKEN \\
+    hf jobs uv run \\
         https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-ocrv6.py \\
         INPUT_DATASET OUTPUT_DATASET \\
         --model-tier tiny --max-samples 5
 
     # Medium on a small GPU (recommended for quality)
-    hf jobs uv run --flavor t4-small -s HF_TOKEN \\
+    hf jobs uv run \\
         https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-ocrv6.py \\
         INPUT_DATASET OUTPUT_DATASET \\
         --model-tier medium --max-samples 10
@@ -795,7 +800,7 @@ for block in json.loads(ds[0]["pp_ocr_blocks"]):
 ## Reproduction
 
 ```bash
-hf jobs uv run --flavor t4-small -s HF_TOKEN \\
+hf jobs uv run \\
     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-ocrv6.py \\
     {source} <output> --model-tier {tier}
 ```

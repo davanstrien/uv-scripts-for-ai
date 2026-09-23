@@ -4,13 +4,17 @@
 #     "datasets>=4.0.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm>=0.15.1",
 #     "tqdm",
 #     "toolz",
-#     "torch",
 #     "pyarrow",
-#     "transformers",
 # ]
+#
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.29.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -34,14 +38,12 @@ Features:
 Model: PaddlePaddle/PaddleOCR-VL-1.6
 Backend: vLLM offline (batch inference)
 
-HF Jobs note: PaddleOCR-VL-1.6 is supported by stable vLLM, but on HF Jobs you must run
-with the pre-built vLLM image so flashinfer's CUDA kernels are reused. The default
-uv-script image has the CUDA runtime but no `nvcc`, so vLLM's flashinfer sampler crashes
-at warmup with "Could not find nvcc". Use image-mode (see the example at the bottom):
-    --image vllm/vllm-openai:latest --flavor a100-large
-    --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages
-This is the same image-mode pattern as nuextract3.py. Verified end-to-end on a100-large
-(2026-06-01): 5/5 clean markdown on davanstrien/ufo-ColPali, ~194 tok/s, 0 errors.
+HF Jobs: the [tool.hf-jobs] header above pins the image (vllm/vllm-openai:v0.29.0),
+python, PYTHONPATH, flavor (a10g-small) and HF_TOKEN secret, so no launch flags are
+needed (requires `hf` CLI 1.32+):
+    hf jobs uv run paddleocr-vl-1.6.py input-dataset output-dataset
+In image mode the image's vLLM/torch win over the venv copies via PYTHONPATH.
+On your own GPU: uv run --with vllm==0.29.0 paddleocr-vl-1.6.py input-dataset output-dataset
 """
 
 import argparse
@@ -338,13 +340,10 @@ for info in inference_info:
 ## Reproduction
 
 This dataset was generated using the [uv-scripts/ocr](https://huggingface.co/datasets/uv-scripts/ocr) PaddleOCR-VL-1.6 script.
-On HF Jobs, run with the pre-built vLLM image (image-mode) so flashinfer kernels are reused:
+On HF Jobs (`hf` CLI 1.32+; the script's [tool.hf-jobs] header sets image, flavor and secrets):
 
 ```bash
 hf jobs uv run \\
-    --image vllm/vllm-openai:latest --flavor a100-large \\
-    --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \\
-    -s HF_TOKEN \\
     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/paddleocr-vl-1.6.py \\
     {source_dataset} \\
     <output-dataset> \\
@@ -459,12 +458,8 @@ def main(
     except Exception as e:
         logger.error(f"Failed to initialize PaddleOCR-VL-1.6 with vLLM: {e}")
         logger.error(
-            "On HF Jobs, run with the pre-built vLLM image so flashinfer kernels are "
-            "reused (the default uv-script image has no nvcc):"
-        )
-        logger.error(
-            "  --image vllm/vllm-openai:latest --flavor a100-large "
-            "--python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages"
+            "On HF Jobs, use `hf` CLI 1.32+ so the script's [tool.hf-jobs] header "
+            "(vllm/vllm-openai image) applies; the default uv-script image has no nvcc."
         )
         sys.exit(1)
 
@@ -660,19 +655,13 @@ if __name__ == "__main__":
         print("   uv run paddleocr-vl-1.6.py diagrams charts-analyzed --task-mode chart")
         print("\n5. Test with small sample:")
         print("   uv run paddleocr-vl-1.6.py dataset test --max-samples 10 --shuffle")
-        print("\n6. Running on HF Jobs (image-mode required — see note below):")
+        print("\n6. Running on HF Jobs (hf CLI 1.32+; header sets image/flavor/secrets):")
         print("   hf jobs uv run \\")
-        print("     --image vllm/vllm-openai:latest --flavor a100-large \\")
-        print(
-            "     --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \\"
-        )
-        print("     -s HF_TOKEN \\")
         print(
             "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/paddleocr-vl-1.6.py \\"
         )
         print("       input-dataset output-dataset --task-mode ocr")
-        print("\n   NOTE: the default uv-script image has no nvcc, so vLLM's flashinfer")
-        print("   sampler crashes at warmup. The vllm/vllm-openai image ships the kernels.")
+        print("\n   NOTE: the [tool.hf-jobs] header pins vllm/vllm-openai:v0.29.0 on a10g-small.")
         print("\n" + "=" * 80)
         print("\nFor full help, run: uv run paddleocr-vl-1.6.py --help")
         sys.exit(0)

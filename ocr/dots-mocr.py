@@ -4,15 +4,19 @@
 #     "datasets>=4.0.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm>=0.15.1",
 #     "tqdm",
 #     "toolz",
-#     "torch",
 #     # dots.mocr's remote code (AutoProcessor.register with a string key)
 #     # breaks on transformers v5; vllm pulls transformers unpinned.
 #     "transformers<5",
 # ]
 #
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.29.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -37,6 +41,16 @@ SVG variant: rednote-hilab/dots.mocr-svg
 vLLM: Officially integrated since v0.11.0
 GitHub: https://github.com/rednote-hilab/dots.mocr
 Paper: https://arxiv.org/abs/2603.13032
+
+Run on HF Jobs (the [tool.hf-jobs] header sets image, flavor and secrets;
+needs the hf CLI 1.32+):
+
+    hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/dots-mocr.py \
+        input-dataset output-dataset
+
+On your own GPU, vLLM is not in the dependencies (the Jobs image provides it):
+
+    uv run --with vllm==0.29.0 dots-mocr.py input-dataset output-dataset
 """
 
 import argparse
@@ -575,8 +589,8 @@ if __name__ == "__main__":
         print("\n4. Layout analysis with structure:")
         print("   uv run dots-mocr.py papers analyzed --prompt-mode layout-all")
         print("\n5. Running on HF Jobs:")
-        print("   hf jobs uv run --flavor l4x1 \\")
-        print("     -s HF_TOKEN \\")
+        print("   # [tool.hf-jobs] header sets image/flavor/secrets (hf CLI 1.32+)")
+        print("   hf jobs uv run \\")
         print(
             "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/dots-mocr.py \\"
         )

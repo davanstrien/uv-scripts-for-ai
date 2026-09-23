@@ -8,6 +8,13 @@
 #     "toolz",
 #     "tqdm",
 # ]
+#
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.20.1"
+# python = "/usr/local/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/site-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 """
 Document intelligence on images OR multi-page PDFs with Datalab's **Surya OCR 2**
@@ -49,14 +56,15 @@ OpenRAIL-M license — free for research, personal use, and startups under $5M
 funding/revenue, but restricted from competitive use against Datalab's API.
 Confirm you are within those terms. https://huggingface.co/datalab-to/surya-ocr-2
 
-HF Jobs (use the pinned vLLM image so vLLM + qwen3_5 support are present):
+HF Jobs (the [tool.hf-jobs] header pins the vLLM image, interpreter, PYTHONPATH,
+flavor and HF_TOKEN secret; needs `hf` CLI 1.32+):
 
-    hf jobs uv run --flavor l4x1 -s HF_TOKEN \\
-        --image vllm/vllm-openai:v0.20.1 --python /usr/local/bin/python3 \\
-        -e PYTHONPATH=/usr/local/lib/python3.12/site-packages \\
+    hf jobs uv run \\
         https://huggingface.co/datasets/uv-scripts/ocr/raw/main/surya-ocr.py \\
         INPUT_DATASET OUTPUT_DATASET \\
         --max-samples 5 --shuffle --seed 42
+
+On your own GPU: uv run --with vllm==0.20.1 surya-ocr.py INPUT_DATASET OUTPUT_DATASET ...
 
 Model: datalab-to/surya-ocr-2  (package: surya-ocr, https://github.com/datalab-to/surya)
 """
@@ -97,8 +105,8 @@ def check_cuda_availability() -> None:
     if not torch.cuda.is_available():
         logger.error("CUDA is not available. This script requires a GPU.")
         logger.error(
-            "Run on Hugging Face Jobs with: hf jobs uv run --flavor l4x1 "
-            "--image vllm/vllm-openai:v0.20.1 ..."
+            "Run on Hugging Face Jobs with: hf jobs uv run <script> ... "
+            "(the script's [tool.hf-jobs] header sets the GPU + vLLM image; hf CLI 1.32+)"
         )
         sys.exit(1)
     logger.info(f"CUDA is available. GPU: {torch.cuda.get_device_name(0)}")
@@ -118,13 +126,14 @@ def check_vllm_available() -> None:
     if importlib.util.find_spec("vllm") is None:
         logger.error("vLLM is not importable — this recipe cannot run on the bare uv image.")
         logger.error(
-            "Surya-2 needs the pinned vLLM build; re-run with the image + interpreter flags:"
+            "Surya-2 needs the pinned vLLM build. With hf CLI 1.32+ the script's "
+            "[tool.hf-jobs] header applies the image + interpreter automatically:"
         )
+        logger.error("  hf jobs uv run <script_url> INPUT_DATASET OUTPUT_DATASET ...")
         logger.error(
-            "  hf jobs uv run --flavor l4x1 -s HF_TOKEN \\\n"
-            "      --image vllm/vllm-openai:v0.20.1 --python /usr/local/bin/python3 \\\n"
-            "      -e PYTHONPATH=/usr/local/lib/python3.12/site-packages \\\n"
-            "      <script_url> INPUT_DATASET OUTPUT_DATASET ..."
+            "Older hf CLIs: add --image vllm/vllm-openai:v0.20.1 --python /usr/local/bin/python3 "
+            "-e PYTHONPATH=/usr/local/lib/python3.12/site-packages. "
+            "On your own GPU: uv run --with vllm==0.20.1 <script> ..."
         )
         sys.exit(1)
 
@@ -775,9 +784,10 @@ Input (one document per row):
   --image-column COL   one image per row   (default: image)
   --pdf-column COL     PDF bytes per row    (multi-page; honors --page-range)
 
-Run on the vllm/vllm-openai:v0.20.1 image:
-  --image vllm/vllm-openai:v0.20.1 --python /usr/local/bin/python3 \\
-    -e PYTHONPATH=/usr/local/lib/python3.12/site-packages
+HF Jobs (hf CLI 1.32+; the [tool.hf-jobs] header sets image/flavor/secrets):
+  hf jobs uv run surya-ocr.py INPUT_DATASET OUTPUT_DATASET --max-samples 5
+Own GPU:
+  uv run --with vllm==0.20.1 surya-ocr.py INPUT_DATASET OUTPUT_DATASET
 """,
     )
     parser.add_argument(
