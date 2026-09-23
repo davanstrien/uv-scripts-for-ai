@@ -5,7 +5,7 @@ tags: [uv-script, classification, fine-tuning, few-shot, zero-shot, decision-mod
 
 # Classification Scripts
 
-Text classification on [HF Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs): label a dataset with a model that needs no training, or train your own classifier from labelled examples.
+Text classification on [HF Jobs](https://huggingface.co/docs/hub/jobs): label a dataset with a model that needs no training, or train your own classifier from labelled examples.
 
 If you have seen [Jev](https://docs.typesafe.ai/introduction) and other "System One" models: the
 models these scripts train are small, open versions of the same idea. They read a piece of data and
@@ -14,8 +14,8 @@ return a label with a probability, and you can train one on your own labels.
 | Script | What it does |
 |--------|--------------|
 | [`classify-gliner2.py`](#zero-shot-first-then-fine-tune-gliner2) | **Label a dataset** with GLiNER2: zero-shot from label names, or with a `train-gliner2.py` model |
-| [`train-gliner2.py`](#zero-shot-first-then-fine-tune-gliner2) | **Fine-tune** [GLiNER2](https://github.com/fastino-ai/GLiNER2), a small model (74M–287M) that already classifies zero-shot, and report the zero-shot score next to the fine-tuned one |
-| [`train-setfit.py`](#few-shot-with-setfit-train-setfitpy) | **Few-shot** train a classifier from 8-64 labels per class with [SetFit](https://github.com/huggingface/setfit) — runs on CPU or GPU |
+| [`train-gliner2.py`](#zero-shot-first-then-fine-tune-gliner2) | **Fine-tune** [GLiNER2](https://huggingface.co/fastino), a small model (74M–287M) that already classifies zero-shot, and report the zero-shot score next to the fine-tuned one |
+| [`train-setfit.py`](#few-shot-with-setfit-train-setfitpy) | **Few-shot** train a classifier from 8-64 labels per class with [SetFit](https://huggingface.co/docs/setfit) — runs on CPU or GPU |
 | [`train-classifier.py`](#fine-tune-a-classifier-train-classifierpy) | **Fine-tune** an encoder into a classifier (default: [LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M)) and push it to the Hub |
 | [`classify-dataset.py`](#zero-shot-classification-classify-datasetpy) | **Zero-shot** classify a dataset with an instruction LLM (SmolLM3 + vLLM, structured outputs) |
 | [`classify-dataset-sglang.py`](#zero-shot-classification-classify-datasetpy) | Zero-shot variant on SGLang (reasoning-aware `<think>` models) |
@@ -38,7 +38,7 @@ Label a dataset with your own list of labels, see how far zero-shot gets you, th
 small model on your labels, in minutes and for a few cents on one GPU. The result is a model
 that returns a label and a probability for every row, and is small enough to run on a CPU.
 
-[GLiNER2](https://github.com/fastino-ai/GLiNER2) is a small encoder that reads the label names
+[GLiNER2](https://github.com/fastino-ai/GLiNER2) ([models from Fastino](https://huggingface.co/fastino)) is a small encoder that reads the label names
 as part of its input, so it classifies with no training at all, and fine-tuning teaches it what
 your labels mean in your data. (For entity extraction with the original GLiNER library, see
 [`uv-scripts/gliner`](https://huggingface.co/datasets/uv-scripts/gliner).) Two scripts:
@@ -101,9 +101,9 @@ out-of-memory history and GPU comparisons are in [GLINER2-NOTES.md](GLINER2-NOTE
 
 | Base model                             | Params | Use it when                                | Hub-tags top-1 | CPU latency per row (free Space, 2 vCPU) | GPU (L4, fp16) |
 | -------------------------------------- | ------ | ------------------------------------------ | -------------- | ---------------------------------------- | -------------- |
-| `fastino/gliner2.5-small-v1`           | 74M    | speed matters most                         | 0.653          | ~0.3 s                                   | ~19 ms         |
-| `fastino/gliner2.5-base-v1`            | 194M   | English text; the best accuracy per second | 0.690          | ~0.7–1 s                                 | ~19 ms         |
-| `fastino/gliner2.5-multi-v1` (default) | 287M   | non-English or mixed-language text         | not measured   | —                                        | —              |
+| [`fastino/gliner2.5-small-v1`](https://huggingface.co/fastino/gliner2.5-small-v1) | 74M    | speed matters most                         | 0.653          | ~0.3 s                                   | ~19 ms         |
+| [`fastino/gliner2.5-base-v1`](https://huggingface.co/fastino/gliner2.5-base-v1) | 194M   | English text; the best accuracy per second | 0.690          | ~0.7–1 s                                 | ~19 ms         |
+| [`fastino/gliner2.5-multi-v1`](https://huggingface.co/fastino/gliner2.5-multi-v1) (default) | 287M   | non-English or mixed-language text         | not measured   | —                                        | —              |
 
 On a GPU, base and small are equally fast per row; the difference only shows on a CPU.
 
@@ -136,7 +136,7 @@ More behaviour details, tested commands, findings and dead ends: [GLINER2-NOTES.
 
 An alternative when you have only a handful of labelled examples per class (8-64) and want a sentence-transformer model.
 
-Trains a [SetFit](https://github.com/huggingface/setfit) classifier from a handful of labelled
+Trains a [SetFit](https://huggingface.co/docs/setfit) classifier from a handful of labelled
 examples per class. SetFit finetunes a sentence-transformer body on contrastive pairs, then fits a
 logistic regression head on the resulting embeddings.
 
