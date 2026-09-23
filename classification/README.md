@@ -9,10 +9,10 @@ Text classification on [HF Jobs](https://huggingface.co/docs/huggingface_hub/gui
 
 | Script | What it does |
 |--------|--------------|
-| [`train-classifier.py`](#fine-tune-a-classifier-train-classifierpy) | **Fine-tune** an encoder into a classifier (default: [LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M)) and push it to the Hub |
-| [`train-setfit.py`](#few-shot-with-setfit-train-setfitpy) | **Few-shot** train a classifier from 8-64 labels per class with [SetFit](https://github.com/huggingface/setfit) — runs on CPU or GPU |
-| [`train-gliner2.py`](#zero-shot-first-then-fine-tune-gliner2) | **Fine-tune** [GLiNER2](https://github.com/fastino-ai/GLiNER2), a small model (74M–287M) that already classifies zero-shot, and report the zero-shot score next to the fine-tuned one |
 | [`classify-gliner2.py`](#zero-shot-first-then-fine-tune-gliner2) | **Label a dataset** with GLiNER2: zero-shot from label names, or with a `train-gliner2.py` model |
+| [`train-gliner2.py`](#zero-shot-first-then-fine-tune-gliner2) | **Fine-tune** [GLiNER2](https://github.com/fastino-ai/GLiNER2), a small model (74M–287M) that already classifies zero-shot, and report the zero-shot score next to the fine-tuned one |
+| [`train-setfit.py`](#few-shot-with-setfit-train-setfitpy) | **Few-shot** train a classifier from 8-64 labels per class with [SetFit](https://github.com/huggingface/setfit) — runs on CPU or GPU |
+| [`train-classifier.py`](#fine-tune-a-classifier-train-classifierpy) | **Fine-tune** an encoder into a classifier (default: [LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M)) and push it to the Hub |
 | [`classify-dataset.py`](#zero-shot-classification-classify-datasetpy) | **Zero-shot** classify a dataset with an instruction LLM (SmolLM3 + vLLM, structured outputs) |
 | `classify-dataset-sglang.py` | Zero-shot variant on SGLang (reasoning-aware `<think>` models) |
 
@@ -27,172 +27,6 @@ Pick by how many labels you have:
 
 The rungs chain: bootstrap labels with `classify-dataset.py`, review them, then train a small
 dedicated model on what you kept.
-
-## Fine-tune a classifier (`train-classifier.py`)
-
-Fine-tunes a text-classification encoder on any Hub dataset and pushes the trained model
-back to the Hub — download, train, evaluate, push, and reload-verify in one job.
-
-- **Default model**: [LiquidAI/LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M) — a bidirectional encoder that beats ModernBERT-base on GLUE/SuperGLUE and handles 8,192-token documents. Any Hub encoder works via `--model` (ModernBERT, BERT, DeBERTa, …).
-- **Single-label and multi-label**, auto-detected from the label column (`ClassLabel`/string/int → cross-entropy; list of labels → BCE + per-label threshold tuning).
-- **Round-trippable artifacts**: standard architectures produce standard models; encoders without a classification head (like LFM2.5) get a generic mean-pooling head pushed as custom code, so `AutoModelForSequenceClassification.from_pretrained(..., trust_remote_code=True)` always works.
-
-```bash
-# single-label (ag_news has a ClassLabel column)
-hf jobs uv run --flavor a10g-small --secrets HF_TOKEN \
-  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-classifier.py \
-  fancyzhx/ag_news username/news-classifier
-
-# multi-label (go_emotions has a list-of-labels column)
-hf jobs uv run --flavor a10g-small --secrets HF_TOKEN \
-  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-classifier.py \
-  google-research-datasets/go_emotions username/emotion-classifier --label-column labels
-```
-
-Key options: `--model`, `--max-length` (512 default; up to 8192 with
-`--gradient-checkpointing` and a small `--batch-size` on a10g/a100), `--epochs`, `--lr`,
-`--batch-size`, `--max-samples` (smoke runs), `--eval-split` (auto-detects
-validation/test, or holds out 10% of train). Run `uv run train-classifier.py --help` for all.
-
-### Worked example: classify dataset cards by task
-
-[`davanstrien/dataset-cards-with-task-categories`](https://huggingface.co/datasets/davanstrien/dataset-cards-with-task-categories)
-contains 21k Hub dataset cards (frontmatter stripped) labelled with their `task_categories`
-metadata — a real multi-label task over long documents:
-
-```bash
-hf jobs uv run --flavor a10g-small --secrets HF_TOKEN \
-  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-classifier.py \
-  davanstrien/dataset-cards-with-task-categories username/dataset-card-task-classifier \
-  --label-column labels --max-length 1024 --batch-size 8 --grad-accum 2
-```
-
-The output model predicts likely task categories from a card's prose — e.g. for suggesting
-metadata on datasets that lack it.
-
-### Training a standard encoder instead
-
-`--model answerdotai/ModernBERT-base` (or any encoder with a native classification head)
-produces a plain, vLLM-servable model — pair it with
-[`uv-scripts/vllm`](https://huggingface.co/datasets/uv-scripts/vllm)'s
-`classify-dataset.py` for large-scale batch inference with the model you just trained.
-
-## Few-shot with SetFit (`train-setfit.py`)
-
-Trains a [SetFit](https://github.com/huggingface/setfit) classifier from a handful of labelled
-examples per class. SetFit finetunes a sentence-transformer body on contrastive pairs, then fits a
-logistic regression head on the resulting embeddings.
-
-**Runs on CPU or GPU.** CPU is practical for small few-shot experiments. Use a GPU for faster
-training, particularly with larger models, longer texts or more classes. The same model and
-training settings work on either; the recipe uses the available accelerator automatically.
-
-- **Default body**: [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (22M), chosen for CPU speed. Swap it with `--body-model`.
-- **Evaluation split** follows the same precedence as `train-classifier.py`: `--eval-split` if given, else `validation`, else `test`, else a stratified carve-out of `--eval-fraction` from train.
-- **Single-label only.** A multi-label column exits with a pointer to `train-classifier.py`.
-- **Metrics match `train-classifier.py`** (accuracy + macro F1). Match evaluation rows and preprocessing when comparing runs.
-- **`--num-samples`** sets labelled examples per class (default 8). **`--sampling-strategy`** controls contrastive pairing: `oversampling` (default), `undersampling`, `unique`.
-- **Every run reports a majority baseline.** The run warns when accuracy fails to beat it, or the gain is below five percentage points. That fixed threshold is a review heuristic, not a measured noise level or significance test.
-- **It estimates training time before starting.** The script times forward/backward passes on actual texts and hardware, then refuses training projected above `--max-minutes` (default 60). Setup, evaluation and upload take additional time. A measurement error can skip this guard; use Jobs `--timeout` to enforce a wall-clock limit.
-- **Rows with missing or blank labels or texts are dropped**, with a count. Missing labels include `ClassLabel`'s `-1` sentinel and numeric NaN; plain integer `-1` remains a valid class. Splits with no usable labelled text, fewer than two observed training classes, and missing or non-string text columns exit before model loading.
-- **`--private` verifies the output repository is private before training.** If the destination already exists publicly, choose a new repo or change its visibility first.
-
-```bash
-# 8 labels per class, on CPU
-hf jobs uv run --flavor cpu-basic --timeout 20m --secrets HF_TOKEN \
-  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \
-  fancyzhx/ag_news username/ag-news-setfit --num-samples 8
-
-# Same model and training settings on a GPU for faster training
-hf jobs uv run --flavor t4-small --timeout 20m --secrets HF_TOKEN \
-  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \
-  fancyzhx/ag_news username/ag-news-setfit-gpu --num-samples 8
-```
-
-### Choosing another body or longer context
-
-`--body-model` accepts a Sentence Transformer checkpoint. Set `--max-seq-length` within that
-model's supported context window; increasing it cannot extend a model's native limit or restore
-text already shortened during dataset preparation. Longer sequences can need a smaller
-`--batch-size` or more GPU memory. The recipe measures training cost on the selected hardware.
-
-Follow the body's task-prefix instructions when preparing inputs. For example,
-[`nomic-ai/modernbert-embed-base`](https://huggingface.co/nomic-ai/modernbert-embed-base)
-uses Nomic's task prefixes: classification inputs should begin with `classification: `.
-Include the same prefix during training, evaluation and inference. The recipe does not add it
-automatically. Retain the original texts and the preprocessing details with the model.
-
-### Measured
-
-8 labels per class, seed 42, evaluated on each dataset's own held-out split (capped at 500
-examples, 1000 for banking77):
-
-| Dataset | Classes | Labels used | Body | Flavor | Training | Accuracy | Macro F1 |
-|---|---|---|---|---|---|---|---|
-| [`SetFit/enron_spam`](https://huggingface.co/datasets/SetFit/enron_spam) | 2 | 16 | MiniLM-L6 | `cpu-basic` | 78s | 0.924 | 0.924 |
-| [`fancyzhx/ag_news`](https://huggingface.co/datasets/fancyzhx/ag_news) | 4 | 32 | MiniLM-L6 | `cpu-basic` | 118s | 0.804 | 0.807 |
-| [`legacy-datasets/banking77`](https://huggingface.co/datasets/legacy-datasets/banking77) | 77 | 616 | MiniLM-L6 | `t4-small` | 18s | 0.803 | 0.789 |
-| [`dair-ai/emotion`](https://huggingface.co/datasets/dair-ai/emotion) | 6 | 48 | MiniLM-L6 | `cpu-basic` | 216s | 0.370 | 0.325 |
-
-**Single seed each — these do not rank models or predict your dataset.** Few-shot results vary
-substantially with which examples happen to get sampled; SetFit's own benchmarks report mean and
-standard deviation across ten seeds for exactly this reason. Run your own task before trusting
-any of these numbers.
-
-### Compare more than the majority baseline
-
-The `emotion` run reached **0.370** accuracy against a **0.352** majority baseline. Other
-single-seed body-model runs reached 0.418 (`bge-small`) and 0.410 (`paraphrase-mpnet-base-v2`).
-These results call for further evaluation; they do not establish a limit on the task or method.
-
-SetFit's [zero-shot guide](https://huggingface.co/docs/setfit/how_to/zero_shot) reports **0.591**
-on emotion using BGE and training examples templated from the class names. It uses a different
-evaluation setup from the table above, so this is motivation for a matched comparison rather
-than a controlled comparison with this recipe. Templated training needs no labeled documents,
-but still uses compute.
-
-For your task, compare with a simple baseline such as TF-IDF plus logistic regression using
-the same training and evaluation rows. A zero-shot comparison can also be useful when class
-names describe the task well. Use repeated seeds and appropriate task metrics before drawing
-conclusions from small accuracy differences. This recipe trains and evaluates a supervised
-classifier; built-in templated zero-shot training is a separate possible extension.
-
-### Real-world data: a worked failure
-
-`biglam/hansard_speech` (2.7M parliamentary speeches, predicting `party` from `speech`) is the
-case where none of the convenient properties hold, and it is instructive precisely because it
-produces no score:
-
-- **No held-out split**, so the eval set has to be carved from train — the numbers stop being
-  comparable to anything published.
-- **~9.5% of rows have a blank `party`**, which without the drop trains an `""` class.
-- **28 parties after cleaning, nine of which cannot supply 8 examples** (`Respect` 4,
-  `Independent SDP` 2, `Change UK` 1). The requested eight-example budget cannot be met for those classes.
-- **1,878 steps at ~11s/step on CPU** — the script refuses it, projecting well past an hour.
-
-On completed runs, the model card discloses a carved evaluation split, per-class training counts
-and classes below the requested sample count. Dropped-row counts and measured truncation are
-reported in the logs; retain those logs alongside the model when documenting data preparation.
-
-### Many classes: watch the pair count
-
-SetFit trains on pairs drawn from every combination of training examples, so the pair count grows
-with the **square** of the training-set size — which is `--num-samples` x number of classes. The
-script logs the estimate before training starts:
-
-| Dataset | Strategy | Pairs | Steps |
-|---|---|---|---|
-| ag_news (4 classes x 8) | `oversampling` (default) | 768 | 48 |
-| banking77 (77 classes x 8) | `oversampling` (default) | 374,528 | 23,408 |
-| banking77 (77 classes x 8) | `undersampling` | 4,312 | 270 |
-
-At 77 classes the default would take roughly 15 hours on `cpu-basic`; `--sampling-strategy
-undersampling` finished in 18 seconds on a T4 in the recorded run. The script reports the pair
-and step counts, then measures step time to check `--max-minutes`. When it refuses training,
-it suggests undersampling where applicable and estimates whether that would fit the budget.
-
-> **Note**: a SetFit model is a sentence-transformer body plus a scikit-learn head. Load it with
-> `SetFitModel.from_pretrained(repo)`, not `AutoModelForSequenceClassification`.
 
 ## Zero-shot first, then fine-tune (GLiNER2)
 
@@ -330,6 +164,174 @@ How it was set up, if you want to do something similar with your own label list:
 
 Tested commands with their results, and the findings and dead ends behind these defaults, are in
 [GLINER2-NOTES.md](GLINER2-NOTES.md).
+
+## Few-shot with SetFit (`train-setfit.py`)
+
+An alternative when you have only a handful of labelled examples per class (8-64) and want a sentence-transformer model.
+
+Trains a [SetFit](https://github.com/huggingface/setfit) classifier from a handful of labelled
+examples per class. SetFit finetunes a sentence-transformer body on contrastive pairs, then fits a
+logistic regression head on the resulting embeddings.
+
+**Runs on CPU or GPU.** CPU is practical for small few-shot experiments. Use a GPU for faster
+training, particularly with larger models, longer texts or more classes. The same model and
+training settings work on either; the recipe uses the available accelerator automatically.
+
+- **Default body**: [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (22M), chosen for CPU speed. Swap it with `--body-model`.
+- **Evaluation split** follows the same precedence as `train-classifier.py`: `--eval-split` if given, else `validation`, else `test`, else a stratified carve-out of `--eval-fraction` from train.
+- **Single-label only.** A multi-label column exits with a pointer to `train-classifier.py`.
+- **Metrics match `train-classifier.py`** (accuracy + macro F1). Match evaluation rows and preprocessing when comparing runs.
+- **`--num-samples`** sets labelled examples per class (default 8). **`--sampling-strategy`** controls contrastive pairing: `oversampling` (default), `undersampling`, `unique`.
+- **Every run reports a majority baseline.** The run warns when accuracy fails to beat it, or the gain is below five percentage points. That fixed threshold is a review heuristic, not a measured noise level or significance test.
+- **It estimates training time before starting.** The script times forward/backward passes on actual texts and hardware, then refuses training projected above `--max-minutes` (default 60). Setup, evaluation and upload take additional time. A measurement error can skip this guard; use Jobs `--timeout` to enforce a wall-clock limit.
+- **Rows with missing or blank labels or texts are dropped**, with a count. Missing labels include `ClassLabel`'s `-1` sentinel and numeric NaN; plain integer `-1` remains a valid class. Splits with no usable labelled text, fewer than two observed training classes, and missing or non-string text columns exit before model loading.
+- **`--private` verifies the output repository is private before training.** If the destination already exists publicly, choose a new repo or change its visibility first.
+
+```bash
+# 8 labels per class, on CPU
+hf jobs uv run --flavor cpu-basic --timeout 20m --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \
+  fancyzhx/ag_news username/ag-news-setfit --num-samples 8
+
+# Same model and training settings on a GPU for faster training
+hf jobs uv run --flavor t4-small --timeout 20m --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \
+  fancyzhx/ag_news username/ag-news-setfit-gpu --num-samples 8
+```
+
+### Choosing another body or longer context
+
+`--body-model` accepts a Sentence Transformer checkpoint. Set `--max-seq-length` within that
+model's supported context window; increasing it cannot extend a model's native limit or restore
+text already shortened during dataset preparation. Longer sequences can need a smaller
+`--batch-size` or more GPU memory. The recipe measures training cost on the selected hardware.
+
+Follow the body's task-prefix instructions when preparing inputs. For example,
+[`nomic-ai/modernbert-embed-base`](https://huggingface.co/nomic-ai/modernbert-embed-base)
+uses Nomic's task prefixes: classification inputs should begin with `classification: `.
+Include the same prefix during training, evaluation and inference. The recipe does not add it
+automatically. Retain the original texts and the preprocessing details with the model.
+
+### Measured
+
+8 labels per class, seed 42, evaluated on each dataset's own held-out split (capped at 500
+examples, 1000 for banking77):
+
+| Dataset | Classes | Labels used | Body | Flavor | Training | Accuracy | Macro F1 |
+|---|---|---|---|---|---|---|---|
+| [`SetFit/enron_spam`](https://huggingface.co/datasets/SetFit/enron_spam) | 2 | 16 | MiniLM-L6 | `cpu-basic` | 78s | 0.924 | 0.924 |
+| [`fancyzhx/ag_news`](https://huggingface.co/datasets/fancyzhx/ag_news) | 4 | 32 | MiniLM-L6 | `cpu-basic` | 118s | 0.804 | 0.807 |
+| [`legacy-datasets/banking77`](https://huggingface.co/datasets/legacy-datasets/banking77) | 77 | 616 | MiniLM-L6 | `t4-small` | 18s | 0.803 | 0.789 |
+| [`dair-ai/emotion`](https://huggingface.co/datasets/dair-ai/emotion) | 6 | 48 | MiniLM-L6 | `cpu-basic` | 216s | 0.370 | 0.325 |
+
+**Single seed each — these do not rank models or predict your dataset.** Few-shot results vary
+substantially with which examples happen to get sampled; SetFit's own benchmarks report mean and
+standard deviation across ten seeds for exactly this reason. Run your own task before trusting
+any of these numbers.
+
+### Compare more than the majority baseline
+
+The `emotion` run reached **0.370** accuracy against a **0.352** majority baseline. Other
+single-seed body-model runs reached 0.418 (`bge-small`) and 0.410 (`paraphrase-mpnet-base-v2`).
+These results call for further evaluation; they do not establish a limit on the task or method.
+
+SetFit's [zero-shot guide](https://huggingface.co/docs/setfit/how_to/zero_shot) reports **0.591**
+on emotion using BGE and training examples templated from the class names. It uses a different
+evaluation setup from the table above, so this is motivation for a matched comparison rather
+than a controlled comparison with this recipe. Templated training needs no labeled documents,
+but still uses compute.
+
+For your task, compare with a simple baseline such as TF-IDF plus logistic regression using
+the same training and evaluation rows. A zero-shot comparison can also be useful when class
+names describe the task well. Use repeated seeds and appropriate task metrics before drawing
+conclusions from small accuracy differences. This recipe trains and evaluates a supervised
+classifier; built-in templated zero-shot training is a separate possible extension.
+
+### Real-world data: a worked failure
+
+`biglam/hansard_speech` (2.7M parliamentary speeches, predicting `party` from `speech`) is the
+case where none of the convenient properties hold, and it is instructive precisely because it
+produces no score:
+
+- **No held-out split**, so the eval set has to be carved from train — the numbers stop being
+  comparable to anything published.
+- **~9.5% of rows have a blank `party`**, which without the drop trains an `""` class.
+- **28 parties after cleaning, nine of which cannot supply 8 examples** (`Respect` 4,
+  `Independent SDP` 2, `Change UK` 1). The requested eight-example budget cannot be met for those classes.
+- **1,878 steps at ~11s/step on CPU** — the script refuses it, projecting well past an hour.
+
+On completed runs, the model card discloses a carved evaluation split, per-class training counts
+and classes below the requested sample count. Dropped-row counts and measured truncation are
+reported in the logs; retain those logs alongside the model when documenting data preparation.
+
+### Many classes: watch the pair count
+
+SetFit trains on pairs drawn from every combination of training examples, so the pair count grows
+with the **square** of the training-set size — which is `--num-samples` x number of classes. The
+script logs the estimate before training starts:
+
+| Dataset | Strategy | Pairs | Steps |
+|---|---|---|---|
+| ag_news (4 classes x 8) | `oversampling` (default) | 768 | 48 |
+| banking77 (77 classes x 8) | `oversampling` (default) | 374,528 | 23,408 |
+| banking77 (77 classes x 8) | `undersampling` | 4,312 | 270 |
+
+At 77 classes the default would take roughly 15 hours on `cpu-basic`; `--sampling-strategy
+undersampling` finished in 18 seconds on a T4 in the recorded run. The script reports the pair
+and step counts, then measures step time to check `--max-minutes`. When it refuses training,
+it suggests undersampling where applicable and estimates whether that would fit the budget.
+
+> **Note**: a SetFit model is a sentence-transformer body plus a scikit-learn head. Load it with
+> `SetFitModel.from_pretrained(repo)`, not `AutoModelForSequenceClassification`.
+
+## Fine-tune a classifier (`train-classifier.py`)
+
+Fine-tunes a text-classification encoder on any Hub dataset and pushes the trained model
+back to the Hub — download, train, evaluate, push, and reload-verify in one job.
+
+- **Default model**: [LiquidAI/LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M) — a bidirectional encoder that beats ModernBERT-base on GLUE/SuperGLUE and handles 8,192-token documents. Any Hub encoder works via `--model` (ModernBERT, BERT, DeBERTa, …).
+- **Single-label and multi-label**, auto-detected from the label column (`ClassLabel`/string/int → cross-entropy; list of labels → BCE + per-label threshold tuning).
+- **Round-trippable artifacts**: standard architectures produce standard models; encoders without a classification head (like LFM2.5) get a generic mean-pooling head pushed as custom code, so `AutoModelForSequenceClassification.from_pretrained(..., trust_remote_code=True)` always works.
+
+```bash
+# single-label (ag_news has a ClassLabel column)
+hf jobs uv run --flavor a10g-small --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-classifier.py \
+  fancyzhx/ag_news username/news-classifier
+
+# multi-label (go_emotions has a list-of-labels column)
+hf jobs uv run --flavor a10g-small --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-classifier.py \
+  google-research-datasets/go_emotions username/emotion-classifier --label-column labels
+```
+
+Key options: `--model`, `--max-length` (512 default; up to 8192 with
+`--gradient-checkpointing` and a small `--batch-size` on a10g/a100), `--epochs`, `--lr`,
+`--batch-size`, `--max-samples` (smoke runs), `--eval-split` (auto-detects
+validation/test, or holds out 10% of train). Run `uv run train-classifier.py --help` for all.
+
+### Worked example: classify dataset cards by task
+
+[`davanstrien/dataset-cards-with-task-categories`](https://huggingface.co/datasets/davanstrien/dataset-cards-with-task-categories)
+contains 21k Hub dataset cards (frontmatter stripped) labelled with their `task_categories`
+metadata — a real multi-label task over long documents:
+
+```bash
+hf jobs uv run --flavor a10g-small --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-classifier.py \
+  davanstrien/dataset-cards-with-task-categories username/dataset-card-task-classifier \
+  --label-column labels --max-length 1024 --batch-size 8 --grad-accum 2
+```
+
+The output model predicts likely task categories from a card's prose — e.g. for suggesting
+metadata on datasets that lack it.
+
+### Training a standard encoder instead
+
+`--model answerdotai/ModernBERT-base` (or any encoder with a native classification head)
+produces a plain, vLLM-servable model — pair it with
+[`uv-scripts/vllm`](https://huggingface.co/datasets/uv-scripts/vllm)'s
+`classify-dataset.py` for large-scale batch inference with the model you just trained.
 
 ---
 
