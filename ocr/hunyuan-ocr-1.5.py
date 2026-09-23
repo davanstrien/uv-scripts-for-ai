@@ -4,14 +4,16 @@
 #     "datasets>=4.0.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm>=0.18.1",
-#     "transformers<5.13",  # vLLM ≤0.24.0's HunyuanVL processor breaks on transformers 5.13
-#                           # (string-key AutoImageProcessor.register; fixed in vllm#47872).
-#                           # Drop this cap once that fix ships in a stable vLLM release.
 #     "tqdm",
 #     "toolz",
-#     "torch",
 # ]
+#
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.24.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -42,9 +44,12 @@ Model: tencent/HunyuanOCR
 
 vLLM: 0.18.1 (release) is the first stable wheel with native
   `HunYuanVLForConditionalGeneration` support for autoregressive decoding — no
-  nightly or patch needed for batch OCR. The floor stays at 0.18.1; a bare
-  `vllm` resolves to the latest stable (0.24.0 as of 2026-07), which also works
-  once transformers is capped <5.13 (see the deps block for why). The DFlash
+  nightly or patch needed for batch OCR. The [tool.hf-jobs] header pins the
+  vllm/vllm-openai:v0.24.0 image (`hf` CLI 1.32+), which also sets the hardware
+  and the HF_TOKEN secret. Newer stacks fail: unpinned vLLM with transformers
+  >=5.13 does not recognise `hunyuan_vl`, and the v0.29.0 image fails at engine
+  start ("Expected 4 multimodal RoPE channels"). To run on your own GPU:
+  `uv run --with vllm==0.24.0 --with "transformers<5.13" ...`. The DFlash
   speculative-decoding draft (a per-request *latency* win that needs a vLLM
   nightly) is intentionally NOT implemented: it does not change offline batch
   throughput or output distribution.
@@ -500,6 +505,9 @@ def main(
         max_model_len=max_model_len,
         gpu_memory_utilization=gpu_memory_utilization,
         limit_mm_per_prompt={"image": 1},
+        # The encoder cache is sized from max_num_batched_tokens (8192 by default), but one
+        # image can reach img_max_token_num=16384 tokens; a 2000 px scan already needs ~8.6k.
+        max_num_batched_tokens=16384,
     )
 
     # Locked sampling per the model card (deterministic OCR); only repetition_penalty
@@ -698,10 +706,8 @@ if __name__ == "__main__":
             "   uv run hunyuan-ocr-1.5.py en-docs zh-docs --task-type doc_trans_en2zh"
         )
         print("\n6. Running on HF Jobs:")
-        print("   hf jobs uv run --flavor l4x1 \\")
-        print(
-            '     -e HF_TOKEN=$(python3 -c "from huggingface_hub import get_token; print(get_token())") \\'
-        )
+        print("   (image, hardware and HF_TOKEN come from the script's [tool.hf-jobs] header)")
+        print("   hf jobs uv run \\")
         print(
             "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/hunyuan-ocr-1.5.py \\"
         )
