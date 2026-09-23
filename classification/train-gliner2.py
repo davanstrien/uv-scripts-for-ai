@@ -4,7 +4,7 @@
 #     "gliner2[train]==2.0.0",
 #     "protobuf",
 #     "sentencepiece",
-#     "datasets>=4.0.0",
+#     "datasets>=4.0.0,<6",
 #     "scikit-learn",
 #     "huggingface-hub",
 # ]
@@ -78,6 +78,7 @@ import importlib.metadata
 import json
 import logging
 import os
+import shlex
 import sys
 import time
 from collections import Counter
@@ -241,6 +242,11 @@ def drop_unlabelled_rows(dataset: Dataset, columns: list, text_column: str, spli
         logger.warning(
             "Dropped %d %s rows with no text or a missing label (%d remain).",
             dropped, split_name, len(kept),
+        )
+    if len(kept) == 0:
+        sys.exit(
+            f"No '{split_name}' rows are left after dropping rows with no text or a missing label "
+            f"({len(dataset)} before). Check --text-column and --label-column, or pick another split."
         )
     return kept
 
@@ -756,7 +762,7 @@ def build_reproduce_command(args) -> str:
     if args.train_file:
         # Local files: the job needs them mounted at the same paths.
         parts.insert(0, "# Mount the data files at the paths below, e.g. -v hf://buckets/<owner>/<bucket>:/bucket")
-    positionals = [value for value in (args.input_dataset, args.output_repo) if value]
+    positionals = [shlex.quote(value) for value in (args.input_dataset, args.output_repo) if value]
     if positionals:
         parts.append(f"  {SCRIPT_URL} \\")
         parts.append("  " + " ".join(positionals))
@@ -764,27 +770,27 @@ def build_reproduce_command(args) -> str:
         parts.append(f"  {SCRIPT_URL}")
     flags = []
     if args.train_file:
-        flags.append(f"--train-file {args.train_file}")
+        flags.append(f"--train-file {shlex.quote(args.train_file)}")
         for name, path in args.eval_files.items():
-            flags.append(f"--eval-file {name}={path}")
+            flags.append(f"--eval-file {shlex.quote(f'{name}={path}')}")
     if args.labels_file:
-        flags.append(f"--labels-file {args.labels_file}")
+        flags.append(f"--labels-file {shlex.quote(args.labels_file)}")
     if args.dataset_config:
-        flags.append(f"--dataset-config {args.dataset_config}")
+        flags.append(f"--dataset-config {shlex.quote(args.dataset_config)}")
     if args.text_column != "text":
-        flags.append(f"--text-column {args.text_column}")
+        flags.append(f"--text-column {shlex.quote(args.text_column)}")
     if args.label_column != ["label"]:
         for column in args.label_column:
-            flags.append(f"--label-column {column}")
+            flags.append(f"--label-column {shlex.quote(column)}")
     if args.task_name != args.label_column:
         for task_name in args.task_name:
-            flags.append(f"--task-name {task_name}")
+            flags.append(f"--task-name {shlex.quote(task_name)}")
     if args.base_model != DEFAULT_BASE_MODEL:
-        flags.append(f"--base-model {args.base_model}")
+        flags.append(f"--base-model {shlex.quote(args.base_model)}")
     if args.train_split != "train":
-        flags.append(f"--train-split {args.train_split}")
+        flags.append(f"--train-split {shlex.quote(args.train_split)}")
     if args.eval_split:
-        flags.append(f"--eval-split {args.eval_split}")
+        flags.append(f"--eval-split {shlex.quote(args.eval_split)}")
     # These change which rows are trained on or scored, so a command without them reproduces
     # a different model and a different number.
     if args.eval_fraction != 0.1:
@@ -814,9 +820,9 @@ def build_reproduce_command(args) -> str:
     if args.label_augmentation != "upstream":
         flags.append(f"--label-augmentation {args.label_augmentation}")
     if args.no_push:
-        flags.append(f"--no-push --output-dir {args.output_dir}")
+        flags.append(f"--no-push --output-dir {shlex.quote(args.output_dir)}")
     if args.export_predictions:
-        flags.append(f"--export-predictions {args.export_predictions}")
+        flags.append(f"--export-predictions {shlex.quote(args.export_predictions)}")
     if args.public:
         flags.append("--public")
 
@@ -967,9 +973,9 @@ print(result.{read_result}({first_task["name"]!r}), result.confidence({first_tas
 To label a whole Hub dataset with this model:
 
 ```bash
-hf jobs uv run --flavor t4-small --secrets HF_TOKEN \\
+hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \\
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-gliner2.py \\
-  <input-dataset> <output-dataset> --model {model_ref} --text-column {args.text_column}
+  <input-dataset> <output-dataset> --model {shlex.quote(model_ref)} --text-column {shlex.quote(args.text_column)}
 ```
 
 ## Reproduction
