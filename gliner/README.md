@@ -13,6 +13,8 @@ tags:
 
 Zero-shot named-entity recognition over Hugging Face datasets using [GLiNER](https://github.com/urchade/GLiNER). Pass a list of entity types at runtime — no fine-tuning required.
 
+For text **classification** with [GLiNER2](https://github.com/fastino-ai/GLiNER2) (a separate library from Fastino): zero-shot, then fine-tuning on your own labels, see [`uv-scripts/classification`](https://huggingface.co/datasets/uv-scripts/classification#zero-shot-first-then-fine-tune-gliner2).
+
 | Script | What it does | Output |
 |---|---|---|
 | `extract-entities.py` | Extract entities from a text column with a custom set of types | New `entities` column (list of `{start, end, text, label, score}`) |
