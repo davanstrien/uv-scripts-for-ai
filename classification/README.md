@@ -16,12 +16,13 @@ dataset; its model was fine-tuned with `train-gliner2.py` in 17 minutes.
 To try it on your own account, this command fine-tunes a classifier for British Library book titles
 (Fiction / Non-fiction). Training takes about 2 minutes on a `t4-small` and costs about $0.02.
 Accuracy goes from 0.767 zero-shot to 0.907 fine-tuned. You get a private model repo, and its card
-shows both scores next to the majority-class baseline.
+shows both scores next to the majority-class baseline. Copy and paste it as it is: the model goes
+to your own account.
 
 ```bash
 hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-gliner2.py \
-  biglam/blbooksgenre your-username/gliner2-blbooks-genre \
+  biglam/blbooksgenre gliner2-blbooks-genre \
   --dataset-config title_genre_classifiction --text-column title
 ```
 
@@ -67,7 +68,8 @@ your labels mean in your data. (For entity extraction with the original GLiNER l
   with a `train-gliner2.py` output; the tasks and labels are read from the model repo.
   Labels are passed as separate words; quote a label with spaces:
   `--labels World Sports Business "Science and technology"`. A fine-tuned model is passed
-  by repo id: `--model username/gliner2-blbooks-genre`.
+  by name: `--model gliner2-blbooks-genre`. A name on its own means your account; use `org/name`
+  for an organisation.
 
 ### Quick start
 
@@ -75,19 +77,19 @@ your labels mean in your data. (For entity extraction with the original GLiNER l
 # fine-tune: British Library book titles -> Fiction / Non-fiction
 hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-gliner2.py \
-  biglam/blbooksgenre username/gliner2-blbooks-genre \
+  biglam/blbooksgenre gliner2-blbooks-genre \
   --dataset-config title_genre_classifiction --text-column title
 
 # label a dataset with that model
 hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-gliner2.py \
-  biglam/blbooksgenre username/blbooks-genre-predictions \
-  --dataset-config title_genre_classifiction --text-column title --model username/gliner2-blbooks-genre
+  biglam/blbooksgenre blbooks-genre-predictions \
+  --dataset-config title_genre_classifiction --text-column title --model gliner2-blbooks-genre
 
 # or skip training: zero-shot from label names
 hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-gliner2.py \
-  fancyzhx/ag_news username/ag-news-topics --split test \
+  fancyzhx/ag_news ag-news-topics --split test \
   --labels World Sports Business "Science and technology" --task-name topic
 ```
 

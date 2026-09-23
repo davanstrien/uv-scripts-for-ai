@@ -1009,6 +1009,13 @@ Produced by [`train-gliner2.py`]({SCRIPT_URL}) from
 """
 
 
+def in_own_account(api: HfApi, repo_id: str) -> str:
+    """A bare name ("my-model") means a repo in your own account: return "<username>/my-model"."""
+    if "/" in repo_id:
+        return repo_id
+    return f"{api.whoami()['name']}/{repo_id}"
+
+
 def ensure_output_repo(api: HfApi, repo_id: str, private: bool) -> None:
     """Create the model repo, and refuse to train if a private run would push to a public repo.
 
@@ -1047,6 +1054,7 @@ def main(args) -> None:
     if args.no_push:
         logger.info("--no-push: the model will stay in %s.", os.path.join(args.output_dir, "final"))
     else:
+        args.output_repo = in_own_account(api, args.output_repo)
         ensure_output_repo(api, args.output_repo, private=not args.public)
 
     precision = resolve_precision(args.precision)
@@ -1178,7 +1186,7 @@ def parse_args():
         "input_dataset", nargs="?",
         help="Input dataset ID. Leave out with --train-file; a single positional is then the output repo.",
     )
-    parser.add_argument("output_repo", nargs="?", help="Output model repo ID (username/model-name). Not needed with --no-push.")
+    parser.add_argument("output_repo", nargs="?", help="Output model repo: a name for your own account (my-model) or a full ID (org/my-model). Not needed with --no-push.")
     parser.add_argument("--train-file", help="Train on a local JSON Lines file (e.g. under a mounted /bucket) instead of a Hub dataset")
     parser.add_argument(
         "--eval-file", action="append",
