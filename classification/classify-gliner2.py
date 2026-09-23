@@ -323,6 +323,13 @@ Classified {total} rows in {round(seconds)} seconds ({total / max(seconds, 1e-9)
 """
 
 
+def in_own_account(api: HfApi, repo_id: str) -> str:
+    """A bare name ("my-model") means a repo in your own account: return "<username>/my-model"."""
+    if "/" in repo_id:
+        return repo_id
+    return f"{api.whoami()['name']}/{repo_id}"
+
+
 def main(args) -> None:
     token = args.hf_token or os.environ.get("HF_TOKEN")
     if not token:
@@ -331,6 +338,9 @@ def main(args) -> None:
 
     # push_to_hub(private=True) leaves an existing repo's visibility alone, so check before the work.
     api = HfApi(token=token)
+    args.output_dataset = in_own_account(api, args.output_dataset)
+    if not os.path.exists(args.model):
+        args.model = in_own_account(api, args.model)
     output_exists = api.repo_exists(args.output_dataset, repo_type="dataset")
     if not args.public and output_exists and not api.repo_info(args.output_dataset, repo_type="dataset").private:
         sys.exit(
@@ -437,7 +447,7 @@ def main(args) -> None:
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("input_dataset", help="Input dataset ID")
-    parser.add_argument("output_dataset", help="Output dataset ID (username/dataset-name)")
+    parser.add_argument("output_dataset", help="Output dataset: a name for your own account (my-dataset) or a full ID (org/my-dataset)")
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"GLiNER2 model: a base checkpoint for zero-shot, or a train-gliner2.py output (default: {DEFAULT_MODEL})")
     parser.add_argument("--labels", nargs="+", help="Label names for zero-shot classification. Overrides the tasks recorded in the model repo.")
     parser.add_argument("--task-name", default="label", help="Name of the --labels task; sets the output column names (default: label)")
