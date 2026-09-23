@@ -18,6 +18,32 @@ Each README command was run from the branch before merge (`t4-small`, 2026-09-23
 The ag_news README row (0.718 → 0.852) and this run (0.733 → 0.873) differ because the 2,000
 scored test rows are a different random sample. Expect roughly 0.72 → 0.85–0.87.
 
+## Larger or fixed label sets
+
+For tens of labels that are always scored together (a taxonomy, a fixed tag list), and for data
+you keep in a bucket instead of a Hub dataset:
+
+```bash
+hf jobs uv run --flavor a10g-small --timeout 2h --secrets HF_TOKEN \
+  -v hf://buckets/username/my-bucket:/bucket \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-gliner2.py \
+  --train-file /bucket/train.jsonl \
+  --eval-file calibration=/bucket/calibration.jsonl --eval-file development=/bucket/development.jsonl \
+  --labels-file /bucket/labels.json --label-column labels --label-augmentation off \
+  --base-model fastino/gliner2.5-base-v1 \
+  --no-push --output-dir /bucket/runs/gliner2 --export-predictions /bucket/runs/gliner2/predictions
+```
+
+- `--labels-file` fixes the label set and its order for training, zero-shot and evaluation, so a
+  label that is rare or missing in the training data is still an option.
+- `--label-augmentation off`: gliner2's trainer by default renames labels to "label 1", "label 2",
+  … in half the rows and drops up to half of them, which helps a general zero-shot model. With a
+  fixed label set it cost 2–3 points of top-1 on the 52-tag example.
+- `--eval-file NAME=PATH` (repeatable) scores each split in full and in file order.
+- `--export-predictions` writes every row's probability and raw logit for every label, so you can
+  fit your own temperature or thresholds on one split and check them on another.
+- `--no-push` keeps the model in `--output-dir` instead of creating a Hub repo.
+
 ## Measured table notes
 
 On the T4, TREC and IMDB ran out of memory at the default batch size of 16, and the script restarted
@@ -60,6 +86,18 @@ column names and first row (the worked example in the README).
 - The two seeds differ by about 1 point, almost all of it on one owner's 33 near-identical
   datasets that the model labels tabular-regression or tabular-classification depending on the seed.
 - Owner tags are noisy: in a hand-checked sample, about 1 in 10 datasets was missing a tag that fits.
+
+How it was set up, if you want to do something similar with your own label list:
+
+- **Input text:** the dataset's column names and types, then its first row, built from the dataset
+  viewer's preview and cut to about 370 tokens. Keep the exact same builder for training and
+  prediction; a small difference in the text is a different input.
+- **Labels:** a fixed `--labels-file` of 52 tags, multi-label (`labels` is a list per row), with
+  `--label-augmentation off`.
+- **Split by time and owner:** the evaluation rows are newer datasets from owners who are not in
+  the training data, so the score is not inflated by near-duplicate datasets from the same owner.
+- **Two eval files** (`--eval-file calibration=… --eval-file development=…`) and
+  `--export-predictions`: thresholds are chosen on one file and checked on the other.
 
 ## Speed and quantization
 

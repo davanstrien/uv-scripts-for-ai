@@ -107,30 +107,9 @@ For speed on a CPU, use plain fp32 PyTorch; see the notes for what did not work 
 
 ### Larger or fixed label sets
 
-For tens of labels that are always scored together (a taxonomy, a fixed tag list), and for data
-you keep in a bucket instead of a Hub dataset:
-
-```bash
-hf jobs uv run --flavor a10g-small --timeout 2h --secrets HF_TOKEN \
-  -v hf://buckets/username/my-bucket:/bucket \
-  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-gliner2.py \
-  --train-file /bucket/train.jsonl \
-  --eval-file calibration=/bucket/calibration.jsonl --eval-file development=/bucket/development.jsonl \
-  --labels-file /bucket/labels.json --label-column labels --label-augmentation off \
-  --base-model fastino/gliner2.5-base-v1 \
-  --no-push --output-dir /bucket/runs/gliner2 --export-predictions /bucket/runs/gliner2/predictions
-```
-
-- `--labels-file` fixes the label set and its order for training, zero-shot and evaluation, so a
-  label that is rare or missing in the training data is still an option.
-- `--label-augmentation off`: gliner2's trainer by default renames labels to "label 1", "label 2",
-  … in half the rows and drops up to half of them, which helps a general zero-shot model. With a
-  fixed label set it cost 2–3 points of top-1 on the 52-tag example.
-- `--eval-file NAME=PATH` (repeatable) scores each split in full and in file order.
-- `--export-predictions` writes every row's probability and raw logit for every label, so you can
-  fit your own temperature or thresholds on one split and check them on another.
-- `--no-push` keeps the model in `--output-dir` instead of creating a Hub repo.
-
+For tens of labels scored together (a taxonomy, a fixed tag list), or data in a bucket, see
+[Larger or fixed label sets](GLINER2-NOTES.md#larger-or-fixed-label-sets) in the notes:
+`--labels-file`, `--label-augmentation off`, local `--train-file`/`--eval-file` and `--export-predictions`.
 
 ### Worked example: tagging Hub datasets
 
@@ -140,30 +119,14 @@ suggestion matches one of the owner's tags 69% of the time on 3,000 newer datase
 never saw. Owners' tags are a noisy target, so the true rate is higher.
 [Model](https://huggingface.co/davanstrien/hub-task-tagger-gliner2.5-base) · [Demo](https://huggingface.co/spaces/davanstrien/hub-task-tagger) · [Notes on how it was trained](GLINER2-NOTES.md#a-larger-label-set-52-hub-task-tags)
 
-How it was set up, if you want to do something similar with your own label list:
-
-- **Input text:** the dataset's column names and types, then its first row, built from the dataset
-  viewer's preview and cut to about 370 tokens. Keep the exact same builder for training and
-  prediction; a small difference in the text is a different input.
-- **Labels:** a fixed `--labels-file` of 52 tags, multi-label (`labels` is a list per row), with
-  `--label-augmentation off`.
-- **Split by time and owner:** the evaluation rows are newer datasets from owners who are not in
-  the training data, so the score is not inflated by near-duplicate datasets from the same owner.
-- **Two eval files** (`--eval-file calibration=… --eval-file development=…`) and
-  `--export-predictions`: thresholds are chosen on one file and checked on the other.
-
 ### Good to know
 
-- **Single-label and multi-label**, auto-detected from the label column (a list per row is multi-label). An empty list is kept as a valid "none of these" answer.
-- **Several tasks in one model.** Repeat `--label-column`; each column becomes a task, answered in one pass.
-- **Label names are part of the prompt.** Real names (`Fiction`, `Sports`) work; integer codes make zero-shot meaningless, and the script warns.
-- **Evaluation split and metrics match `train-classifier.py` and `train-setfit.py`**, so the rungs are comparable.
-- **Out of GPU memory, it restarts at a smaller batch size** instead of quietly training on nothing, and stops before pushing if even batch size 1 fails. Memory grows with batch size × number of labels × text length; many labels or long texts want an `a10g-small`.
-- **Always pass `--timeout`.** The scripts carry a `[tool.hf-jobs]` header (t4-small, 1 hour), but older `hf` CLIs ignore it and stop the Job after 30 minutes.
-- **It is a GLiNER2 checkpoint**, loaded with `gliner2.classification.Classifier.from_pretrained(repo)`. `gliner2` pins `transformers<5`, which keeps `huggingface_hub` below 1.0 inside the Job; your local `hf` CLI is a separate install.
+- **Single-label and multi-label** are auto-detected from the label column; repeat `--label-column` to train several tasks in one model.
+- **Label names are part of the prompt.** Real names (`Fiction`, `Sports`) work; integer codes make zero-shot meaningless.
+- **Out of GPU memory, it restarts at a smaller batch size** and stops before pushing if even batch size 1 fails. Many labels or long texts want an `a10g-small`.
+- **Always pass `--timeout`.** Older `hf` CLIs ignore the scripts' `[tool.hf-jobs]` header and stop the Job after 30 minutes.
 
-Tested commands with their results, and the findings and dead ends behind these defaults, are in
-[GLINER2-NOTES.md](GLINER2-NOTES.md).
+More behaviour details, tested commands, findings and dead ends: [GLINER2-NOTES.md](GLINER2-NOTES.md).
 
 ## Few-shot with SetFit (`train-setfit.py`)
 
