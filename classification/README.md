@@ -194,12 +194,6 @@ it suggests undersampling where applicable and estimates whether that would fit 
 > **Note**: a SetFit model is a sentence-transformer body plus a scikit-learn head. Load it with
 > `SetFitModel.from_pretrained(repo)`, not `AutoModelForSequenceClassification`.
 
----
-
-# Zero-shot classification (`classify-dataset.py`)
-
-GPU-accelerated text classification for Hugging Face datasets with guaranteed valid outputs through structured generation. Powered by SmolLM3-3B's advanced reasoning capabilities.
-
 ## Zero-shot first, then fine-tune (GLiNER2)
 
 [GLiNER2](https://github.com/fastino-ai/GLiNER2) is a small encoder (default
@@ -299,6 +293,12 @@ difference smaller than that between two runs is not a result. Use a dataset wit
 The ag_news, go_emotions and TREC rows are deliberately small runs (capped training rows, 2–3 epochs) that
 test the script, not tuned results. The BL books row trains on the full 1,562 titles; its eval is a 10%
 carve-out, so it is not comparable with published numbers for that dataset.
+
+---
+
+# Zero-shot classification (`classify-dataset.py`)
+
+GPU-accelerated text classification for Hugging Face datasets with guaranteed valid outputs through structured generation. Powered by SmolLM3-3B's advanced reasoning capabilities.
 
 ## 🚀 Quick Start
 
