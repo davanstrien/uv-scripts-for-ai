@@ -4,7 +4,7 @@
 #     "gliner2[local]==2.0.0",
 #     "protobuf",
 #     "sentencepiece",
-#     "datasets>=4.0.0",
+#     "datasets>=4.0.0,<6",
 #     "huggingface-hub",
 # ]
 #
@@ -26,17 +26,18 @@ input. That gives two ways to use this script:
 
 Zero-shot on HF Jobs:
 
-    hf jobs uv run --flavor t4-small --secrets HF_TOKEN \\
+    hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \\
         https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-gliner2.py \\
         fancyzhx/ag_news username/ag-news-gliner2 \\
         --labels World Sports Business "Science and technology" --max-samples 1000
 
 With a fine-tuned model:
 
-    hf jobs uv run --flavor t4-small --secrets HF_TOKEN \\
+    hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \\
         https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-gliner2.py \\
-        biglam/blbooks-parquet username/blbooks-genre-predictions \\
-        --model username/gliner2-blbooks-genre --text-column title
+        biglam/blbooksgenre username/blbooks-genre-predictions \\
+        --dataset-config title_genre_classifiction --text-column title \\
+        --model username/gliner2-blbooks-genre
 
 Output: the original columns, plus `predicted_<task>` (a label, or a list of labels for a
 multi-label task) and `predicted_<task>_confidence` for every task. The output dataset is
@@ -50,6 +51,7 @@ import argparse
 import json
 import logging
 import os
+import shlex
 import sys
 import time
 from collections import Counter
@@ -58,14 +60,18 @@ os.environ.setdefault("TQDM_DISABLE", "1")
 
 import datasets
 import torch
-from datasets import load_dataset
+from datasets import Features, List, Value, load_dataset
 from gliner2.classification import (
     ClassificationConfig,
     ClassificationSchema,
     Classifier,
 )
 from huggingface_hub import DatasetCard, HfApi, hf_hub_download, login
-from huggingface_hub.utils import EntryNotFoundError, disable_progress_bars
+from huggingface_hub.utils import (
+    EntryNotFoundError,
+    RepositoryNotFoundError,
+    disable_progress_bars,
+)
 
 
 def configure_logging() -> logging.Logger:
@@ -114,6 +120,23 @@ def check_labels(labels: list) -> None:
         sys.exit("Pass at least two --labels.")
 
 
+def exit_model_not_found(model_id: str) -> None:
+    sys.exit(
+        f"Cannot read the model '{model_id}'. Check the repo ID. If the repo is private or gated, "
+        "make sure HF_TOKEN has access to it."
+    )
+
+
+def check_model_access(api: HfApi, model_id: str) -> None:
+    """Stop with a clear message, before loading any data, if the model repo cannot be read."""
+    if os.path.isdir(model_id):
+        return
+    try:
+        api.model_info(model_id)
+    except RepositoryNotFoundError:
+        exit_model_not_found(model_id)
+
+
 def load_trained_tasks(model_id: str):
     """Read the tasks that train-gliner2.py recorded in the model repo, or return None."""
     local_file = os.path.join(model_id, SCHEMA_FILENAME)
@@ -126,6 +149,9 @@ def load_trained_tasks(model_id: str):
             path = hf_hub_download(model_id, SCHEMA_FILENAME)
         except EntryNotFoundError:
             return None
+        except RepositoryNotFoundError:
+            # Also raised for a gated repo the token has not been granted.
+            exit_model_not_found(model_id)
     with open(path) as handle:
         return json.load(handle)["tasks"]
 
@@ -193,26 +219,26 @@ def jobs_flavor() -> str:
 def build_reproduce_command(args) -> str:
     flavor = jobs_flavor() or "t4-small"
     parts = [
-        f"hf jobs uv run --flavor {flavor} --secrets HF_TOKEN \\",
+        f"hf jobs uv run --flavor {flavor} --timeout 1h --secrets HF_TOKEN \\",
         f"  {SCRIPT_URL} \\",
-        f"  {args.input_dataset} {args.output_dataset}",
+        f"  {shlex.quote(args.input_dataset)} {shlex.quote(args.output_dataset)}",
     ]
     flags = []
     if args.model != DEFAULT_MODEL:
-        flags.append(f"--model {args.model}")
+        flags.append(f"--model {shlex.quote(args.model)}")
     if args.labels:
-        quoted = " ".join(f'"{label}"' if " " in label else label for label in args.labels)
+        quoted = " ".join(shlex.quote(label) for label in args.labels)
         flags.append(f"--labels {quoted}")
         if args.task_name != "label":
-            flags.append(f"--task-name {args.task_name}")
+            flags.append(f"--task-name {shlex.quote(args.task_name)}")
         if args.multi_label:
             flags.append("--multi-label")
     if args.dataset_config:
-        flags.append(f"--dataset-config {args.dataset_config}")
+        flags.append(f"--dataset-config {shlex.quote(args.dataset_config)}")
     if args.text_column != "text":
-        flags.append(f"--text-column {args.text_column}")
+        flags.append(f"--text-column {shlex.quote(args.text_column)}")
     if args.split != "train":
-        flags.append(f"--split {args.split}")
+        flags.append(f"--split {shlex.quote(args.split)}")
     if args.max_samples:
         flags.append(f"--max-samples {args.max_samples}")
     if args.max_text_chars != 2000:
@@ -305,13 +331,14 @@ def main(args) -> None:
 
     # push_to_hub(private=True) leaves an existing repo's visibility alone, so check before the work.
     api = HfApi(token=token)
-    if not args.public and api.repo_exists(args.output_dataset, repo_type="dataset"):
-        if not api.repo_info(args.output_dataset, repo_type="dataset").private:
-            sys.exit(
-                f"{args.output_dataset} already exists and is public. Pass --public to push there "
-                "anyway, or choose a new dataset name."
-            )
+    output_exists = api.repo_exists(args.output_dataset, repo_type="dataset")
+    if not args.public and output_exists and not api.repo_info(args.output_dataset, repo_type="dataset").private:
+        sys.exit(
+            f"{args.output_dataset} already exists and is public. Pass --public to push there "
+            "anyway, or choose a new dataset name."
+        )
 
+    check_model_access(api, args.model)
     tasks = resolve_tasks(args)
     for task in tasks:
         logger.info("Task '%s': %s", task["name"], task["labels"])
@@ -376,9 +403,24 @@ def main(args) -> None:
             new_columns[f"predicted_{name}_confidence"] = confidences
         return new_columns
 
+    # Declare the output types. Otherwise the first map batch sets them, and a batch where
+    # every confidence is None (no label selected, or no text) types the column as null and
+    # the next batch fails to write.
+    output_features = Features(dataset.features)
+    for task in tasks:
+        name = task["name"]
+        output_features[f"predicted_{name}"] = List(Value("string")) if task["multi_label"] else Value("string")
+        output_features[f"predicted_{name}_confidence"] = Value("float64")
+
     started = time.time()
     # One map batch holds several model batches, so progress is logged at a useful rate.
-    dataset = dataset.map(classify_batch, batched=True, batch_size=args.batch_size * 8)
+    dataset = dataset.map(
+        classify_batch,
+        batched=True,
+        batch_size=args.batch_size * 8,
+        features=output_features,
+        load_from_cache_file=False,
+    )
     seconds = time.time() - started
     logger.info("Classified %d rows in %.0f seconds.", len(dataset), seconds)
     if empty_texts:
