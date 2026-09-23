@@ -5,11 +5,16 @@
 #     "datasets>=4.0.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm>=0.15.1",
-#     "torch",
 #     "rich",
 #     "tqdm",
 # ]
+#
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.29.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a100-large"
+# secrets = ["HF_TOKEN"]
 # ///
 """
 Offline vLLM judge for OCR benchmark evaluation.
@@ -35,8 +40,10 @@ Usage:
         --judge-model Qwen/Qwen2.5-VL-7B-Instruct \\
         --max-samples 50
 
-    # Via HF Job
-    hf jobs uv run --flavor l4x1 -s HF_TOKEN \\
+    # Via HF Job. The [tool.hf-jobs] header pins vllm/vllm-openai:v0.29.0 (the
+    # default uv image has no nvcc, which vLLM needs at warmup) and a100-large
+    # (the default 7B judge does not leave room for the KV cache on a 24 GB L4).
+    hf jobs uv run --timeout 1h \\
         ocr-vllm-judge.py davanstrien/ocr-bench-nls-50 --from-prs \\
         --judge-model Qwen/Qwen3-VL-8B-Instruct --max-samples 50
 """
@@ -636,7 +643,7 @@ Examples:
       --max-samples 50
 
   # Via HF Job
-  hf jobs uv run --flavor l4x1 -s HF_TOKEN \\
+  hf jobs uv run --timeout 1h \\
       ocr-vllm-judge.py my-bench --from-prs \\
       --judge-model Qwen/Qwen3-VL-8B-Instruct
         """,
@@ -694,6 +701,9 @@ Examples:
         "--save-results",
         default=None,
         help="Push judge results to this HF dataset repo (e.g. davanstrien/ocr-bench-rubenstein-judge)",
+    )
+    parser.add_argument(
+        "--private", action="store_true", help="Create the --save-results repo as private"
     )
     args = parser.parse_args()
 
@@ -776,7 +786,7 @@ Examples:
 
         # Comparisons config
         comp_ds = Dataset.from_list(comparison_log)
-        comp_ds.push_to_hub(args.save_results, config_name="comparisons")
+        comp_ds.push_to_hub(args.save_results, config_name="comparisons", private=args.private)
         console.print(f"  Pushed [cyan]comparisons[/cyan] ({len(comparison_log)} rows)")
 
         # Leaderboard config
@@ -795,7 +805,7 @@ Examples:
                 }
             )
         Dataset.from_list(leaderboard_rows).push_to_hub(
-            args.save_results, config_name="leaderboard"
+            args.save_results, config_name="leaderboard", private=args.private
         )
         console.print(
             f"  Pushed [cyan]leaderboard[/cyan] ({len(leaderboard_rows)} rows)"
@@ -813,7 +823,7 @@ Examples:
             "from_prs": args.from_prs,
         }
         Dataset.from_list([metadata_row]).push_to_hub(
-            args.save_results, config_name="metadata"
+            args.save_results, config_name="metadata", private=args.private
         )
         console.print("  Pushed [cyan]metadata[/cyan]")
         console.print(f"  [green]Results saved to: {args.save_results}[/green]")
