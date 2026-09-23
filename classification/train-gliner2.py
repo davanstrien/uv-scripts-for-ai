@@ -416,7 +416,7 @@ def build_tasks(train_data: Dataset, label_columns: list, task_names: list, fixe
         else:
             raw_names = []
             for value in train_data[column]:
-                raw_names.extend(value or [] if multi else [value])
+                raw_names.extend((value or []) if multi else [value])
             raw_names = sorted({str(name) for name in raw_names})
         renamed = {name: clean_label(name) for name in raw_names if clean_label(name) != name}
         if renamed:
@@ -425,6 +425,17 @@ def build_tasks(train_data: Dataset, label_columns: list, task_names: list, fixe
                 "predict the cleaned names: %s", column, renamed,
             )
 
+        # Check raw -> cleaned before trusting `labels`: for a plain string column the labels were
+        # cleaned on the way into a set, so two different raw labels could already have merged.
+        raw_by_cleaned = {}
+        for name in raw_names:
+            raw_by_cleaned.setdefault(clean_label(name), []).append(name)
+        merged = {cleaned: raws for cleaned, raws in raw_by_cleaned.items() if len(raws) > 1}
+        if merged:
+            sys.exit(
+                f"Column '{column}': different labels become identical after cleaning "
+                f"(brackets are removed): {merged}. Rename them in the dataset."
+            )
         if len(set(labels)) != len(labels):
             sys.exit(f"Column '{column}': two labels are identical after cleaning: {labels}")
         if len(labels) < 2:
@@ -609,9 +620,18 @@ def train_with_batch_fallback(args, examples: list, precision: str, sampling_con
     oom_guard = StopOnRepeatedOOM(limit=MAX_OOM_STEPS)
     logging.getLogger("gliner2.training.trainer").addHandler(oom_guard)
     try:
-        ExtractorTrainer(model, config).train(train_data=examples)
-        return oom_guard.oom_steps
-    except TrainingOutOfMemory:
+        result = ExtractorTrainer(model, config).train(train_data=examples)
+        # The trainer skips a batch that runs out of memory. On a short run every batch can be
+        # skipped without reaching MAX_OOM_STEPS, which would push an untrained model.
+        updates = result.get("total_steps") if isinstance(result, dict) else None
+        if updates != 0:
+            return oom_guard.oom_steps
+        if oom_guard.oom_steps == 0:
+            sys.exit("Stopped: training finished without a single optimizer update, so nothing was pushed.")
+        logger.warning("No optimizer update succeeded: every batch ran out of memory.")
+    except (TrainingOutOfMemory, torch.cuda.OutOfMemoryError):
+        # gliner2 catches out-of-memory in the forward and backward pass, but not in the
+        # optimizer step (for example while allocating optimizer state), so catch that here too.
         pass
 
     if args.batch_size == 1:
