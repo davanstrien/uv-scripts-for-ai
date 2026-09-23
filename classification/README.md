@@ -9,7 +9,23 @@ Text classification on [HF Jobs](https://huggingface.co/docs/hub/jobs): label a 
 
 If you have seen [Jev](https://docs.typesafe.ai/introduction) and other "System One" models: the
 models these scripts train are small, open versions of the same idea. They read a piece of data and
-return a label with a probability, and you can train one on your own labels.
+return a label with a probability, and you can train one on your own labels. For example, this
+[demo](https://huggingface.co/spaces/davanstrien/hub-task-tagger) suggests task tags for any Hub
+dataset; its model was fine-tuned with `train-gliner2.py` in 17 minutes.
+
+To try it on your own account, this command fine-tunes a classifier for British Library book titles
+(Fiction / Non-fiction). Training takes about 2 minutes on a `t4-small` and costs about $0.02.
+Accuracy goes from 0.767 zero-shot to 0.907 fine-tuned. You get a private model repo, and its card
+shows both scores next to the majority-class baseline.
+
+```bash
+hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-gliner2.py \
+  biglam/blbooksgenre your-username/gliner2-blbooks-genre \
+  --dataset-config title_genre_classifiction --text-column title
+```
+
+You need the `hf` CLI, signed in, and Jobs credit: see the [Jobs quickstart](https://huggingface.co/docs/hub/jobs-quickstart).
 
 | Script | What it does |
 |--------|--------------|
@@ -29,8 +45,9 @@ Pick by how many labels you have:
 | a few hundred to a few thousand | `train-gliner2.py`, which also shows you what zero-shot already gets | small GPU (`t4-small`) |
 | a few thousand or more | `train-classifier.py` | GPU |
 
-The rungs chain: bootstrap labels with `classify-dataset.py`, review them, then train a small
-dedicated model on what you kept.
+The rungs chain: bootstrap labels with `classify-gliner2.py` or `classify-dataset.py`, review them,
+then train a small dedicated model on what you kept. Each rung is one command, so you can move up
+as you collect more labels.
 
 ## Zero-shot first, then fine-tune (GLiNER2)
 
@@ -84,6 +101,9 @@ English text, `--base-model fastino/gliner2.5-base-v1` is smaller and faster;
 
 ### Results
 
+Fine-tuning beat zero-shot on every dataset below. The public-dataset runs took 2 to 30 minutes of
+training on one GPU and cost $0.01 to $0.20; the 52-tag example took 17 minutes and about $1.50.
+
 | Dataset | Task | Labels | Train rows × epochs | Train time | Train cost | Metric | Majority floor | Zero-shot | Fine-tuned |
 |---|---|---|---|---|---|---|---|---|---|
 | [`biglam/blbooksgenre`](https://huggingface.co/datasets/biglam/blbooksgenre) (book titles) | single-label | 2 | 1,562 × 5 | 141s | $0.02 | accuracy | 0.747 | 0.767 (0.753–0.782) | **0.907** (0.897–0.925) |
@@ -108,8 +128,13 @@ For tens of labels scored together (a taxonomy, a fixed tag list), or data in a 
 A GLiNER2.5-base model fine-tuned with this script on 16,000 Hub datasets suggests task tags for
 a dataset from its column names and first row, among the 52 tags the Hub offers. Its first
 suggestion matches one of the owner's tags 69% of the time on 3,000 newer datasets from owners it
-never saw. Owners' tags are a noisy target, so the true rate is higher.
-[Model](https://huggingface.co/davanstrien/hub-task-tagger-gliner2.5-base) · [Demo](https://huggingface.co/spaces/davanstrien/hub-task-tagger) · [Notes on how it was trained](GLINER2-NOTES.md#a-larger-label-set-52-hub-task-tags)
+never saw. Owners' tags are a noisy target: in a hand-checked sample, about 1 in 10 datasets was
+missing a tag that fits.
+
+[Try the demo](https://huggingface.co/spaces/davanstrien/hub-task-tagger): paste a dataset id and
+see the suggested tags, the owner's tags and the exact text the model read. On a free 2-vCPU Space
+one prediction takes about 0.7–1 s.
+[Model](https://huggingface.co/davanstrien/hub-task-tagger-gliner2.5-base) · [Notes on how it was trained](GLINER2-NOTES.md#a-larger-label-set-52-hub-task-tags)
 
 ### Good to know
 
@@ -177,7 +202,7 @@ Evaluation split, metrics, dropped rows and `--private`: [SETFIT-NOTES.md](SETFI
 Fine-tunes a text-classification encoder on any Hub dataset and pushes the trained model
 back to the Hub — download, train, evaluate, push, and reload-verify in one job.
 
-- **Default model**: [LiquidAI/LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M) — a bidirectional encoder that beats ModernBERT-base on GLUE/SuperGLUE and handles 8,192-token documents. Any Hub encoder works via `--model` (ModernBERT, BERT, DeBERTa, …).
+- **Default model**: [LiquidAI/LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M) — a bidirectional encoder that LiquidAI reports beats ModernBERT-base on GLUE/SuperGLUE, and handles 8,192-token documents. Any Hub encoder works via `--model` (ModernBERT, BERT, DeBERTa, …).
 - **Single-label and multi-label**, auto-detected from the label column (`ClassLabel`/string/int → cross-entropy; list of labels → BCE + per-label threshold tuning).
 - **Round-trippable artifacts**: standard architectures produce standard models; encoders without a classification head (like LFM2.5) get a generic mean-pooling head pushed as custom code, so `AutoModelForSequenceClassification.from_pretrained(..., trust_remote_code=True)` always works.
 
