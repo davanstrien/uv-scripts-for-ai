@@ -5,7 +5,7 @@ tags: [uv-script, classification, fine-tuning, few-shot, zero-shot, setfit, glin
 
 # Classification Scripts
 
-Text classification on [HF Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs) — both directions:
+Text classification on [HF Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs): label a dataset with a model that needs no training, or train your own classifier from labelled examples.
 
 | Script | What it does |
 |--------|--------------|
@@ -14,7 +14,7 @@ Text classification on [HF Jobs](https://huggingface.co/docs/huggingface_hub/gui
 | [`train-setfit.py`](#few-shot-with-setfit-train-setfitpy) | **Few-shot** train a classifier from 8-64 labels per class with [SetFit](https://github.com/huggingface/setfit) — runs on CPU or GPU |
 | [`train-classifier.py`](#fine-tune-a-classifier-train-classifierpy) | **Fine-tune** an encoder into a classifier (default: [LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M)) and push it to the Hub |
 | [`classify-dataset.py`](#zero-shot-classification-classify-datasetpy) | **Zero-shot** classify a dataset with an instruction LLM (SmolLM3 + vLLM, structured outputs) |
-| `classify-dataset-sglang.py` | Zero-shot variant on SGLang (reasoning-aware `<think>` models) |
+| [`classify-dataset-sglang.py`](#zero-shot-classification-classify-datasetpy) | Zero-shot variant on SGLang (reasoning-aware `<think>` models) |
 
 Pick by how many labels you have:
 
@@ -140,16 +140,6 @@ logistic regression head on the resulting embeddings.
 training, particularly with larger models, longer texts or more classes. The same model and
 training settings work on either; the recipe uses the available accelerator automatically.
 
-- **Default body**: [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (22M), chosen for CPU speed. Swap it with `--body-model`.
-- **Evaluation split** follows the same precedence as `train-classifier.py`: `--eval-split` if given, else `validation`, else `test`, else a stratified carve-out of `--eval-fraction` from train.
-- **Single-label only.** A multi-label column exits with a pointer to `train-classifier.py`.
-- **Metrics match `train-classifier.py`** (accuracy + macro F1). Match evaluation rows and preprocessing when comparing runs.
-- **`--num-samples`** sets labelled examples per class (default 8). **`--sampling-strategy`** controls contrastive pairing: `oversampling` (default), `undersampling`, `unique`.
-- **Every run reports a majority baseline.** The run warns when accuracy fails to beat it, or the gain is below five percentage points. That fixed threshold is a review heuristic, not a measured noise level or significance test.
-- **It estimates training time before starting.** The script times forward/backward passes on actual texts and hardware, then refuses training projected above `--max-minutes` (default 60). Setup, evaluation and upload take additional time. A measurement error can skip this guard; use Jobs `--timeout` to enforce a wall-clock limit.
-- **Rows with missing or blank labels or texts are dropped**, with a count. Missing labels include `ClassLabel`'s `-1` sentinel and numeric NaN; plain integer `-1` remains a valid class. Splits with no usable labelled text, fewer than two observed training classes, and missing or non-string text columns exit before model loading.
-- **`--private` verifies the output repository is private before training.** If the destination already exists publicly, choose a new repo or change its visibility first.
-
 ```bash
 # 8 labels per class, on CPU
 hf jobs uv run --flavor cpu-basic --timeout 20m --secrets HF_TOKEN \
@@ -161,19 +151,6 @@ hf jobs uv run --flavor t4-small --timeout 20m --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-setfit.py \
   fancyzhx/ag_news username/ag-news-setfit-gpu --num-samples 8
 ```
-
-### Choosing another body or longer context
-
-`--body-model` accepts a Sentence Transformer checkpoint. Set `--max-seq-length` within that
-model's supported context window; increasing it cannot extend a model's native limit or restore
-text already shortened during dataset preparation. Longer sequences can need a smaller
-`--batch-size` or more GPU memory. The recipe measures training cost on the selected hardware.
-
-Follow the body's task-prefix instructions when preparing inputs. For example,
-[`nomic-ai/modernbert-embed-base`](https://huggingface.co/nomic-ai/modernbert-embed-base)
-uses Nomic's task prefixes: classification inputs should begin with `classification: `.
-Include the same prefix during training, evaluation and inference. The recipe does not add it
-automatically. Retain the original texts and the preprocessing details with the model.
 
 ### Measured
 
@@ -192,60 +169,16 @@ substantially with which examples happen to get sampled; SetFit's own benchmarks
 standard deviation across ten seeds for exactly this reason. Run your own task before trusting
 any of these numbers.
 
-### Compare more than the majority baseline
+### Good to know
 
-The `emotion` run reached **0.370** accuracy against a **0.352** majority baseline. Other
-single-seed body-model runs reached 0.418 (`bge-small`) and 0.410 (`paraphrase-mpnet-base-v2`).
-These results call for further evaluation; they do not establish a limit on the task or method.
+- **Default body**: [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (22M), chosen for CPU speed. Swap it with `--body-model`; set `--max-seq-length` within its context window and add any task prefix it needs yourself. See [Choosing another body or longer context](SETFIT-NOTES.md#choosing-another-body-or-longer-context).
+- **Single-label only.** A multi-label column exits with a pointer to `train-classifier.py`.
+- **Beat more than the majority baseline.** Every run reports it, but `emotion` beat it by under 2 points; compare with TF-IDF plus logistic regression or zero-shot on the same rows. See [Compare more than the majority baseline](SETFIT-NOTES.md#compare-more-than-the-majority-baseline).
+- **Many classes: watch the pair count.** Pairs grow with the square of the training-set size; at 77 classes use `--sampling-strategy undersampling`. See [Many classes](SETFIT-NOTES.md#many-classes-watch-the-pair-count).
+- **It refuses runs projected above `--max-minutes`** (default 60). On `biglam/hansard_speech` (2.7M speeches, 28 parties) it refused to train and produced no score, and [the worked failure](SETFIT-NOTES.md#real-world-data-a-worked-failure) shows why.
+- **Load it with `SetFitModel.from_pretrained(repo)`**, not `AutoModelForSequenceClassification`: a SetFit model is a sentence-transformer body plus a scikit-learn head.
 
-SetFit's [zero-shot guide](https://huggingface.co/docs/setfit/how_to/zero_shot) reports **0.591**
-on emotion using BGE and training examples templated from the class names. It uses a different
-evaluation setup from the table above, so this is motivation for a matched comparison rather
-than a controlled comparison with this recipe. Templated training needs no labeled documents,
-but still uses compute.
-
-For your task, compare with a simple baseline such as TF-IDF plus logistic regression using
-the same training and evaluation rows. A zero-shot comparison can also be useful when class
-names describe the task well. Use repeated seeds and appropriate task metrics before drawing
-conclusions from small accuracy differences. This recipe trains and evaluates a supervised
-classifier; built-in templated zero-shot training is a separate possible extension.
-
-### Real-world data: a worked failure
-
-`biglam/hansard_speech` (2.7M parliamentary speeches, predicting `party` from `speech`) is the
-case where none of the convenient properties hold, and it is instructive precisely because it
-produces no score:
-
-- **No held-out split**, so the eval set has to be carved from train — the numbers stop being
-  comparable to anything published.
-- **~9.5% of rows have a blank `party`**, which without the drop trains an `""` class.
-- **28 parties after cleaning, nine of which cannot supply 8 examples** (`Respect` 4,
-  `Independent SDP` 2, `Change UK` 1). The requested eight-example budget cannot be met for those classes.
-- **1,878 steps at ~11s/step on CPU** — the script refuses it, projecting well past an hour.
-
-On completed runs, the model card discloses a carved evaluation split, per-class training counts
-and classes below the requested sample count. Dropped-row counts and measured truncation are
-reported in the logs; retain those logs alongside the model when documenting data preparation.
-
-### Many classes: watch the pair count
-
-SetFit trains on pairs drawn from every combination of training examples, so the pair count grows
-with the **square** of the training-set size — which is `--num-samples` x number of classes. The
-script logs the estimate before training starts:
-
-| Dataset | Strategy | Pairs | Steps |
-|---|---|---|---|
-| ag_news (4 classes x 8) | `oversampling` (default) | 768 | 48 |
-| banking77 (77 classes x 8) | `oversampling` (default) | 374,528 | 23,408 |
-| banking77 (77 classes x 8) | `undersampling` | 4,312 | 270 |
-
-At 77 classes the default would take roughly 15 hours on `cpu-basic`; `--sampling-strategy
-undersampling` finished in 18 seconds on a T4 in the recorded run. The script reports the pair
-and step counts, then measures step time to check `--max-minutes`. When it refuses training,
-it suggests undersampling where applicable and estimates whether that would fit the budget.
-
-> **Note**: a SetFit model is a sentence-transformer body plus a scikit-learn head. Load it with
-> `SetFitModel.from_pretrained(repo)`, not `AutoModelForSequenceClassification`.
+Evaluation split, metrics, dropped rows and `--private`: [SETFIT-NOTES.md](SETFIT-NOTES.md#behaviour-details).
 
 ## Fine-tune a classifier (`train-classifier.py`)
 
@@ -296,357 +229,74 @@ produces a plain, vLLM-servable model — pair it with
 [`uv-scripts/vllm`](https://huggingface.co/datasets/uv-scripts/vllm)'s
 `classify-dataset.py` for large-scale batch inference with the model you just trained.
 
----
+## Zero-shot classification (`classify-dataset.py`)
 
-# Zero-shot classification (`classify-dataset.py`)
+Label a dataset with an instruction LLM and no training data. You give a list of labels; the
+model picks one per row, and guided decoding (structured outputs) makes sure every answer is one
+of your labels. The default model is
+[HuggingFaceTB/SmolLM3-3B](https://huggingface.co/HuggingFaceTB/SmolLM3-3B); any instruction
+model works via `--model`. The result is your dataset with a new `classification` column.
 
-GPU-accelerated text classification for Hugging Face datasets with guaranteed valid outputs through structured generation. Powered by SmolLM3-3B's advanced reasoning capabilities.
+Two scripts do this. `classify-dataset.py` runs on vLLM and is the one to start with.
+`classify-dataset-sglang.py` runs the same task on SGLang, for reasoning models that write
+`<think>` traces; its options differ (`--reasoning`, `--save-reasoning`, `--batch-size`,
+`--grammar-backend`), so check its `--help`.
 
-## 🚀 Quick Start
+### Quick start
+
+A GPU is required. Run on Jobs with the vLLM image:
 
 ```bash
-# Classify IMDB reviews
-uv run classify-dataset.py \
+hf jobs uv run --flavor l4x1 --image vllm/vllm-openai:latest --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-dataset.py \
   --input-dataset stanfordnlp/imdb \
   --column text \
   --labels "positive,negative" \
-  --output-dataset user/imdb-classified
+  --output-dataset username/imdb-classified \
+  --max-samples 100 --shuffle
 ```
 
-That's it! No installation, no setup - just `uv run`.
+`--max-samples` with `--shuffle` takes a random sample, which matters for datasets sorted by
+date or label. Drop both to label the whole split.
 
-## 📋 Requirements
-
-- **GPU Required**: Uses GPU-accelerated inference
-- Python 3.10+
-- UV (will handle all dependencies automatically)
-- vLLM >= 0.6.6
-
-## 🎯 Features
-
-- **Guaranteed valid outputs** using structured generation with guided decoding
-- **Zero-shot classification** without training data required
-- **GPU-optimized** for maximum throughput and efficiency
-- **Default model**: [HuggingFaceTB/SmolLM3-3B](https://huggingface.co/HuggingFaceTB/SmolLM3-3B) - a fast 3B model with native thinking capabilities (`<think>` tags)
-- **Robust text handling** with preprocessing and validation
-- **Automatic progress tracking** and detailed statistics
-- **Direct Hub integration** - read and write datasets seamlessly
-- **Label descriptions** support for providing context to improve accuracy
-- **Reasoning mode** for interpretable classifications with thinking traces
-- **JSON output parsing** for reliable extraction from reasoning mode
-- **Optimized batching** with vLLM's automatic batch processing
-- **Multiple guided backends** - supports outlines, xgrammar, and more
-
-## 💻 Usage
-
-### Basic Classification
+### With reasoning and label descriptions
 
 ```bash
-uv run classify-dataset.py \
-  --input-dataset <dataset-id> \
-  --column <text-column> \
-  --labels <comma-separated-labels> \
-  --output-dataset <output-id>
-```
-
-### Arguments
-
-**Required:**
-
-- `--input-dataset`: Hugging Face dataset ID (e.g., `stanfordnlp/imdb`, `user/my-dataset`)
-- `--column`: Name of the text column to classify
-- `--labels`: Comma-separated classification labels (e.g., `"spam,ham"`)
-- `--output-dataset`: Where to save the classified dataset
-
-**Optional:**
-
-- `--model`: Model to use (default: **`HuggingFaceTB/SmolLM3-3B`** - a fast 3B parameter model)
-- `--label-descriptions`: Provide descriptions for each label to improve classification accuracy
-- `--enable-reasoning`: Enable reasoning mode with thinking traces (adds reasoning column)
-- `--split`: Dataset split to process (default: `train`)
-- `--max-samples`: Limit samples for testing
-- `--shuffle`: Shuffle dataset before selecting samples (useful for random sampling)
-- `--shuffle-seed`: Random seed for shuffling (default: 42)
-- `--temperature`: Generation temperature (default: 0.1)
-- `--guided-backend`: Backend for guided decoding (default: `outlines`)
-- `--hf-token`: Hugging Face token (or use `HF_TOKEN` env var)
-
-### Label Descriptions
-
-Provide context for your labels to improve classification accuracy:
-
-```bash
-uv run classify-dataset.py \
-  --input-dataset user/support-tickets \
-  --column content \
-  --labels "bug,feature,question,other" \
-  --label-descriptions "bug:something is broken,feature:request for new functionality,question:asking for help,other:anything else" \
-  --output-dataset user/tickets-classified
-```
-
-The model uses these descriptions to better understand what each label represents, leading to more accurate classifications.
-
-### Reasoning Mode
-
-Enable thinking traces for interpretable classifications:
-
-```bash
-uv run classify-dataset.py \
-  --input-dataset stanfordnlp/imdb \
-  --column text \
-  --labels "positive,negative,neutral" \
-  --enable-reasoning \
-  --output-dataset user/imdb-with-reasoning
-```
-
-When `--enable-reasoning` is used:
-- The model generates step-by-step reasoning using SmolLM3's thinking capabilities
-- Output includes three columns: `classification`, `reasoning`, and `parsing_success`
-- Final answer must be in JSON format: `{"label": "chosen_label"}`
-- Useful for understanding complex classification decisions
-- Trade-off: Slower but more interpretable
-
-## 📊 Examples
-
-### Sentiment Analysis
-
-```bash
-uv run classify-dataset.py \
-  --input-dataset stanfordnlp/imdb \
-  --column text \
-  --labels "positive,negative" \
-  --output-dataset user/imdb-sentiment
-```
-
-### Support Ticket Classification
-
-```bash
-# Run on HF Jobs with SmolLM3-3B (default)
-hf jobs uv run \
-  --flavor l4x1 \
-  --image vllm/vllm-openai:latest \
+hf jobs uv run --flavor l4x1 --image vllm/vllm-openai:latest --secrets HF_TOKEN \
   https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-dataset.py \
   --input-dataset user/support-tickets \
   --column content \
   --labels "bug,feature_request,question,other" \
   --label-descriptions "bug:code or product not working as expected,feature_request:asking for new functionality,question:seeking help or clarification,other:general comments or feedback" \
-  --output-dataset user/tickets-classified
-```
-
-### News Categorization
-
-```bash
-# Using SmolLM3-3B for efficient news classification
-hf jobs uv run \
-  --flavor l4x1 \
-  --image vllm/vllm-openai:latest \
-  https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-dataset.py \
-  --input-dataset ag_news \
-  --column text \
-  --labels "world,sports,business,tech" \
-  --output-dataset user/ag-news-categorized
-```
-
-### Complex Classification with Reasoning
-
-```bash
-# SmolLM3's thinking mode for nuanced feedback analysis
-hf jobs uv run \
-  --flavor l4x1 \
-  --image vllm/vllm-openai:latest \
-  https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-dataset.py \
-  --input-dataset user/customer-feedback \
-  --column text \
-  --labels "very_positive,positive,neutral,negative,very_negative" \
-  --label-descriptions "very_positive:extremely satisfied,positive:generally satisfied,neutral:mixed feelings,negative:dissatisfied,very_negative:extremely dissatisfied" \
   --enable-reasoning \
-  --output-dataset user/feedback-analyzed
+  --output-dataset username/tickets-classified
 ```
 
-This combines label descriptions with reasoning mode for maximum interpretability.
+With `--enable-reasoning` the model thinks step by step before it answers, and the output also
+has `reasoning` and `parsing_success` columns. Reasoning mode turns off structured outputs: the
+model must end with `{"label": "..."}`, and rows where that cannot be parsed are marked in
+`parsing_success`. It is slower, but you can read why each label was chosen.
 
-### ArXiv ML Research Classification
+### Options
 
-Classify academic papers into machine learning research areas:
+| Option | What it does |
+|---|---|
+| `--model` | Model to use (default `HuggingFaceTB/SmolLM3-3B`) |
+| `--label-descriptions` | `label:description,...` pairs that tell the model what each label means |
+| `--enable-reasoning` | Think before answering; adds `reasoning` and `parsing_success` columns |
+| `--split` | Split to process (default `train`) |
+| `--max-samples` | Label only the first N rows (or N random rows with `--shuffle`) |
+| `--shuffle`, `--shuffle-seed` | Shuffle before `--max-samples` (seed default 42) |
 
-```bash
-# Fast classification with random sampling
-uv run classify-dataset.py \
-  --input-dataset librarian-bots/arxiv-metadata-snapshot \
-  --column abstract \
-  --labels "llm,computer_vision,reinforcement_learning,optimization,theory,other" \
-  --label-descriptions "llm:language models and NLP,computer_vision:image and video processing,reinforcement_learning:RL and decision making,optimization:training and efficiency,theory:theoretical ML foundations,other:other ML topics" \
-  --output-dataset user/arxiv-ml-classified \
-  --split "train[:10000]" \
-  --max-samples 100 \
-  --shuffle
+Run `uv run classify-dataset.py --help` for all options.
 
-# With reasoning for nuanced classification
-hf jobs uv run \
-  --flavor l4x1 \
-  --image vllm/vllm-openai:latest \
-  https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-dataset.py \
-  --input-dataset librarian-bots/arxiv-metadata-snapshot \
-  --column abstract \
-  --labels "multimodal,agents,reasoning,safety,efficiency" \
-  --label-descriptions "multimodal:vision-language and cross-modal models,agents:autonomous agents and tool use,reasoning:reasoning and planning systems,safety:alignment and safety research,efficiency:model optimization and deployment" \
-  --enable-reasoning \
-  --output-dataset user/arxiv-frontier-research \
-  --split "train[:1000]" \
-  --max-samples 50
-```
+### Good to know
 
-The reasoning mode is particularly valuable for academic abstracts where papers often span multiple topics and require careful analysis to determine the primary focus.
-
-## 🚀 Running on HF Jobs
-
-Optimized for [Hugging Face Jobs](https://huggingface.co/docs/hub/spaces-gpu-jobs) (requires Pro subscription or Team/Enterprise organization):
-```bash
-# Run on L4 GPU with vLLM image
-hf jobs uv run \
-  --flavor l4x1 \
-  --image vllm/vllm-openai:latest \
-  https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-dataset.py \
-  --input-dataset stanfordnlp/imdb \
-  --column text \
-  --labels "positive,negative" \
-  --output-dataset user/imdb-classified
-```
-
-### GPU Flavors
-- `l4x1`: **Recommended starting point** - great for SmolLM3
-- `a10g-large`: More memory for larger batches or 7B+ models
-- `a100-large`: Maximum performance for demanding workloads
-
-## 🔧 Advanced Usage
-
-### Random Sampling
-
-When working with ordered datasets, use `--shuffle` with `--max-samples` to get a representative sample:
-
-```bash
-# Get 50 random reviews instead of the first 50
-uv run classify-dataset.py \
-  --input-dataset stanfordnlp/imdb \
-  --column text \
-  --labels "positive,negative" \
-  --output-dataset user/imdb-sample \
-  --max-samples 50 \
-  --shuffle \
-  --shuffle-seed 123  # For reproducibility
-```
-
-This is especially important for:
-- Chronologically ordered datasets (news, papers, social media)
-- Pre-sorted datasets (by rating, category, etc.)
-- Testing on diverse samples before processing the full dataset
-
-### Using Different Models
-
-By default, this script uses **[HuggingFaceTB/SmolLM3-3B](https://huggingface.co/HuggingFaceTB/SmolLM3-3B)** - a state-of-the-art 3B parameter model specifically designed for efficient inference. SmolLM3 features:
-- Native thinking capabilities with `<think>` tags for step-by-step reasoning
-- Excellent performance on classification tasks
-- Fast inference speed (50-100 texts/second on A10)
-- Low memory footprint allowing larger batch sizes
-
-While you can use other models, SmolLM3 is recommended for its balance of quality, speed, and reasoning capabilities:
-
-```bash
-# Larger model for complex classification
-uv run classify-dataset.py \
-  --input-dataset user/legal-docs \
-  --column text \
-  --labels "contract,patent,brief,memo,other" \
-  --output-dataset user/legal-classified \
-  --model Qwen/Qwen2.5-7B-Instruct
-```
-
-### Large Datasets
-
-vLLM automatically handles batching for optimal performance. For very large datasets, it will process efficiently without manual intervention:
-
-```bash
-uv run classify-dataset.py \
-  --input-dataset user/huge-dataset \
-  --column text \
-  --labels "A,B,C" \
-  --output-dataset user/huge-classified
-```
-
-## 📈 Performance
-
-- **SmolLM3-3B (default)**: ~50-100 texts/second on A10
-- **7B models**: ~20-50 texts/second on A10
-- vLLM automatically optimizes batching for best throughput
-- Performance scales with GPU memory and compute capability
-
-## 🤝 How It Works
-
-1. **vLLM**: Provides efficient GPU batch inference with automatic batching
-2. **Guided Decoding**: Uses outlines backend to guarantee valid label outputs
-3. **Structured Generation**: Constrains model outputs to exact label choices
-4. **UV**: Handles all dependencies automatically
-
-The script loads your dataset, preprocesses texts, classifies each one with guaranteed valid outputs, then saves the results as a new column in the output dataset.
-
-## 🐛 Troubleshooting
-
-### CUDA Not Available
-
-This script requires a GPU. Run it on:
-
-- A machine with NVIDIA GPU
-- HF Jobs (recommended)
-- Cloud GPU instances
-
-### Out of Memory
-
-- Use a smaller model
-- Use a larger GPU (e.g., a100-large)
-
-### Invalid/Skipped Texts
-
-- Texts shorter than 3 characters are skipped
-- Empty or None values are marked as invalid
-- Very long texts are truncated to 4000 characters
-
-### Classification Quality
-
-- With guided decoding, outputs are guaranteed to be valid labels
-- For better results, use clear and distinct label names
-- Try the `reasoning` prompt style for complex classifications
-- Use a larger model for nuanced tasks
-
-### vLLM Version Issues
-
-If you see `ImportError: cannot import name 'GuidedDecodingParams'`:
-
-- Your vLLM version is too old (requires >= 0.6.6)
-- The script specifies the correct version in its dependencies
-- UV should automatically install the correct version
-
-## 🔬 Advanced Workflows
-
-For complex real-world workflows that integrate UV scripts with the Python HF Jobs API, see the [ArXiv ML Trends example](examples/arxiv-workflow/). This demonstrates:
-
-- **Multi-stage pipelines**: Data preparation → GPU classification → Analysis
-- **Python API orchestration**: Using `run_uv_job()` to manage GPU jobs programmatically
-- **Production patterns**: Error handling, parallel execution, and incremental updates
-- **Cost optimization**: Choosing appropriate compute resources for each task
-
-```python
-# Example: Submit a classification job via Python API
-from huggingface_hub import run_uv_job
-
-job = run_uv_job(
-    script="https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-dataset.py",
-    args=["--input-dataset", "my/dataset", "--labels", "A,B,C"],
-    flavor="l4x1",
-    image="vllm/vllm-openai:latest"
-)
-result = job.wait()
-```
-
-## 📝 License
-
-This script is provided as-is for use with the UV Scripts organization.
+- **Speed**: about 50-100 texts/second for SmolLM3-3B on an A10, and 20-50 for 7B models.
+  `l4x1` is a good start; use `a10g-large` or larger for 7B+ models or out-of-memory errors.
+- **Text handling**: texts shorter than 3 characters and empty values are skipped; texts are
+  truncated to 4,000 characters.
+- **Label names matter.** Use clear, distinct names, add `--label-descriptions` when names are
+  ambiguous, and try a larger model for nuanced tasks.
+- **vLLM version**: `ImportError: cannot import name GuidedDecodingParams` means the vLLM
+  version does not match; the script requires `vllm>=0.6.6`.
