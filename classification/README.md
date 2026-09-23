@@ -1,6 +1,6 @@
 ---
 viewer: false
-tags: [uv-script, classification, fine-tuning, few-shot, setfit, vllm, structured-outputs, hf-jobs]
+tags: [uv-script, classification, fine-tuning, few-shot, zero-shot, setfit, gliner2, vllm, structured-outputs, hf-jobs]
 ---
 
 # Classification Scripts
@@ -9,8 +9,10 @@ Text classification on [HF Jobs](https://huggingface.co/docs/huggingface_hub/gui
 
 | Script | What it does |
 |--------|--------------|
-| [`train-classifier.py`](#fine-tune-a-classifier-train-classifierpy) | **Fine-tune** an encoder into a classifier (default: [LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M)) and push it to the Hub |
+| [`classify-gliner2.py`](#zero-shot-first-then-fine-tune-gliner2) | **Label a dataset** with GLiNER2: zero-shot from label names, or with a `train-gliner2.py` model |
+| [`train-gliner2.py`](#zero-shot-first-then-fine-tune-gliner2) | **Fine-tune** [GLiNER2](https://github.com/fastino-ai/GLiNER2), a small model (74M–287M) that already classifies zero-shot, and report the zero-shot score next to the fine-tuned one |
 | [`train-setfit.py`](#few-shot-with-setfit-train-setfitpy) | **Few-shot** train a classifier from 8-64 labels per class with [SetFit](https://github.com/huggingface/setfit) — runs on CPU or GPU |
+| [`train-classifier.py`](#fine-tune-a-classifier-train-classifierpy) | **Fine-tune** an encoder into a classifier (default: [LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M)) and push it to the Hub |
 | [`classify-dataset.py`](#zero-shot-classification-classify-datasetpy) | **Zero-shot** classify a dataset with an instruction LLM (SmolLM3 + vLLM, structured outputs) |
 | `classify-dataset-sglang.py` | Zero-shot variant on SGLang (reasoning-aware `<think>` models) |
 
@@ -18,63 +20,117 @@ Pick by how many labels you have:
 
 | Labels you have | Use | Hardware |
 |---|---|---|
-| none | `classify-dataset.py` to bootstrap labels, or for one-off jobs | GPU |
+| none | `classify-gliner2.py --labels ...` for a cheap first pass; `classify-dataset.py` when the task needs an LLM's reasoning | small GPU (CPU works at ~1.4 rows/s); GPU |
 | ~8-64 per class | `train-setfit.py` | CPU supported; GPU for faster training |
-| a few thousand | `train-classifier.py` | GPU |
+| a few hundred to a few thousand | `train-gliner2.py`, which also shows you what zero-shot already gets | small GPU (`t4-small`) |
+| a few thousand or more | `train-classifier.py` | GPU |
 
 The rungs chain: bootstrap labels with `classify-dataset.py`, review them, then train a small
 dedicated model on what you kept.
 
-## Fine-tune a classifier (`train-classifier.py`)
+## Zero-shot first, then fine-tune (GLiNER2)
 
-Fine-tunes a text-classification encoder on any Hub dataset and pushes the trained model
-back to the Hub — download, train, evaluate, push, and reload-verify in one job.
+Label a dataset with your own list of labels, see how far zero-shot gets you, then fine-tune a
+small model on your labels, in minutes and for a few cents on one GPU. The result is a model
+that returns a label and a probability for every row, and is small enough to run on a CPU.
 
-- **Default model**: [LiquidAI/LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M) — a bidirectional encoder that beats ModernBERT-base on GLUE/SuperGLUE and handles 8,192-token documents. Any Hub encoder works via `--model` (ModernBERT, BERT, DeBERTa, …).
-- **Single-label and multi-label**, auto-detected from the label column (`ClassLabel`/string/int → cross-entropy; list of labels → BCE + per-label threshold tuning).
-- **Round-trippable artifacts**: standard architectures produce standard models; encoders without a classification head (like LFM2.5) get a generic mean-pooling head pushed as custom code, so `AutoModelForSequenceClassification.from_pretrained(..., trust_remote_code=True)` always works.
+[GLiNER2](https://github.com/fastino-ai/GLiNER2) is a small encoder that reads the label names
+as part of its input, so it classifies with no training at all, and fine-tuning teaches it what
+your labels mean in your data. (For entity extraction with the original GLiNER library, see
+[`uv-scripts/gliner`](https://huggingface.co/datasets/uv-scripts/gliner).) Two scripts:
 
-```bash
-# single-label (ag_news has a ClassLabel column)
-hf jobs uv run --flavor a10g-small --secrets HF_TOKEN \
-  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-classifier.py \
-  fancyzhx/ag_news username/news-classifier
+- **`train-gliner2.py`** scores the base model zero-shot, fine-tunes it on your labels, and
+  scores it again on the same held-out rows. The model card reports both next to the
+  majority-class floor, so you can see what the labels bought you.
+- **`classify-gliner2.py`** labels a whole dataset. Pass `--labels` for zero-shot, or `--model`
+  with a `train-gliner2.py` output; the tasks and labels are read from the model repo.
+  Labels are passed as separate words; quote a label with spaces:
+  `--labels World Sports Business "Science and technology"`. A fine-tuned model is passed
+  by repo id: `--model username/gliner2-blbooks-genre`.
 
-# multi-label (go_emotions has a list-of-labels column)
-hf jobs uv run --flavor a10g-small --secrets HF_TOKEN \
-  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-classifier.py \
-  google-research-datasets/go_emotions username/emotion-classifier --label-column labels
-```
-
-Key options: `--model`, `--max-length` (512 default; up to 8192 with
-`--gradient-checkpointing` and a small `--batch-size` on a10g/a100), `--epochs`, `--lr`,
-`--batch-size`, `--max-samples` (smoke runs), `--eval-split` (auto-detects
-validation/test, or holds out 10% of train). Run `uv run train-classifier.py --help` for all.
-
-### Worked example: classify dataset cards by task
-
-[`davanstrien/dataset-cards-with-task-categories`](https://huggingface.co/datasets/davanstrien/dataset-cards-with-task-categories)
-contains 21k Hub dataset cards (frontmatter stripped) labelled with their `task_categories`
-metadata — a real multi-label task over long documents:
+### Quick start
 
 ```bash
-hf jobs uv run --flavor a10g-small --secrets HF_TOKEN \
-  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-classifier.py \
-  davanstrien/dataset-cards-with-task-categories username/dataset-card-task-classifier \
-  --label-column labels --max-length 1024 --batch-size 8 --grad-accum 2
+# fine-tune: British Library book titles -> Fiction / Non-fiction
+hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-gliner2.py \
+  biglam/blbooksgenre username/gliner2-blbooks-genre \
+  --dataset-config title_genre_classifiction --text-column title
+
+# label a dataset with that model
+hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-gliner2.py \
+  biglam/blbooksgenre username/blbooks-genre-predictions \
+  --dataset-config title_genre_classifiction --text-column title --model username/gliner2-blbooks-genre
+
+# or skip training: zero-shot from label names
+hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/classify-gliner2.py \
+  fancyzhx/ag_news username/ag-news-topics --split test \
+  --labels World Sports Business "Science and technology" --task-name topic
 ```
 
-The output model predicts likely task categories from a card's prose — e.g. for suggesting
-metadata on datasets that lack it.
+The second command labels the same rows the model was trained on, so it shows the workflow, not
+the model's accuracy; the held-out scores are on the model card. For real use, point it at data
+the model has not seen. Outputs are **private by default** (`--public` to opt out).
 
-### Training a standard encoder instead
+These commands use the default base model, `fastino/gliner2.5-multi-v1` (multilingual). For
+English text, `--base-model fastino/gliner2.5-base-v1` is smaller and faster;
+`gliner2.5-small-v1` is the fastest and loses about 4 points on the 52-tag example. See [Choosing a model size](#choosing-a-model-size).
 
-`--model answerdotai/ModernBERT-base` (or any encoder with a native classification head)
-produces a plain, vLLM-servable model — pair it with
-[`uv-scripts/vllm`](https://huggingface.co/datasets/uv-scripts/vllm)'s
-`classify-dataset.py` for large-scale batch inference with the model you just trained.
+### What it buys you
+
+| Dataset | Task | Labels | Train rows × epochs | Train time | Train cost | Metric | Majority floor | Zero-shot | Fine-tuned |
+|---|---|---|---|---|---|---|---|---|---|
+| [`biglam/blbooksgenre`](https://huggingface.co/datasets/biglam/blbooksgenre) (book titles) | single-label | 2 | 1,562 × 5 | 141s | $0.02 | accuracy | 0.747 | 0.767 (0.753–0.782) | **0.907** (0.897–0.925) |
+| [`fancyzhx/ag_news`](https://huggingface.co/datasets/fancyzhx/ag_news) | single-label | 4 | 2,000 × 2 | 125s | $0.01 | accuracy | 0.268 | 0.718 | **0.852** |
+| [`google-research-datasets/go_emotions`](https://huggingface.co/datasets/google-research-datasets/go_emotions) | multi-label | 28 | 2,000 × 2 | 216s | $0.02 | micro F1 | — | 0.265 | **0.464** |
+| [`SetFit/TREC-QC`](https://huggingface.co/datasets/SetFit/TREC-QC), two tasks in one model | single-label ×2 | 6 + 50 | 5,452 × 3 | 1,761s | $0.20 | accuracy | 0.276 / 0.246 | 0.542 / 0.468 | **0.954 / 0.876** |
+| same, on `a10g-small`, default batch size, bf16 | single-label ×2 | 6 + 50 | 5,452 × 3 | 509s | $0.14 | accuracy | 0.276 / 0.246 | not run | **0.944 / 0.872** |
+| [`stanfordnlp/imdb`](https://huggingface.co/datasets/stanfordnlp/imdb) (reviews; 15% truncated at 2,000 characters) | single-label | 2 | 1,000 × 1 | 122s | $0.01 | accuracy | 0.500 | 0.777 | **0.840** |
+| Hub dataset task tags ([worked example](#worked-example-tagging-hub-datasets)), `--base-model fastino/gliner2.5-base-v1 --label-augmentation off`, on `rtx-pro-6000` | single-label choice from a fixed set | 52 | 16,000 × 5 | 17 min | ~$1.50 | top-1 in the owner's tags | 0.320 (always "text-generation") | 0.102 | **0.690** (2 seeds: 0.695 / 0.686) |
+
+Most rows are single, deliberately small runs that test the script, not tuned results. Seed ranges,
+out-of-memory history and GPU comparisons are in [GLINER2-NOTES.md](GLINER2-NOTES.md).
+
+### Choosing a model size
+
+| Base model                             | Params | Use it when                                | Hub-tags top-1 | CPU latency per row (free Space, 2 vCPU) | GPU (L4, fp16) |
+| -------------------------------------- | ------ | ------------------------------------------ | -------------- | ---------------------------------------- | -------------- |
+| `fastino/gliner2.5-small-v1`           | 74M    | speed matters most                         | 0.653          | ~0.3 s                                   | ~19 ms         |
+| `fastino/gliner2.5-base-v1`            | 194M   | English text; the best accuracy per second | 0.690          | ~0.7–1 s                                 | ~19 ms         |
+| `fastino/gliner2.5-multi-v1` (default) | 287M   | non-English or mixed-language text         | not measured   | —                                        | —              |
+
+On a GPU, base and small are equally fast per row; the difference only shows on a CPU.
+
+For speed on a CPU, use plain fp32 PyTorch; see the notes for what did not work (int8, ONNX).
+
+### Larger or fixed label sets
+
+For tens of labels scored together (a taxonomy, a fixed tag list), or data in a bucket, see
+[Larger or fixed label sets](GLINER2-NOTES.md#larger-or-fixed-label-sets) in the notes:
+`--labels-file`, `--label-augmentation off`, local `--train-file`/`--eval-file` and `--export-predictions`.
+
+### Worked example: tagging Hub datasets
+
+A GLiNER2.5-base model fine-tuned with this script on 16,000 Hub datasets suggests task tags for
+a dataset from its column names and first row, among the 52 tags the Hub offers. Its first
+suggestion matches one of the owner's tags 69% of the time on 3,000 newer datasets from owners it
+never saw. Owners' tags are a noisy target, so the true rate is higher.
+[Model](https://huggingface.co/davanstrien/hub-task-tagger-gliner2.5-base) · [Demo](https://huggingface.co/spaces/davanstrien/hub-task-tagger) · [Notes on how it was trained](GLINER2-NOTES.md#a-larger-label-set-52-hub-task-tags)
+
+### Good to know
+
+- **Single-label and multi-label** are auto-detected from the label column; repeat `--label-column` to train several tasks in one model.
+- **Label names are part of the prompt.** Real names (`Fiction`, `Sports`) work; integer codes make zero-shot meaningless.
+- **Out of GPU memory, it restarts at a smaller batch size** and stops before pushing if even batch size 1 fails. Many labels or long texts want an `a10g-small`.
+- **Always pass `--timeout`.** Older `hf` CLIs ignore the scripts' `[tool.hf-jobs]` header and stop the Job after 30 minutes.
+
+More behaviour details, tested commands, findings and dead ends: [GLINER2-NOTES.md](GLINER2-NOTES.md).
 
 ## Few-shot with SetFit (`train-setfit.py`)
+
+An alternative when you have only a handful of labelled examples per class (8-64) and want a sentence-transformer model.
 
 Trains a [SetFit](https://github.com/huggingface/setfit) classifier from a handful of labelled
 examples per class. SetFit finetunes a sentence-transformer body on contrastive pairs, then fits a
@@ -190,6 +246,55 @@ it suggests undersampling where applicable and estimates whether that would fit 
 
 > **Note**: a SetFit model is a sentence-transformer body plus a scikit-learn head. Load it with
 > `SetFitModel.from_pretrained(repo)`, not `AutoModelForSequenceClassification`.
+
+## Fine-tune a classifier (`train-classifier.py`)
+
+Fine-tunes a text-classification encoder on any Hub dataset and pushes the trained model
+back to the Hub — download, train, evaluate, push, and reload-verify in one job.
+
+- **Default model**: [LiquidAI/LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M) — a bidirectional encoder that beats ModernBERT-base on GLUE/SuperGLUE and handles 8,192-token documents. Any Hub encoder works via `--model` (ModernBERT, BERT, DeBERTa, …).
+- **Single-label and multi-label**, auto-detected from the label column (`ClassLabel`/string/int → cross-entropy; list of labels → BCE + per-label threshold tuning).
+- **Round-trippable artifacts**: standard architectures produce standard models; encoders without a classification head (like LFM2.5) get a generic mean-pooling head pushed as custom code, so `AutoModelForSequenceClassification.from_pretrained(..., trust_remote_code=True)` always works.
+
+```bash
+# single-label (ag_news has a ClassLabel column)
+hf jobs uv run --flavor a10g-small --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-classifier.py \
+  fancyzhx/ag_news username/news-classifier
+
+# multi-label (go_emotions has a list-of-labels column)
+hf jobs uv run --flavor a10g-small --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-classifier.py \
+  google-research-datasets/go_emotions username/emotion-classifier --label-column labels
+```
+
+Key options: `--model`, `--max-length` (512 default; up to 8192 with
+`--gradient-checkpointing` and a small `--batch-size` on a10g/a100), `--epochs`, `--lr`,
+`--batch-size`, `--max-samples` (smoke runs), `--eval-split` (auto-detects
+validation/test, or holds out 10% of train). Run `uv run train-classifier.py --help` for all.
+
+### Worked example: classify dataset cards by task
+
+[`davanstrien/dataset-cards-with-task-categories`](https://huggingface.co/datasets/davanstrien/dataset-cards-with-task-categories)
+contains 21k Hub dataset cards (frontmatter stripped) labelled with their `task_categories`
+metadata — a real multi-label task over long documents:
+
+```bash
+hf jobs uv run --flavor a10g-small --secrets HF_TOKEN \
+  https://huggingface.co/datasets/uv-scripts/classification/raw/main/train-classifier.py \
+  davanstrien/dataset-cards-with-task-categories username/dataset-card-task-classifier \
+  --label-column labels --max-length 1024 --batch-size 8 --grad-accum 2
+```
+
+The output model predicts likely task categories from a card's prose — e.g. for suggesting
+metadata on datasets that lack it.
+
+### Training a standard encoder instead
+
+`--model answerdotai/ModernBERT-base` (or any encoder with a native classification head)
+produces a plain, vLLM-servable model — pair it with
+[`uv-scripts/vllm`](https://huggingface.co/datasets/uv-scripts/vllm)'s
+`classify-dataset.py` for large-scale batch inference with the model you just trained.
 
 ---
 
