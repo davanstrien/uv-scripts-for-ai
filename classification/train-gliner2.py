@@ -20,8 +20,8 @@ the base checkpoint) that already works zero-shot.
 
 GLiNER2 reads the label names as part of its input, so it classifies with no training at all.
 This script measures that zero-shot score first, fine-tunes on your labels, then measures
-again on the same held-out rows. The model card reports both numbers, so you can see what the
-labels bought you. One model can answer several questions at once: pass --label-column more
+again on the same held-out rows. The model card reports both numbers.
+One model can answer several questions at once: pass --label-column more
 than once and each column becomes a task.
 
 Run on HF Jobs (t4-small is enough for a few thousand short texts):

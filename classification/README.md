@@ -1,11 +1,15 @@
 ---
 viewer: false
-tags: [uv-script, classification, fine-tuning, few-shot, zero-shot, setfit, gliner2, vllm, structured-outputs, hf-jobs]
+tags: [uv-script, classification, fine-tuning, few-shot, zero-shot, decision-model, setfit, gliner2, vllm, structured-outputs, hf-jobs]
 ---
 
 # Classification Scripts
 
 Text classification on [HF Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs): label a dataset with a model that needs no training, or train your own classifier from labelled examples.
+
+If you have seen [Jev](https://docs.typesafe.ai/introduction) and other "System One" models: the
+models these scripts train are small, open versions of the same idea. They read a piece of data and
+return a label with a probability, and you can train one on your own labels.
 
 | Script | What it does |
 |--------|--------------|
@@ -40,8 +44,8 @@ your labels mean in your data. (For entity extraction with the original GLiNER l
 [`uv-scripts/gliner`](https://huggingface.co/datasets/uv-scripts/gliner).) Two scripts:
 
 - **`train-gliner2.py`** scores the base model zero-shot, fine-tunes it on your labels, and
-  scores it again on the same held-out rows. The model card reports both next to the
-  majority-class floor, so you can see what the labels bought you.
+  scores it again on the same held-out rows. The model card reports both scores next to the
+  majority-class baseline.
 - **`classify-gliner2.py`** labels a whole dataset. Pass `--labels` for zero-shot, or `--model`
   with a `train-gliner2.py` output; the tasks and labels are read from the model repo.
   Labels are passed as separate words; quote a label with spaces:
@@ -78,7 +82,7 @@ These commands use the default base model, `fastino/gliner2.5-multi-v1` (multili
 English text, `--base-model fastino/gliner2.5-base-v1` is smaller and faster;
 `gliner2.5-small-v1` is the fastest and loses about 4 points on the 52-tag example. See [Choosing a model size](#choosing-a-model-size).
 
-### What it buys you
+### Results
 
 | Dataset | Task | Labels | Train rows × epochs | Train time | Train cost | Metric | Majority floor | Zero-shot | Fine-tuned |
 |---|---|---|---|---|---|---|---|---|---|
