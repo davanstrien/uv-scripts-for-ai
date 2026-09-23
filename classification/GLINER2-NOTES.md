@@ -99,6 +99,17 @@ How it was set up, if you want to do something similar with your own label list:
 - **Two eval files** (`--eval-file calibration=… --eval-file development=…`) and
   `--export-predictions`: thresholds are chosen on one file and checked on the other.
 
+## Choosing a model size
+
+| Base model                             | Params | Use it when                                | Hub-tags top-1 | CPU latency per row (free Space, 2 vCPU) | GPU (L4, fp16) |
+| -------------------------------------- | ------ | ------------------------------------------ | -------------- | ---------------------------------------- | -------------- |
+| [`fastino/gliner2.5-small-v1`](https://huggingface.co/fastino/gliner2.5-small-v1) | 74M    | speed matters most                         | 0.653          | ~0.3 s                                   | ~19 ms         |
+| [`fastino/gliner2.5-base-v1`](https://huggingface.co/fastino/gliner2.5-base-v1) | 194M   | English text; the best accuracy per second | 0.690          | ~0.7–1 s                                 | ~19 ms         |
+| [`fastino/gliner2.5-multi-v1`](https://huggingface.co/fastino/gliner2.5-multi-v1) (default) | 287M   | non-English or mixed-language text         | not measured   | —                                        | —              |
+
+On a GPU, base and small are equally fast per row; the difference only shows on a CPU. For speed on
+a CPU, use plain fp32 PyTorch (see below for what did not work).
+
 ## Speed and quantization
 
 Per-row latency at batch size 1, fine-tuned 52-label models:

@@ -80,7 +80,7 @@ the model has not seen. Outputs are **private by default** (`--public` to opt ou
 
 These commands use the default base model, `fastino/gliner2.5-multi-v1` (multilingual). For
 English text, `--base-model fastino/gliner2.5-base-v1` is smaller and faster;
-`gliner2.5-small-v1` is the fastest and loses about 4 points on the 52-tag example. See [Choosing a model size](#choosing-a-model-size).
+`gliner2.5-small-v1` is the fastest and loses about 4 points on the 52-tag example. Sizes and speeds: [Choosing a model size](GLINER2-NOTES.md#choosing-a-model-size).
 
 ### Results
 
@@ -96,18 +96,6 @@ English text, `--base-model fastino/gliner2.5-base-v1` is smaller and faster;
 
 Most rows are single, deliberately small runs that test the script, not tuned results. Seed ranges,
 out-of-memory history and GPU comparisons are in [GLINER2-NOTES.md](GLINER2-NOTES.md).
-
-### Choosing a model size
-
-| Base model                             | Params | Use it when                                | Hub-tags top-1 | CPU latency per row (free Space, 2 vCPU) | GPU (L4, fp16) |
-| -------------------------------------- | ------ | ------------------------------------------ | -------------- | ---------------------------------------- | -------------- |
-| [`fastino/gliner2.5-small-v1`](https://huggingface.co/fastino/gliner2.5-small-v1) | 74M    | speed matters most                         | 0.653          | ~0.3 s                                   | ~19 ms         |
-| [`fastino/gliner2.5-base-v1`](https://huggingface.co/fastino/gliner2.5-base-v1) | 194M   | English text; the best accuracy per second | 0.690          | ~0.7–1 s                                 | ~19 ms         |
-| [`fastino/gliner2.5-multi-v1`](https://huggingface.co/fastino/gliner2.5-multi-v1) (default) | 287M   | non-English or mixed-language text         | not measured   | —                                        | —              |
-
-On a GPU, base and small are equally fast per row; the difference only shows on a CPU.
-
-For speed on a CPU, use plain fp32 PyTorch; see the notes for what did not work (int8, ONNX).
 
 ### Larger or fixed label sets
 
