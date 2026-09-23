@@ -18,12 +18,15 @@ First, [install the `hf` CLI and sign in](https://huggingface.co/docs/hub/jobs-q
 Try [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) on seven scanned pages from [NASA’s *Food for Space Flight* booklet](https://huggingface.co/datasets/uv-scripts/ocr-demo). Replace `your-username` with your Hugging Face username:
 
 ```bash
-hf jobs uv run --flavor a10g-small --timeout 15m --secrets HF_TOKEN \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \
+hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \
     uv-scripts/ocr-demo your-username/ocr-demo-results
 ```
 
-The Job adds a `markdown` column to all seven rows and saves them in `your-username/ocr-demo-results`. Dependency installation and model loading can take a few minutes before OCR starts. The [dataset card](https://huggingface.co/datasets/uv-scripts/ocr-demo) documents the source and licence. Check the extracted text against the originals, especially tables and reading order.
+The script declares its hardware (`a10g-small`) and the `HF_TOKEN` secret in a
+[`[tool.hf-jobs]` header](https://huggingface.co/docs/hub/jobs-configuration#define-the-launch-config-in-the-script)
+(`hf` CLI 1.32 or newer reads it; `hf jobs uv run --dry-run <script>` shows the resolved
+configuration). Flags still win, so add `--timeout 1h` for a larger dataset or `--flavor` to
+change hardware. The Job adds a `markdown` column to all seven rows and saves them in `your-username/ocr-demo-results`. Dependency installation and model loading can take a few minutes before OCR starts. The [dataset card](https://huggingface.co/datasets/uv-scripts/ocr-demo) documents the source and licence. Check the extracted text against the originals, especially tables and reading order.
 
 ### Try the same pages as a PDF
 
