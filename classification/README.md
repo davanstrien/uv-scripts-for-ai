@@ -227,6 +227,10 @@ hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \
   --labels World Sports Business "Science and technology" --task-name topic
 ```
 
+The second command labels the same `biglam/blbooksgenre` rows the model was trained on, so it
+shows the workflow, not the model's accuracy. The held-out scores are on the model card. For real
+use, point it at data the model has not seen.
+
 - **Single-label and multi-label**, auto-detected from the label column (a list per row is multi-label). An empty list is kept as a valid "none of these" answer.
 - **Several tasks in one model.** Repeat `--label-column` and each column becomes a task; the model answers all of them in one pass. `classify-gliner2.py` then writes one `predicted_<task>` and one `predicted_<task>_confidence` column per task.
 - **Evaluation split and metrics match `train-classifier.py` and `train-setfit.py`** (`--eval-split`, else `validation`, else `test`, else a carve-out; accuracy + macro F1), so the rungs are comparable. Multi-label tasks report micro/macro F1 and exact match.
@@ -254,20 +258,22 @@ hf jobs uv run --flavor t4-small --timeout 1h --secrets HF_TOKEN \
   - A `run_manifest.json` (all arguments except the token, the label-augmentation config, precision, device and package versions, then the results) is written to `--output-dir`, the export directory and the model folder.
 - **Pick the GPU by label count and text length.** A `t4-small` fit short texts with 2, 4 and 28 labels at the default batch size. The 56-label TREC task and 2,000-character IMDB reviews both fell back to batch size 4, and IMDB did so on the A10G too. `a10g-small` (24 GB) trains about 2.3× faster and fit the 56-label TREC run at the default batch size, in 509s against 1,761s on the T4 at batch size 4. `--precision auto` uses bf16 on Ampere or newer GPUs (A10G, L4) and fp32 on a T4; on the A10G bf16 and fp32 ran at the same speed (62s and 59s), so bf16 there buys memory, not time.
 - **Texts are truncated** to `--max-text-chars` (default 2000), with a count.
-- **It is a GLiNER2 checkpoint**, loaded with `gliner2.classification.Classifier.from_pretrained(repo)`, not `AutoModelForSequenceClassification`. `gliner2` pins `transformers<5`; the script's own environment keeps that from mattering.
+- **It is a GLiNER2 checkpoint**, loaded with `gliner2.classification.Classifier.from_pretrained(repo)`, not `AutoModelForSequenceClassification`. `gliner2` pins `transformers<5`, which keeps `huggingface_hub` below 1.0 inside the Job. The `hf` CLI 1.32 or newer that reads the `[tool.hf-jobs]` header is a separate install on your own machine, so the two versions do not conflict.
 
 ### Measured
 
 On `t4-small` unless stated, single seed, default learning rates. "Zero-shot" and "fine-tuned" are scored on the same held-out rows.
+"Train cost" is the train time at the `hf jobs hardware` rates on 2026-09-23: $0.40/hour for `t4-small`, $1.00/hour for `a10g-small`.
+The Job also loads the data and model, scores zero-shot and pushes, so the bill for the whole Job is higher.
 
-| Dataset | Task | Labels | Train rows × epochs | Train time | Metric | Majority floor | Zero-shot | Fine-tuned |
-|---|---|---|---|---|---|---|---|---|
-| [`biglam/blbooksgenre`](https://huggingface.co/datasets/biglam/blbooksgenre) (book titles) | single-label | 2 | 1,562 × 5 | 141s | accuracy | 0.747 | 0.767 (0.753–0.782) | **0.907** (0.897–0.925) |
-| [`fancyzhx/ag_news`](https://huggingface.co/datasets/fancyzhx/ag_news) | single-label | 4 | 2,000 × 2 | 125s | accuracy | 0.268 | 0.718 | **0.852** |
-| [`google-research-datasets/go_emotions`](https://huggingface.co/datasets/google-research-datasets/go_emotions) | multi-label | 28 | 2,000 × 2 | 216s | micro F1 | — | 0.265 | **0.464** |
-| [`SetFit/TREC-QC`](https://huggingface.co/datasets/SetFit/TREC-QC), two tasks in one model | single-label ×2 | 6 + 50 | 5,452 × 3 | 1,761s | accuracy | 0.276 / 0.246 | 0.542 / 0.468 | **0.954 / 0.876** |
-| same, on `a10g-small`, default batch size, bf16 | single-label ×2 | 6 + 50 | 5,452 × 3 | 509s | accuracy | 0.276 / 0.246 | not run | **0.944 / 0.872** |
-| [`stanfordnlp/imdb`](https://huggingface.co/datasets/stanfordnlp/imdb) (reviews; 15% truncated at 2,000 characters) | single-label | 2 | 1,000 × 1 | 122s | accuracy | 0.500 | 0.777 | **0.840** |
+| Dataset | Task | Labels | Train rows × epochs | Train time | Train cost | Metric | Majority floor | Zero-shot | Fine-tuned |
+|---|---|---|---|---|---|---|---|---|---|
+| [`biglam/blbooksgenre`](https://huggingface.co/datasets/biglam/blbooksgenre) (book titles) | single-label | 2 | 1,562 × 5 | 141s | $0.02 | accuracy | 0.747 | 0.767 (0.753–0.782) | **0.907** (0.897–0.925) |
+| [`fancyzhx/ag_news`](https://huggingface.co/datasets/fancyzhx/ag_news) | single-label | 4 | 2,000 × 2 | 125s | $0.01 | accuracy | 0.268 | 0.718 | **0.852** |
+| [`google-research-datasets/go_emotions`](https://huggingface.co/datasets/google-research-datasets/go_emotions) | multi-label | 28 | 2,000 × 2 | 216s | $0.02 | micro F1 | — | 0.265 | **0.464** |
+| [`SetFit/TREC-QC`](https://huggingface.co/datasets/SetFit/TREC-QC), two tasks in one model | single-label ×2 | 6 + 50 | 5,452 × 3 | 1,761s | $0.20 | accuracy | 0.276 / 0.246 | 0.542 / 0.468 | **0.954 / 0.876** |
+| same, on `a10g-small`, default batch size, bf16 | single-label ×2 | 6 + 50 | 5,452 × 3 | 509s | $0.14 | accuracy | 0.276 / 0.246 | not run | **0.944 / 0.872** |
+| [`stanfordnlp/imdb`](https://huggingface.co/datasets/stanfordnlp/imdb) (reviews; 15% truncated at 2,000 characters) | single-label | 2 | 1,000 × 1 | 122s | $0.01 | accuracy | 0.500 | 0.777 | **0.840** |
 
 On the T4, TREC and IMDB ran out of memory at the default batch size of 16, and the script restarted
 them at batch size 4 with 4 gradient accumulation steps. Before that fallback existed, the TREC run
