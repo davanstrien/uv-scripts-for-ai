@@ -592,24 +592,24 @@ if __name__ == "__main__":
         print("  --template / --schema  - Image -> JSON shaped like the template")
         print("\nExamples:")
         print("\n1. Markdown OCR:")
-        print("   uv run nuextract3.py input-dataset output-dataset")
+        print("   uv run --with vllm==0.29.0 nuextract3.py input-dataset output-dataset")
         print("\n2. Structured extraction with an inline template:")
-        print("   uv run nuextract3.py input output \\")
+        print("   uv run --with vllm==0.29.0 nuextract3.py input output \\")
         print('     --template \'{"title": "verbatim-string", "date": "date"}\'')
         print("\n3. Structured extraction from a JSON Schema (e.g. Pydantic):")
-        print("   uv run nuextract3.py input output --schema schema.json")
+        print("   uv run --with vllm==0.29.0 nuextract3.py input output --schema schema.json")
         print("\n   (--template / --schema also accept a URL or a local file path)")
         print("\n4. Reasoning mode for harder documents:")
-        print("   uv run nuextract3.py input output --enable-thinking")
+        print("   uv run --with vllm==0.29.0 nuextract3.py input output --enable-thinking")
         print("\n5. Test with 10 samples:")
-        print("   uv run nuextract3.py large-ds test --max-samples 10 --shuffle")
+        print("   uv run --with vllm==0.29.0 nuextract3.py large-ds test --max-samples 10 --shuffle")
         print("\n6. Running on HF Jobs (image/flavor/secrets from the script header, hf 1.32+):")
         print("   hf jobs uv run \\")
         print(
             "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nuextract3.py \\"
         )
         print("       input-dataset output-dataset --batch-size 16")
-        print("\nFor full help: uv run nuextract3.py --help")
+        print("\nFor full help: uv run --with vllm==0.29.0 nuextract3.py --help")
         sys.exit(0)
 
     parser = argparse.ArgumentParser(
@@ -627,11 +627,11 @@ Modes:
                 (e.g. Pydantic Model.model_json_schema())
 
 Examples:
-  uv run nuextract3.py my-docs analyzed-docs
-  uv run nuextract3.py receipts extracted \\
+  uv run --with vllm==0.29.0 nuextract3.py my-docs analyzed-docs
+  uv run --with vllm==0.29.0 nuextract3.py receipts extracted \\
       --template '{"store": "verbatim-string", "total": "number"}'
-  uv run nuextract3.py contracts extracted --schema contract_schema.json
-  uv run nuextract3.py hard-docs out --enable-thinking
+  uv run --with vllm==0.29.0 nuextract3.py contracts extracted --schema contract_schema.json
+  uv run --with vllm==0.29.0 nuextract3.py hard-docs out --enable-thinking
         """,
     )
 

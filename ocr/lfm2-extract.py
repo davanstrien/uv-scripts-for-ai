@@ -271,15 +271,15 @@ if __name__ == "__main__":
     if len(sys.argv) == 1:
         print("LFM2-1.2B-Extract — structured extraction (JSON/XML/YAML) from text")
         print("\nUsage:")
-        print("  uv run lfm2-extract.py INPUT OUTPUT --schema SCHEMA [--text-column text] [--format json]")
+        print("  uv run --with vllm==0.29.0 lfm2-extract.py INPUT OUTPUT --schema SCHEMA [--text-column text] [--format json]")
         print("\nExample:")
-        print('  uv run lfm2-extract.py my-docs my-fields \\')
+        print('  uv run --with vllm==0.29.0 lfm2-extract.py my-docs my-fields \\')
         print('    --text-column markdown \\')
         print('    --schema \'{"title": "the title", "date": "any date", "summary": "one sentence"}\'')
         print("\n  --schema accepts inline text/JSON, a URL, or a file path.")
         print("\nOn HF Jobs (hf CLI 1.32+; image/flavor/secrets come from the script header):")
         print("  hf jobs uv run lfm2-extract.py INPUT OUTPUT --schema SCHEMA")
-        print("\nFor full help: uv run lfm2-extract.py --help")
+        print("\nFor full help: uv run --with vllm==0.29.0 lfm2-extract.py --help")
         sys.exit(0)
 
     parser = argparse.ArgumentParser(

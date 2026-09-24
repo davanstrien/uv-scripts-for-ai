@@ -561,22 +561,22 @@ if __name__ == "__main__":
 Examples:
 
 1. Basic OCR on a dataset:
-   uv run olmocr2-vllm.py input-dataset output-dataset
+   uv run --with vllm==0.29.0 olmocr2-vllm.py input-dataset output-dataset
 
 2. Test with first 10 samples:
-   uv run olmocr2-vllm.py input-dataset output-dataset --max-samples 10
+   uv run --with vllm==0.29.0 olmocr2-vllm.py input-dataset output-dataset --max-samples 10
 
 3. Process with custom batch size:
-   uv run olmocr2-vllm.py input-dataset output-dataset --batch-size 8
+   uv run --with vllm==0.29.0 olmocr2-vllm.py input-dataset output-dataset --batch-size 8
 
 4. Custom image column:
-   uv run olmocr2-vllm.py input-dataset output-dataset --image-column page_image
+   uv run --with vllm==0.29.0 olmocr2-vllm.py input-dataset output-dataset --image-column page_image
 
 5. Private output dataset:
-   uv run olmocr2-vllm.py input-dataset output-dataset --private
+   uv run --with vllm==0.29.0 olmocr2-vllm.py input-dataset output-dataset --private
 
 6. Random sampling:
-   uv run olmocr2-vllm.py input-dataset output-dataset --max-samples 100 --shuffle
+   uv run --with vllm==0.29.0 olmocr2-vllm.py input-dataset output-dataset --max-samples 100 --shuffle
 
 7. Running on HuggingFace Jobs (header sets image/flavor/secrets; hf CLI 1.32+):
    hf jobs uv run \\

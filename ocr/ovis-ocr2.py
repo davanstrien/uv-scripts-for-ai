@@ -543,16 +543,16 @@ if __name__ == "__main__":
         print("\n1. Basic OCR (own GPU):")
         print("   uv run --with vllm==0.29.0 ovis-ocr2.py input-dataset output-dataset")
         print("\n2. Keep visual-region image tags:")
-        print("   uv run ovis-ocr2.py docs results --keep-image-tags")
+        print("   uv run --with vllm==0.29.0 ovis-ocr2.py docs results --keep-image-tags")
         print("\n3. Test with small sample:")
-        print("   uv run ovis-ocr2.py large-dataset test --max-samples 10 --shuffle")
+        print("   uv run --with vllm==0.29.0 ovis-ocr2.py large-dataset test --max-samples 10 --shuffle")
         print("\n4. Running on HF Jobs (hf CLI 1.32+; image/flavor/secrets from the script header):")
         print("   hf jobs uv run \\")
         print(
             "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/ovis-ocr2.py \\"
         )
         print("       input-dataset output-dataset --batch-size 16")
-        print("\nFor full help: uv run ovis-ocr2.py --help")
+        print("\nFor full help: uv run --with vllm==0.29.0 ovis-ocr2.py --help")
         sys.exit(0)
 
     parser = argparse.ArgumentParser(
@@ -560,9 +560,9 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  uv run ovis-ocr2.py my-docs analyzed-docs
-  uv run ovis-ocr2.py docs results --keep-image-tags
-  uv run ovis-ocr2.py large-dataset test --max-samples 50 --shuffle
+  uv run --with vllm==0.29.0 ovis-ocr2.py my-docs analyzed-docs
+  uv run --with vllm==0.29.0 ovis-ocr2.py docs results --keep-image-tags
+  uv run --with vllm==0.29.0 ovis-ocr2.py large-dataset test --max-samples 50 --shuffle
         """,
     )
 

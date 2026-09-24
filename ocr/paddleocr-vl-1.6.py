@@ -644,17 +644,17 @@ if __name__ == "__main__":
             print(f"  {mode:8} - {description}")
         print("\nExample usage:")
         print("\n1. Basic OCR (default mode):")
-        print("   uv run paddleocr-vl-1.6.py input-dataset output-dataset")
+        print("   uv run --with vllm==0.29.0 paddleocr-vl-1.6.py input-dataset output-dataset")
         print("\n2. Table extraction:")
-        print("   uv run paddleocr-vl-1.6.py docs tables-extracted --task-mode table")
+        print("   uv run --with vllm==0.29.0 paddleocr-vl-1.6.py docs tables-extracted --task-mode table")
         print("\n3. Formula recognition:")
         print(
-            "   uv run paddleocr-vl-1.6.py papers formulas --task-mode formula --batch-size 32"
+            "   uv run --with vllm==0.29.0 paddleocr-vl-1.6.py papers formulas --task-mode formula --batch-size 32"
         )
         print("\n4. Chart analysis:")
-        print("   uv run paddleocr-vl-1.6.py diagrams charts-analyzed --task-mode chart")
+        print("   uv run --with vllm==0.29.0 paddleocr-vl-1.6.py diagrams charts-analyzed --task-mode chart")
         print("\n5. Test with small sample:")
-        print("   uv run paddleocr-vl-1.6.py dataset test --max-samples 10 --shuffle")
+        print("   uv run --with vllm==0.29.0 paddleocr-vl-1.6.py dataset test --max-samples 10 --shuffle")
         print("\n6. Running on HF Jobs (hf CLI 1.32+; header sets image/flavor/secrets):")
         print("   hf jobs uv run \\")
         print(
@@ -663,7 +663,7 @@ if __name__ == "__main__":
         print("       input-dataset output-dataset --task-mode ocr")
         print("\n   NOTE: the [tool.hf-jobs] header pins vllm/vllm-openai:v0.29.0 on a10g-small.")
         print("\n" + "=" * 80)
-        print("\nFor full help, run: uv run paddleocr-vl-1.6.py --help")
+        print("\nFor full help, run: uv run --with vllm==0.29.0 paddleocr-vl-1.6.py --help")
         sys.exit(0)
 
     parser = argparse.ArgumentParser(
@@ -680,22 +680,22 @@ Task Modes:
 
 Examples:
   # Basic text OCR
-  uv run paddleocr-vl-1.6.py my-docs analyzed-docs
+  uv run --with vllm==0.29.0 paddleocr-vl-1.6.py my-docs analyzed-docs
 
   # Extract tables from documents
-  uv run paddleocr-vl-1.6.py papers tables --task-mode table
+  uv run --with vllm==0.29.0 paddleocr-vl-1.6.py papers tables --task-mode table
 
   # Recognize mathematical formulas
-  uv run paddleocr-vl-1.6.py textbooks formulas --task-mode formula
+  uv run --with vllm==0.29.0 paddleocr-vl-1.6.py textbooks formulas --task-mode formula
 
   # Analyze charts and diagrams
-  uv run paddleocr-vl-1.6.py reports charts --task-mode chart
+  uv run --with vllm==0.29.0 paddleocr-vl-1.6.py reports charts --task-mode chart
 
   # Test with random sampling
-  uv run paddleocr-vl-1.6.py large-dataset test --max-samples 50 --shuffle --task-mode ocr
+  uv run --with vllm==0.29.0 paddleocr-vl-1.6.py large-dataset test --max-samples 50 --shuffle --task-mode ocr
 
   # Disable smart resize for original resolution
-  uv run paddleocr-vl-1.6.py images output --no-smart-resize
+  uv run --with vllm==0.29.0 paddleocr-vl-1.6.py images output --no-smart-resize
         """,
     )
 

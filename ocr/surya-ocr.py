@@ -131,7 +131,7 @@ def check_vllm_available() -> None:
         )
         logger.error("  hf jobs uv run <script_url> INPUT_DATASET OUTPUT_DATASET ...")
         logger.error(
-            "Older hf CLIs: add --image vllm/vllm-openai:v0.20.1 --python /usr/local/bin/python3 "
+            "Older hf CLIs: add --flavor a10g-small -s HF_TOKEN --image vllm/vllm-openai:v0.20.1 --python /usr/local/bin/python3 "
             "-e PYTHONPATH=/usr/local/lib/python3.12/site-packages. "
             "On your own GPU: uv run --with vllm==0.20.1 <script> ..."
         )

@@ -261,6 +261,8 @@ HF Jobs with bucket volumes (flavor + secrets from the [tool.hf-jobs] header; hf
     )
 
     args = parser.parse_args()
+    if args.max_samples is not None and args.max_samples < 1:
+        parser.error("--max-samples must be 1 or more")
 
     check_cuda_availability()
 

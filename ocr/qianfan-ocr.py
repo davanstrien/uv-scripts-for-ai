@@ -499,16 +499,16 @@ if __name__ == "__main__":
         print("- Key information extraction with custom prompts")
         print("\nExample usage:")
         print("\n1. Basic OCR:")
-        print("   uv run qianfan-ocr.py input-dataset output-dataset")
+        print("   uv run --with vllm==0.29.0 qianfan-ocr.py input-dataset output-dataset")
         print("\n2. With Layout-as-Thought (complex documents):")
-        print("   uv run qianfan-ocr.py docs output --think")
+        print("   uv run --with vllm==0.29.0 qianfan-ocr.py docs output --think")
         print("\n3. Table extraction:")
-        print("   uv run qianfan-ocr.py docs output --prompt-mode table")
+        print("   uv run --with vllm==0.29.0 qianfan-ocr.py docs output --prompt-mode table")
         print("\n4. Formula extraction:")
-        print("   uv run qianfan-ocr.py docs output --prompt-mode formula")
+        print("   uv run --with vllm==0.29.0 qianfan-ocr.py docs output --prompt-mode formula")
         print("\n5. Key information extraction:")
         print(
-            '   uv run qianfan-ocr.py invoices output --prompt-mode kie --custom-prompt "Extract: name, date, total. Output JSON."'
+            '   uv run --with vllm==0.29.0 qianfan-ocr.py invoices output --prompt-mode kie --custom-prompt "Extract: name, date, total. Output JSON."'
         )
         print("\n6. Running on HF Jobs (header sets image/flavor/secrets; hf CLI 1.32+):")
         print("   hf jobs uv run \\")
@@ -518,7 +518,7 @@ if __name__ == "__main__":
         print("       input-dataset output-dataset --max-samples 10")
         print("\n7. Running on your own GPU:")
         print("   uv run --with vllm==0.29.0 qianfan-ocr.py input-dataset output-dataset")
-        print("\nFor full help, run: uv run qianfan-ocr.py --help")
+        print("\nFor full help, run: uv run --with vllm==0.29.0 qianfan-ocr.py --help")
         sys.exit(0)
 
     parser = argparse.ArgumentParser(
@@ -534,10 +534,10 @@ Prompt modes:
   kie       Key information extraction (requires --custom-prompt)
 
 Examples:
-  uv run qianfan-ocr.py my-docs analyzed-docs
-  uv run qianfan-ocr.py docs output --think --max-samples 50
-  uv run qianfan-ocr.py docs output --prompt-mode table
-  uv run qianfan-ocr.py invoices data --prompt-mode kie --custom-prompt "Extract: name, date, total."
+  uv run --with vllm==0.29.0 qianfan-ocr.py my-docs analyzed-docs
+  uv run --with vllm==0.29.0 qianfan-ocr.py docs output --think --max-samples 50
+  uv run --with vllm==0.29.0 qianfan-ocr.py docs output --prompt-mode table
+  uv run --with vllm==0.29.0 qianfan-ocr.py invoices data --prompt-mode kie --custom-prompt "Extract: name, date, total."
         """,
     )
 
