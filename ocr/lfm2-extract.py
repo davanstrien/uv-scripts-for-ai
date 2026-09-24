@@ -3,12 +3,17 @@
 # dependencies = [
 #     "datasets>=4.0.0",
 #     "huggingface-hub",
-#     "vllm",
 #     "transformers",
 #     "tqdm",
 #     "toolz",
-#     "torch",
 # ]
+#
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.29.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 """
 Extract structured data (JSON / XML / YAML) from text using LiquidAI's LFM2-1.2B-Extract.
@@ -28,18 +33,20 @@ Pass `--schema` as inline text/JSON, a URL, or a file path describing the struct
 Model:  https://huggingface.co/LiquidAI/LFM2-1.2B-Extract
 Docs:   https://docs.liquid.ai/deployment/gpu-inference/vllm
 
-HF Jobs note: run on the vLLM image so the CUDA toolkit + prebuilt FlashInfer kernels are
-present and startup is fast (it reuses the image's CUDA-matched vLLM build):
+HF Jobs: the `[tool.hf-jobs]` header above pins the vLLM image (vLLM + torch come from the
+image, not the deps), the GPU flavor and the HF_TOKEN secret, so no flags are needed
+(requires `hf` CLI 1.32+):
 
-    hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
-        --image vllm/vllm-openai --python /usr/bin/python3 \
-        -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
+    hf jobs uv run \
         https://huggingface.co/datasets/uv-scripts/ocr/raw/main/lfm2-extract.py \
         INPUT OUTPUT --text-column text --schema '{"field": "description"}'
 
-It also runs on the default uv image, just with a slower first-time vLLM build. Deps are left
-unpinned so uv resolves a recent vLLM; FlashInfer sampling is disabled (see below) so the engine
-never JIT-compiles a kernel that needs nvcc — absent from the default image.
+On your own GPU, supply vLLM yourself:
+
+    uv run --with vllm==0.29.0 lfm2-extract.py INPUT OUTPUT --schema '{"field": "description"}'
+
+FlashInfer sampling is disabled (see below) so the engine never JIT-compiles a kernel that
+needs nvcc.
 """
 
 import argparse
@@ -72,7 +79,7 @@ FORMATS = {"json": "JSON", "xml": "XML", "yaml": "YAML"}
 def check_cuda_availability() -> None:
     if not torch.cuda.is_available():
         logger.error("CUDA is not available. This script requires a GPU.")
-        logger.error("Run on Hugging Face Jobs with: hf jobs uv run --flavor l4x1 ...")
+        logger.error("Run on Hugging Face Jobs with: hf jobs uv run lfm2-extract.py ...")
         sys.exit(1)
     logger.info(f"CUDA is available. GPU: {torch.cuda.get_device_name()}")
 
@@ -264,13 +271,15 @@ if __name__ == "__main__":
     if len(sys.argv) == 1:
         print("LFM2-1.2B-Extract — structured extraction (JSON/XML/YAML) from text")
         print("\nUsage:")
-        print("  uv run lfm2-extract.py INPUT OUTPUT --schema SCHEMA [--text-column text] [--format json]")
+        print("  uv run --with vllm==0.29.0 lfm2-extract.py INPUT OUTPUT --schema SCHEMA [--text-column text] [--format json]")
         print("\nExample:")
-        print('  uv run lfm2-extract.py my-docs my-fields \\')
+        print('  uv run --with vllm==0.29.0 lfm2-extract.py my-docs my-fields \\')
         print('    --text-column markdown \\')
         print('    --schema \'{"title": "the title", "date": "any date", "summary": "one sentence"}\'')
         print("\n  --schema accepts inline text/JSON, a URL, or a file path.")
-        print("\nFor full help: uv run lfm2-extract.py --help")
+        print("\nOn HF Jobs (hf CLI 1.32+; image/flavor/secrets come from the script header):")
+        print("  hf jobs uv run lfm2-extract.py INPUT OUTPUT --schema SCHEMA")
+        print("\nFor full help: uv run --with vllm==0.29.0 lfm2-extract.py --help")
         sys.exit(0)
 
     parser = argparse.ArgumentParser(

@@ -4,11 +4,16 @@
 #     "datasets>=3.1.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm",
 #     "toolz",
-#     "torch",
 #     "numind",
 # ]
+#
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.29.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -36,18 +41,15 @@ Modes are selected via flags:
 schema can be hosted (e.g. on an HF dataset's raw URL) and reused across jobs:
     --template https://huggingface.co/datasets/ORG/REPO/raw/main/card.json
 
-HF Jobs invocation (recommended): use the vllm/vllm-openai:latest image so the
-pre-built CUDA kernels (flashinfer etc.) are reused — the default uv-script
-image lacks nvcc and flashinfer's JIT compile fails at engine warmup.
+HF Jobs invocation: the [tool.hf-jobs] header above sets the vllm/vllm-openai
+image (vLLM + torch come from the image, with pre-built CUDA kernels), the
+flavor and the HF_TOKEN secret. Needs `hf` CLI 1.32+.
 
     hf jobs uv run \\
-        --image vllm/vllm-openai:latest \\
-        --flavor a100-large \\
-        --python /usr/bin/python3 \\
-        -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \\
-        -s HF_TOKEN \\
         https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nuextract3.py \\
         INPUT_DATASET OUTPUT_DATASET --max-samples 5 --shuffle --seed 42
+
+On your own GPU: uv run --with vllm==0.29.0 nuextract3.py INPUT_DATASET OUTPUT_DATASET
 
 Model: numind/NuExtract3
 License: Apache-2.0
@@ -590,28 +592,24 @@ if __name__ == "__main__":
         print("  --template / --schema  - Image -> JSON shaped like the template")
         print("\nExamples:")
         print("\n1. Markdown OCR:")
-        print("   uv run nuextract3.py input-dataset output-dataset")
+        print("   uv run --with vllm==0.29.0 nuextract3.py input-dataset output-dataset")
         print("\n2. Structured extraction with an inline template:")
-        print("   uv run nuextract3.py input output \\")
+        print("   uv run --with vllm==0.29.0 nuextract3.py input output \\")
         print('     --template \'{"title": "verbatim-string", "date": "date"}\'')
         print("\n3. Structured extraction from a JSON Schema (e.g. Pydantic):")
-        print("   uv run nuextract3.py input output --schema schema.json")
+        print("   uv run --with vllm==0.29.0 nuextract3.py input output --schema schema.json")
         print("\n   (--template / --schema also accept a URL or a local file path)")
         print("\n4. Reasoning mode for harder documents:")
-        print("   uv run nuextract3.py input output --enable-thinking")
+        print("   uv run --with vllm==0.29.0 nuextract3.py input output --enable-thinking")
         print("\n5. Test with 10 samples:")
-        print("   uv run nuextract3.py large-ds test --max-samples 10 --shuffle")
-        print("\n6. Running on HF Jobs (use vllm/vllm-openai image for built kernels):")
-        print("   hf jobs uv run --flavor a100-large \\")
-        print("     --image vllm/vllm-openai:latest \\")
-        print("     --python /usr/bin/python3 \\")
-        print("     -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \\")
-        print("     -s HF_TOKEN \\")
+        print("   uv run --with vllm==0.29.0 nuextract3.py large-ds test --max-samples 10 --shuffle")
+        print("\n6. Running on HF Jobs (image/flavor/secrets from the script header, hf 1.32+):")
+        print("   hf jobs uv run \\")
         print(
             "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nuextract3.py \\"
         )
         print("       input-dataset output-dataset --batch-size 16")
-        print("\nFor full help: uv run nuextract3.py --help")
+        print("\nFor full help: uv run --with vllm==0.29.0 nuextract3.py --help")
         sys.exit(0)
 
     parser = argparse.ArgumentParser(
@@ -629,11 +627,11 @@ Modes:
                 (e.g. Pydantic Model.model_json_schema())
 
 Examples:
-  uv run nuextract3.py my-docs analyzed-docs
-  uv run nuextract3.py receipts extracted \\
+  uv run --with vllm==0.29.0 nuextract3.py my-docs analyzed-docs
+  uv run --with vllm==0.29.0 nuextract3.py receipts extracted \\
       --template '{"store": "verbatim-string", "total": "number"}'
-  uv run nuextract3.py contracts extracted --schema contract_schema.json
-  uv run nuextract3.py hard-docs out --enable-thinking
+  uv run --with vllm==0.29.0 nuextract3.py contracts extracted --schema contract_schema.json
+  uv run --with vllm==0.29.0 nuextract3.py hard-docs out --enable-thinking
         """,
     )
 

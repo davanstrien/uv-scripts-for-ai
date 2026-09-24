@@ -4,15 +4,21 @@
 #     "datasets>=4.0.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm>=0.15.1",
 #     "tqdm",
 #     "toolz",
-#     "torch",
 #     # dots.mocr's remote code (AutoProcessor.register with a string key)
 #     # breaks on transformers v5; vllm pulls transformers unpinned.
+#     # Local `uv run --with vllm==...` only: on Jobs the header image's own
+#     # transformers wins via PYTHONPATH, so this pin has no effect there.
 #     "transformers<5",
 # ]
 #
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.29.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -37,6 +43,16 @@ SVG variant: rednote-hilab/dots.mocr-svg
 vLLM: Officially integrated since v0.11.0
 GitHub: https://github.com/rednote-hilab/dots.mocr
 Paper: https://arxiv.org/abs/2603.13032
+
+Run on HF Jobs (the [tool.hf-jobs] header sets image, flavor and secrets;
+needs the hf CLI 1.32+):
+
+    hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/dots-mocr.py \
+        input-dataset output-dataset
+
+On your own GPU, vLLM is not in the dependencies (the Jobs image provides it):
+
+    uv run --with vllm==0.29.0 dots-mocr.py input-dataset output-dataset
 """
 
 import argparse
@@ -565,24 +581,24 @@ if __name__ == "__main__":
         print("  general        - Free-form (use with --custom-prompt)")
         print("\nExample usage:")
         print("\n1. Basic OCR:")
-        print("   uv run dots-mocr.py input-dataset output-dataset")
+        print("   uv run --with vllm==0.29.0 dots-mocr.py input-dataset output-dataset")
         print("\n2. SVG generation:")
         print(
-            "   uv run dots-mocr.py charts svg-output --prompt-mode svg --model rednote-hilab/dots.mocr-svg"
+            "   uv run --with vllm==0.29.0 dots-mocr.py charts svg-output --prompt-mode svg --model rednote-hilab/dots.mocr-svg"
         )
         print("\n3. Web screen parsing:")
-        print("   uv run dots-mocr.py screenshots parsed --prompt-mode web-parsing")
+        print("   uv run --with vllm==0.29.0 dots-mocr.py screenshots parsed --prompt-mode web-parsing")
         print("\n4. Layout analysis with structure:")
-        print("   uv run dots-mocr.py papers analyzed --prompt-mode layout-all")
+        print("   uv run --with vllm==0.29.0 dots-mocr.py papers analyzed --prompt-mode layout-all")
         print("\n5. Running on HF Jobs:")
-        print("   hf jobs uv run --flavor l4x1 \\")
-        print("     -s HF_TOKEN \\")
+        print("   # [tool.hf-jobs] header sets image/flavor/secrets (hf CLI 1.32+)")
+        print("   hf jobs uv run \\")
         print(
             "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/dots-mocr.py \\"
         )
         print("       input-dataset output-dataset")
         print("\n" + "=" * 80)
-        print("\nFor full help, run: uv run dots-mocr.py --help")
+        print("\nFor full help, run: uv run --with vllm==0.29.0 dots-mocr.py --help")
         sys.exit(0)
 
     parser = argparse.ArgumentParser(
@@ -606,19 +622,19 @@ SVG Code Generation:
 
 Examples:
   # Basic text OCR (default)
-  uv run dots-mocr.py my-docs analyzed-docs
+  uv run --with vllm==0.29.0 dots-mocr.py my-docs analyzed-docs
 
   # SVG generation with optimized variant
-  uv run dots-mocr.py charts svg-out --prompt-mode svg --model rednote-hilab/dots.mocr-svg
+  uv run --with vllm==0.29.0 dots-mocr.py charts svg-out --prompt-mode svg --model rednote-hilab/dots.mocr-svg
 
   # Web screen parsing
-  uv run dots-mocr.py screenshots parsed --prompt-mode web-parsing
+  uv run --with vllm==0.29.0 dots-mocr.py screenshots parsed --prompt-mode web-parsing
 
   # Full layout analysis with structure
-  uv run dots-mocr.py papers structured --prompt-mode layout-all
+  uv run --with vllm==0.29.0 dots-mocr.py papers structured --prompt-mode layout-all
 
   # Random sampling for testing
-  uv run dots-mocr.py large-dataset test --max-samples 50 --shuffle
+  uv run --with vllm==0.29.0 dots-mocr.py large-dataset test --max-samples 50 --shuffle
         """,
     )
 

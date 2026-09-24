@@ -125,7 +125,8 @@ def main():
     ap.add_argument("--split", default="train")
     ap.add_argument("--id-column", default=None,
                     help="Column to use as row id (default: split-index ids)")
-    ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--max-samples", "--limit", dest="limit", type=int, default=None,
+                    help="Process at most N rows (same name as the other OCR recipes; --limit still works)")
     ap.add_argument("--max-tokens", type=int, default=SERVING["max_tokens"])
     ap.add_argument("--temperature", type=float, default=SERVING["temperature"])
     ap.add_argument("--target-size", type=int, default=SERVING["target_size"])

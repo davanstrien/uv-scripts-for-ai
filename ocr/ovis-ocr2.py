@@ -4,10 +4,15 @@
 #     "datasets>=4.0.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm>=0.22.1",
 #     "toolz",
-#     "torch",
 # ]
+#
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.29.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -23,6 +28,16 @@ bounding boxes scaled to [0, 1000).
 Model: ATH-MaaS/OvisOCR2 (Apache-2.0)
 vLLM: stock Qwen3_5ForConditionalGeneration arch, in stable vLLM >= 0.22.1
       (the version the model card installs); no trust_remote_code needed.
+
+Run on HF Jobs (needs `hf` CLI 1.32+; the [tool.hf-jobs] header above sets the
+vllm/vllm-openai:v0.29.0 image, a10g-small flavor and HF_TOKEN secret):
+
+    hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/ovis-ocr2.py \\
+        input-dataset output-dataset --batch-size 16
+
+Run on your own GPU (vLLM and torch come from the image on Jobs, so add them here):
+
+    uv run --with vllm==0.29.0 ovis-ocr2.py input-dataset output-dataset
 
 Features:
 - 0.9B parameters (ultra-compact, runs on l4x1)
@@ -525,20 +540,19 @@ if __name__ == "__main__":
         print("  - Visual-region <img> tags filtered by default")
         print("    (--keep-image-tags to retain them)")
         print("\nExamples:")
-        print("\n1. Basic OCR:")
-        print("   uv run ovis-ocr2.py input-dataset output-dataset")
+        print("\n1. Basic OCR (own GPU):")
+        print("   uv run --with vllm==0.29.0 ovis-ocr2.py input-dataset output-dataset")
         print("\n2. Keep visual-region image tags:")
-        print("   uv run ovis-ocr2.py docs results --keep-image-tags")
+        print("   uv run --with vllm==0.29.0 ovis-ocr2.py docs results --keep-image-tags")
         print("\n3. Test with small sample:")
-        print("   uv run ovis-ocr2.py large-dataset test --max-samples 10 --shuffle")
-        print("\n4. Running on HF Jobs:")
-        print("   hf jobs uv run --flavor l4x1 \\")
-        print("     -s HF_TOKEN \\")
+        print("   uv run --with vllm==0.29.0 ovis-ocr2.py large-dataset test --max-samples 10 --shuffle")
+        print("\n4. Running on HF Jobs (hf CLI 1.32+; image/flavor/secrets from the script header):")
+        print("   hf jobs uv run \\")
         print(
             "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/ovis-ocr2.py \\"
         )
         print("       input-dataset output-dataset --batch-size 16")
-        print("\nFor full help: uv run ovis-ocr2.py --help")
+        print("\nFor full help: uv run --with vllm==0.29.0 ovis-ocr2.py --help")
         sys.exit(0)
 
     parser = argparse.ArgumentParser(
@@ -546,9 +560,9 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  uv run ovis-ocr2.py my-docs analyzed-docs
-  uv run ovis-ocr2.py docs results --keep-image-tags
-  uv run ovis-ocr2.py large-dataset test --max-samples 50 --shuffle
+  uv run --with vllm==0.29.0 ovis-ocr2.py my-docs analyzed-docs
+  uv run --with vllm==0.29.0 ovis-ocr2.py docs results --keep-image-tags
+  uv run --with vllm==0.29.0 ovis-ocr2.py large-dataset test --max-samples 50 --shuffle
         """,
     )
 

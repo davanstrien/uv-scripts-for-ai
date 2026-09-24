@@ -4,13 +4,17 @@
 #     "datasets>=4.0.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm",
 #     "tqdm",
 #     "toolz",
-#     "torch",
 #     "pyyaml",  # For parsing YAML front matter
 # ]
 #
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.29.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -30,6 +34,13 @@ Features:
 
 Model: allenai/olmOCR-2-7B-1025-FP8
 Based on: Qwen2.5-VL-7B-Instruct fine-tuned on olmOCR-mix
+
+Run on HF Jobs (the [tool.hf-jobs] header sets image, flavor and secrets;
+needs `hf` CLI 1.32+):
+    hf jobs uv run olmocr2-vllm.py input-dataset output-dataset
+
+Run on your own GPU (vLLM and torch come from the Jobs image, so add vLLM):
+    uv run --with vllm==0.29.0 olmocr2-vllm.py input-dataset output-dataset
 """
 
 import argparse
@@ -265,15 +276,14 @@ Each row contains:
 ## Reproduction
 
 ```bash
-# Using HF Jobs (recommended)
-hf jobs uv run --flavor l4x1 \\
-  -s HF_TOKEN \\
+# Using HF Jobs (recommended; the script header sets image/flavor/secrets, hf CLI 1.32+)
+hf jobs uv run \\
   https://huggingface.co/datasets/uv-scripts/ocr/raw/main/olmocr2-vllm.py \\
   {source_dataset} \\
   your-username/output-dataset
 
 # Local with GPU
-uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/olmocr2-vllm.py \\
+uv run --with vllm==0.29.0 https://huggingface.co/datasets/uv-scripts/ocr/raw/main/olmocr2-vllm.py \\
   {source_dataset} \\
   your-username/output-dataset
 ```
@@ -551,32 +561,30 @@ if __name__ == "__main__":
 Examples:
 
 1. Basic OCR on a dataset:
-   uv run olmocr2-vllm.py input-dataset output-dataset
+   uv run --with vllm==0.29.0 olmocr2-vllm.py input-dataset output-dataset
 
 2. Test with first 10 samples:
-   uv run olmocr2-vllm.py input-dataset output-dataset --max-samples 10
+   uv run --with vllm==0.29.0 olmocr2-vllm.py input-dataset output-dataset --max-samples 10
 
 3. Process with custom batch size:
-   uv run olmocr2-vllm.py input-dataset output-dataset --batch-size 8
+   uv run --with vllm==0.29.0 olmocr2-vllm.py input-dataset output-dataset --batch-size 8
 
 4. Custom image column:
-   uv run olmocr2-vllm.py input-dataset output-dataset --image-column page_image
+   uv run --with vllm==0.29.0 olmocr2-vllm.py input-dataset output-dataset --image-column page_image
 
 5. Private output dataset:
-   uv run olmocr2-vllm.py input-dataset output-dataset --private
+   uv run --with vllm==0.29.0 olmocr2-vllm.py input-dataset output-dataset --private
 
 6. Random sampling:
-   uv run olmocr2-vllm.py input-dataset output-dataset --max-samples 100 --shuffle
+   uv run --with vllm==0.29.0 olmocr2-vllm.py input-dataset output-dataset --max-samples 100 --shuffle
 
-7. Running on HuggingFace Jobs:
-   hf jobs uv run --flavor l4x1 \\
-     -s HF_TOKEN \\
+7. Running on HuggingFace Jobs (header sets image/flavor/secrets; hf CLI 1.32+):
+   hf jobs uv run \\
      https://huggingface.co/datasets/uv-scripts/ocr/raw/main/olmocr2-vllm.py \\
      input-dataset output-dataset
 
 8. Real example with historical documents:
-   hf jobs uv run --flavor l4x1 \\
-     -s HF_TOKEN \\
+   hf jobs uv run --timeout 2h \\
      https://huggingface.co/datasets/uv-scripts/ocr/raw/main/olmocr2-vllm.py \\
      NationalLibraryOfScotland/Britain-and-UK-Handbooks-Dataset \\
      your-username/handbooks-olmocr \\

@@ -4,16 +4,22 @@
 #     "datasets>=4.0.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm>=0.15.1",
 #     "tqdm",
 #     "toolz",
-#     "torch",
 #     # dots.ocr's remote code (AutoProcessor.register with a string key)
 #     # breaks on transformers v5; vllm pulls transformers unpinned.
 #     # Same fix as dots-mocr (#76).
+#     # Local `uv run --with vllm==...` only: on Jobs the header image's own
+#     # transformers wins via PYTHONPATH, so this pin has no effect there.
 #     "transformers<5",
 # ]
 #
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.29.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -31,6 +37,16 @@ Features:
 
 Model: rednote-hilab/dots.ocr
 vLLM: Officially tested with 0.9.1+ (native support via PR #24645)
+
+Run on HF Jobs (the [tool.hf-jobs] header sets image, flavor and secrets;
+needs `hf` CLI 1.32+):
+
+    hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/dots-ocr.py \\
+        input-dataset output-dataset
+
+Run on your own GPU (vLLM and torch come from the image on Jobs, so add them):
+
+    uv run --with vllm==0.29.0 dots-ocr.py input-dataset output-dataset
 """
 
 import argparse
@@ -478,28 +494,25 @@ if __name__ == "__main__":
         print("- 📝 Layout-aware text extraction")
         print("\nExample usage:")
         print("\n1. Basic OCR:")
-        print("   uv run dots-ocr.py input-dataset output-dataset")
+        print("   uv run --with vllm==0.29.0 dots-ocr.py input-dataset output-dataset")
         print("\n2. With custom settings:")
         print(
-            "   uv run dots-ocr.py docs analyzed-docs --batch-size 20 --max-samples 100"
+            "   uv run --with vllm==0.29.0 dots-ocr.py docs analyzed-docs --batch-size 20 --max-samples 100"
         )
         print("\n3. Layout analysis with structure:")
         print(
-            "   uv run dots-ocr.py papers analyzed-structure --prompt-mode layout-all"
+            "   uv run --with vllm==0.29.0 dots-ocr.py papers analyzed-structure --prompt-mode layout-all"
         )
         print("\n4. Layout detection only (no text):")
-        print("   uv run dots-ocr.py docs layout-info --prompt-mode layout-only")
-        print("\n5. Running on HF Jobs:")
-        print("   hf jobs uv run --flavor l4x1 \\")
-        print(
-            '     -e HF_TOKEN=$(python3 -c "from huggingface_hub import get_token; print(get_token())") \\'
-        )
+        print("   uv run --with vllm==0.29.0 dots-ocr.py docs layout-info --prompt-mode layout-only")
+        print("\n5. Running on HF Jobs (header sets image/flavor/secrets; hf CLI 1.32+):")
+        print("   hf jobs uv run \\")
         print(
             "     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/dots-ocr.py \\"
         )
         print("       input-dataset output-dataset")
         print("\n" + "=" * 80)
-        print("\nFor full help, run: uv run dots-ocr.py --help")
+        print("\nFor full help, run: uv run --with vllm==0.29.0 dots-ocr.py --help")
         sys.exit(0)
 
     parser = argparse.ArgumentParser(
@@ -513,13 +526,13 @@ Prompt Modes (official DoTS.ocr prompts):
 
 Examples:
   # Basic text OCR (default)
-  uv run dots-ocr.py my-docs analyzed-docs
+  uv run --with vllm==0.29.0 dots-ocr.py my-docs analyzed-docs
 
   # Full layout analysis with structure
-  uv run dots-ocr.py papers structured --prompt-mode layout-all
+  uv run --with vllm==0.29.0 dots-ocr.py papers structured --prompt-mode layout-all
 
   # Random sampling for testing
-  uv run dots-ocr.py large-dataset test --max-samples 50 --shuffle
+  uv run --with vllm==0.29.0 dots-ocr.py large-dataset test --max-samples 50 --shuffle
         """,
     )
 

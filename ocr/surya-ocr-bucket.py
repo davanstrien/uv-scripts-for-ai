@@ -14,6 +14,13 @@
 # # this recipe injects into); an unpinned/loosened resolve backtracks to an ancient
 # # surya without it. huggingface-hub is left unpinned: at runtime PYTHONPATH puts the
 # # pinned image's hub (with the buckets API) ahead of the venv, so no version tension.
+#
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.20.1"
+# python = "/usr/local/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/site-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 """
 Structured OCR over a **bucket of document files** (images + PDFs) with Datalab's
@@ -55,26 +62,26 @@ OpenRAIL-M license — free for research, personal use, and startups under $5M
 funding/revenue, restricted from competitive use against Datalab's API. Confirm you
 are within those terms. https://huggingface.co/datalab-to/surya-ocr-2
 
-HF Jobs — MUST use the pinned vLLM image + the site-packages python path (the model
-is the recent, version-sensitive `qwen3_5` architecture; v0.20.1 is Surya's
-known-good build, and it puts python/vLLM under /usr/local, NOT /usr/bin):
+HF Jobs — the `[tool.hf-jobs]` header above pins the vLLM image + the site-packages
+python path (the model is the recent, version-sensitive `qwen3_5` architecture;
+v0.20.1 is Surya's known-good build, and it puts python/vLLM under /usr/local, NOT
+/usr/bin), plus flavor and HF_TOKEN. The header needs `hf` CLI 1.32+; CLI flags
+override it:
 
     # copy input -> dataset output
-    hf jobs uv run --flavor l4x1 -s HF_TOKEN \\
-        --image vllm/vllm-openai:v0.20.1 --python /usr/local/bin/python3 \\
-        -e PYTHONPATH=/usr/local/lib/python3.12/site-packages \\
+    hf jobs uv run \\
         https://huggingface.co/datasets/uv-scripts/ocr/raw/main/surya-ocr-bucket.py \\
         hf://buckets/<ns>/<bucket> --io-mode copy --glob "*.jp2" \\
         --output-dataset <ns>/<out> --private
 
     # mount input -> per-file bucket output (mirrors dir structure)
-    hf jobs uv run --flavor l4x1 -s HF_TOKEN \\
-        --image vllm/vllm-openai:v0.20.1 --python /usr/local/bin/python3 \\
-        -e PYTHONPATH=/usr/local/lib/python3.12/site-packages \\
+    hf jobs uv run \\
         -v hf://buckets/<ns>/<bucket>:/in:ro \\
         -v hf://buckets/<ns>/<out-bucket>:/out \\
         https://huggingface.co/datasets/uv-scripts/ocr/raw/main/surya-ocr-bucket.py \\
         /in --io-mode mount --glob "*.jp2" --output-bucket /out
+
+On your own GPU (no image): `uv run --with vllm==0.20.1 surya-ocr-bucket.py ...`
 
 Model: datalab-to/surya-ocr-2  (package: surya-ocr, https://github.com/datalab-to/surya)
 """
@@ -127,8 +134,8 @@ def check_cuda_availability() -> None:
     if not torch.cuda.is_available():
         logger.error("CUDA is not available. This script requires a GPU.")
         logger.error(
-            "Run on Hugging Face Jobs with: hf jobs uv run --flavor l4x1 "
-            "--image vllm/vllm-openai:v0.20.1 ..."
+            "Run on Hugging Face Jobs with: hf jobs uv run surya-ocr-bucket.py ... "
+            "(the script's [tool.hf-jobs] header sets image + GPU; hf CLI 1.32+)"
         )
         sys.exit(1)
     logger.info(f"CUDA is available. GPU: {torch.cuda.get_device_name(0)}")
@@ -1211,10 +1218,10 @@ Outputs (at least one required):
                     hf://buckets/... URL); resumable, O(1) memory
   --output-dataset  parquet dataset push (one row per file)
 
-Run on the vllm/vllm-openai:v0.20.1 image (offline vLLM batch; qwen3_5 is
-version-sensitive — the site-packages python path is load-bearing):
-  --image vllm/vllm-openai:v0.20.1 --python /usr/local/bin/python3 \\
-    -e PYTHONPATH=/usr/local/lib/python3.12/site-packages
+HF Jobs: the script's [tool.hf-jobs] header pins vllm/vllm-openai:v0.20.1 + the
+site-packages python path (qwen3_5 is version-sensitive), flavor and HF_TOKEN, so
+`hf jobs uv run surya-ocr-bucket.py ...` needs no flags (hf CLI 1.32+).
+Own GPU: uv run --with vllm==0.20.1 surya-ocr-bucket.py ...
 """,
     )
     parser.add_argument(
@@ -1274,7 +1281,9 @@ version-sensitive — the site-packages python path is load-bearing):
         help="DPI for PDF rendering (default: Surya's IMAGE_DPI_HIGHRES)",
     )
     parser.add_argument(
-        "--max-samples", type=int, help="Limit number of files (for testing)"
+        "--max-samples",
+        type=int,
+        help="Limit number of input files, not pages (a PDF counts once)",
     )
     parser.add_argument(
         "--shuffle", action="store_true", help="Shuffle before sampling"
@@ -1359,10 +1368,8 @@ def _print_banner() -> None:
     print("      --glob '*.jp2' --output-dataset me/news-ocr --private")
     print("\n  # mount a bucket -> per-file .md + .json in an output bucket")
     print("  uv run surya-ocr-bucket.py /in --io-mode mount --output-bucket /out")
-    print("\nRun on the vllm/vllm-openai:v0.20.1 image (offline vLLM batch):")
-    print("  hf jobs uv run --flavor l4x1 -s HF_TOKEN \\")
-    print("      --image vllm/vllm-openai:v0.20.1 --python /usr/local/bin/python3 \\")
-    print("      -e PYTHONPATH=/usr/local/lib/python3.12/site-packages \\")
+    print("\nHF Jobs (the [tool.hf-jobs] header sets image + GPU; hf CLI 1.32+):")
+    print("  hf jobs uv run \\")
     print("      -v hf://buckets/me/news:/in:ro -v hf://buckets/me/news-ocr:/out \\")
     print(
         "      https://huggingface.co/datasets/uv-scripts/ocr/raw/main/surya-ocr-bucket.py \\"

@@ -7,6 +7,13 @@
 #     "tqdm",
 #     "toolz",
 # ]
+#
+# [tool.hf-jobs]
+# image = "vllm/vllm-openai:unlimited-ocr"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
+# flavor = "a10g-small"
+# secrets = ["HF_TOKEN"]
 # ///
 
 """
@@ -30,15 +37,16 @@ hallucination in our tests, where the model's own SGLang build held up better â€
 robust multi-page path. (vLLM's upstream PR, vllm-project/vllm#46564, benchmarks single-page only.)
 
 IMPORTANT: Unlimited-OCR's architecture is not in a stable vLLM pip wheel, so this script MUST run on
-Baidu's dedicated vLLM image (vllm and torch come from the image, not the PEP 723 deps):
+Baidu's dedicated vLLM image (vllm and torch come from the image, not the PEP 723 deps). The
+[tool.hf-jobs] header above sets the image, python, PYTHONPATH, flavor and HF_TOKEN secret, so the
+run command needs no flags (the header needs `hf` CLI 1.32+):
 
-    hf jobs uv run --flavor l4x1 -s HF_TOKEN \\
-        --image vllm/vllm-openai:unlimited-ocr --python /usr/bin/python3 \\
-        -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \\
+    hf jobs uv run \\
         https://huggingface.co/datasets/uv-scripts/ocr/raw/main/unlimited-ocr-vllm.py \\
         your-input-dataset your-output-dataset --max-samples 10
 
-Use the vllm/vllm-openai:unlimited-ocr-cu129 tag on Hopper GPUs (h100/h200).
+On Hopper GPUs (h100/h200) add --image vllm/vllm-openai:unlimited-ocr-cu129 (a CLI flag overrides
+the header). On your own GPU, run inside that image: no stable vLLM wheel has this architecture yet.
 
 Model card: https://huggingface.co/baidu/Unlimited-OCR
 vLLM recipe: https://recipes.vllm.ai/baidu/Unlimited-OCR
@@ -197,12 +205,11 @@ print(ds[0]["{output_column}"])
 ## Reproduction
 
 Generated with the [uv-scripts/ocr](https://huggingface.co/datasets/uv-scripts/ocr) Unlimited-OCR
-vLLM recipe. Unlimited-OCR needs Baidu's dedicated vLLM image:
+vLLM recipe. Unlimited-OCR needs Baidu's dedicated vLLM image, which the script's `[tool.hf-jobs]` header
+sets (`hf` CLI 1.32+):
 
 ```bash
-hf jobs uv run --flavor l4x1 -s HF_TOKEN \\
-    --image vllm/vllm-openai:unlimited-ocr --python /usr/bin/python3 \\
-    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \\
+hf jobs uv run \\
     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/unlimited-ocr-vllm.py \\
     {source_dataset} <output-dataset>
 ```
@@ -434,13 +441,10 @@ if __name__ == "__main__":
         print("=" * 80)
         print("\nBaidu Unlimited-OCR (3.3B, MIT) â€” one image per row -> markdown.")
         print("\nMUST run on the dedicated image: vllm/vllm-openai:unlimited-ocr")
-        print("(use the -cu129 tag on Hopper GPUs).")
+        print("(set by the script's [tool.hf-jobs] header, hf CLI 1.32+;")
+        print("on Hopper GPUs add --image vllm/vllm-openai:unlimited-ocr-cu129).")
         print("\nExample:")
-        print("   hf jobs uv run --flavor l4x1 -s HF_TOKEN \\")
-        print(
-            "     --image vllm/vllm-openai:unlimited-ocr --python /usr/bin/python3 \\"
-        )
-        print("     -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \\")
+        print("   hf jobs uv run \\")
         print("     unlimited-ocr-vllm.py my-images my-markdown --max-samples 10")
         print(
             "\nMulti-page documents: serve the model instead (see serving-unlimited-ocr.md)."
@@ -459,10 +463,8 @@ Examples:
   # Clean text (strip grounding tags)
   uv run unlimited-ocr-vllm.py my-images ocr-results --strip-grounding
 
-  # On HF Jobs (dedicated image required)
-  hf jobs uv run --flavor l4x1 -s HF_TOKEN \\
-      --image vllm/vllm-openai:unlimited-ocr --python /usr/bin/python3 \\
-      -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \\
+  # On HF Jobs (image, flavor and secret come from the [tool.hf-jobs] header; hf CLI 1.32+)
+  hf jobs uv run \\
       https://huggingface.co/datasets/uv-scripts/ocr/raw/main/unlimited-ocr-vllm.py \\
       my-dataset my-output --max-samples 10
         """,
