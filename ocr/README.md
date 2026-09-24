@@ -76,7 +76,7 @@ A completed Job does not mean every page worked. Look for empty results and `[OC
 
 ## Pick a model
 
-These are the maintained recipes. Each one has a tested `[tool.hf-jobs]` header, so the Quick Start command works with only the script name changed. The table is sorted by model size, smallest first. Scores are the model authors' own numbers. [OmniDocBench](https://github.com/opendatalab/OmniDocBench) scores document parsing of text, tables and formulas across varied PDF pages. [olmOCR-Bench](https://huggingface.co/datasets/allenai/olmOCR-bench) runs pass/fail unit tests on hard PDF pages.
+These are the maintained recipes. Each one has a tested `[tool.hf-jobs]` header, so the Quick Start command works with only the script name changed. The exception is `lift-extract.py`, which also needs `--schema`. The table is sorted by model size, smallest first. Scores are the model authors' own numbers. [OmniDocBench](https://github.com/opendatalab/OmniDocBench) scores document parsing of text, tables and formulas across varied PDF pages. [olmOCR-Bench](https://huggingface.co/datasets/allenai/olmOCR-bench) runs pass/fail unit tests on hard PDF pages.
 
 | Script | Model | Size | Good at | Licence | GPU |
 |--------|-------|------|---------|---------|-----|
@@ -100,7 +100,7 @@ These are the maintained recipes. Each one has a tested `[tool.hf-jobs]` header,
 
 Start with a model under 2B. Use a larger model only if the output of a small one is not good enough. Check the licence before you use a model: Surya and lift use a modified OpenRAIL-M licence (free for research, personal use and startups under $5M; no competitive use against Datalab's API), and the Hunyuan licence excludes the EU, the UK and South Korea.
 
-**Variants and tools:** `glm-ocr-bucket.py` and `surya-ocr-bucket.py` read images and PDFs from a Bucket and write one `.md` per page. `lighton-ocr2-saturate.py` and `ovis-ocr2-saturate.py` are for large runs, and `ocr-vllm-judge.py` compares outputs ([Scaling up](#scaling-up)). `pp-doclayout.py` and `lfm2-extract.py` are described in [Structured extraction and layout](#structured-extraction-and-layout).
+**Variants and tools:** `glm-ocr-bucket.py` and `surya-ocr-bucket.py` read images and PDFs from a Bucket and write one `.md` per page. `surya-ocr-bucket.py` also writes a `.json` sidecar with the layout blocks, resumes from existing JSON, and can mount or copy its input (`--io-mode mount|copy`); the dataset version, `surya-ocr.py`, keeps the blocks in a `surya_blocks` column. `lighton-ocr2-saturate.py` and `ovis-ocr2-saturate.py` are for large runs, and `ocr-vllm-judge.py` compares outputs ([Scaling up](#scaling-up)). `pp-doclayout.py` and `lfm2-extract.py` are described in [Structured extraction and layout](#structured-extraction-and-layout).
 
 Which model is best depends on your documents. The public olmOCR-Bench leaderboard is one command away:
 
@@ -112,7 +112,7 @@ To rank models on your own collection, [ocr-bench](https://github.com/davanstrie
 
 ### Less supported and unsupported
 
-These scripts stay in the repo but have no header, so pass `--flavor a10g-small --secrets HF_TOKEN` and any `--image` from the script's docstring. Status was checked on HF Jobs on 2026-09-23. The `support_note` field in [`models.json`](models.json) has details.
+These scripts stay in the repo but have no header, so copy the complete launch command from each script's docstring, including any `--image`, `--python` and `-e` flags. If the docstring gives no hardware, `--flavor a10g-small --secrets HF_TOKEN` is a reasonable start. Status was checked on HF Jobs on 2026-09-23. The `support_note` field in [`models.json`](models.json) has details.
 
 | Script | Status | Use instead |
 |--------|--------|-------------|
@@ -136,11 +136,11 @@ Every dataset recipe takes `INPUT_DATASET OUTPUT_DATASET` as positional argument
 
 | Option | What it does | Notes |
 |--------|--------------|-------|
-| `--max-samples N` | Process only the first N rows | All recipes. The `-saturate.py` recipes also accept `--limit`. `falcon-ocr-bucket.py` counts files, not pages |
+| `--max-samples N` | Process only the first N rows | All recipes. The `-saturate.py` recipes also accept `--limit`. The three `-bucket.py` recipes count input files, not PDF pages |
 | `--shuffle`, `--seed` | Shuffle before `--max-samples` for a representative sample (seed default 42) | Not the `-saturate.py` recipes |
 | `--split` | Input split (default `train`) | |
 | `--image-column` | Input image column (default `image`) | |
-| `--output-column` | Output column (default `markdown`) | Not the `-saturate.py` recipes |
+| `--output-column` | Output column (default `markdown`; `extraction` for lift and LFM2 extract) | Not the `-saturate.py` recipes or `pp-doclayout.py` (fixed `layout` column) |
 | `--overwrite` | Replace the output column if the input already has it. Without it the script stops | Not the `-saturate.py` recipes |
 | `--private` | Make the output dataset private | Not the `-saturate.py` recipes |
 | `--batch-size` | Images per batch (default 8 or 16 for the OCR recipes) | Not `tesseract-ocr.py`, `pp-ocrv6.py` or the `-saturate.py` recipes |
@@ -157,7 +157,7 @@ hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/lighton-o
     my-dataset my-dataset --max-samples 100 --output-column lighton_markdown
 ```
 
-Each dataset recipe also records the model and settings in an `inference_info` column.
+Most dataset recipes also record the model and settings in an `inference_info` column. The `-saturate.py` recipes write a `model` column instead and keep run metadata under `data/completions/`.
 
 ### Model-specific flags
 
@@ -197,7 +197,7 @@ hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nuextract
     --template '{"store": "verbatim-string", "date": "date", "total": "number"}'
 ```
 
-**[lift](https://huggingface.co/datalab-to/lift)** (`lift-extract.py`, 9B) returns JSON that matches a JSON Schema. It also reads multi-page PDFs (`--pdf-column`, `--page-range`) and extracts one result per document. The default Transformers backend (`--method hf`) is the tested path. Its weights use a modified OpenRAIL-M licence, so check the terms.
+**[lift](https://huggingface.co/datalab-to/lift)** (`lift-extract.py`, 9B) returns JSON that matches a JSON Schema, which you must pass with `--schema` (inline JSON, a URL or a file path). It also reads multi-page PDFs (`--pdf-column`, `--page-range`) and extracts one result per document. The default Transformers backend (`--method hf`) is the tested path. Its weights use a modified OpenRAIL-M licence, so check the terms.
 
 **[LFM2-1.2B-Extract](https://huggingface.co/LiquidAI/LFM2-1.2B-Extract)** (`lfm2-extract.py`) works on a **text** column, so you can run it after an OCR recipe: OCR turns a page into `markdown`, then this recipe turns the markdown into fields. `--format` selects JSON, XML or YAML.
 
