@@ -140,67 +140,6 @@ _Sorted by model size:_
 
 `surya-ocr.py` is the structured outlier: besides the flattened text column it writes a `surya_blocks` JSON column (per-block HTML + bounding boxes + reading order), and `--task` switches between OCR, `layout`, and `table`. It runs as **offline vLLM batch** (no server) and must use the **pinned** `vllm/vllm-openai:v0.20.1` image — its `qwen3_5` architecture is recent and version-sensitive, and that image puts vLLM at `/usr/local/lib/python3.12/site-packages` (use `--python /usr/local/bin/python3`; the exact command is in the script's docstring). Weights are **modified OpenRAIL-M**.
 
-## Structured extraction (image or text → JSON)
-
-Most scripts here output markdown. These take a **schema** and return **structured data** instead — give them the fields you want, they fill them in:
-
-| Script | Model | Size | Input | Output |
-|--------|-------|------|-------|--------|
-| [`lfm2-vl-extract.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lfm2-vl-extract.py) | [LFM2.5-VL-1.6B-Extract](https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B-Extract) | 1.6B | image | JSON |
-| [`nuextract3.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/nuextract3.py) | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | image | markdown **or** JSON |
-| [`lfm2-extract.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lfm2-extract.py) | [LFM2-1.2B-Extract](https://huggingface.co/LiquidAI/LFM2-1.2B-Extract) | 1.2B | **text** | JSON / XML / YAML |
-| [`lift-extract.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lift-extract.py) | [lift](https://huggingface.co/datalab-to/lift) | 9B | image **or** PDF | JSON |
-
-Pass `--schema` (inline JSON, a URL, or a file path). The LFM models are small and fast; run them on the `vllm/vllm-openai` image so the CUDA toolkit is present (each script's docstring has the exact command). Because `lfm2-extract.py` works on a **text** column, you can **chain it after OCR**: a recipe above turns a page into `markdown`, then `lfm2-extract.py` turns that markdown into fields.
-
-`lift-extract.py` is the one outlier: a 9B model that also reads **multi-page PDFs** (`--pdf-column`, `--page-range`) and runs on either Transformers (`--method hf`) or vLLM (`--method vllm`). Its weights are **modified OpenRAIL-M** (free for research, personal use, and startups under $5M; no competitive use against Datalab's API) — the only non-permissive license here, so check the terms.
-
-```bash
-# image → JSON directly
-hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
-    --image vllm/vllm-openai --python /usr/bin/python3 \
-    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/lfm2-vl-extract.py \
-    my-images my-fields --schema '{"title": "the document title", "date": "any date shown"}'
-```
-
-## Layout detection (not OCR)
-
-`pp-doclayout.py` runs PaddleOCR's [PP-DocLayout-L](https://huggingface.co/PaddlePaddle/PP-DocLayout-L) (or M / S / plus-L) and emits per-image **bounding boxes + region classes** (text, title, table, figure, formula, list, header, footer, ...) — it does NOT extract text. Useful for filtering pages, cropping regions for downstream OCR, dataset analysis, and training-data prep.
-
-| Script | Model | Size | Backend | Notes |
-|--------|-------|------|---------|-------|
-| [`pp-doclayout.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/pp-doclayout.py) | [PP-DocLayout-L](https://huggingface.co/PaddlePaddle/PP-DocLayout-L) | 123M | paddleocr | Layout bboxes (no text). Bucket support: incremental parquet shards, resumable. |
-
-```bash
-hf jobs uv run --flavor l4x1 -s HF_TOKEN \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \
-    your-dataset your-layout-output --max-samples 10
-```
-
-Source/sink can be either an HF dataset repo OR an `hf://buckets/...` URL (auto-detected). Bucket output writes incremental zstd parquet shards via the buckets API — resumable across runs (snapshot-backed source listing) and no git/commit overhead. See the script's `--help` for all flags.
-
-## If a vLLM script crashes at startup (the `nvcc` / `nvrtc` error)
-
-The vLLM recipes run on the **default** Jobs image and carry a guard (`VLLM_USE_FLASHINFER_SAMPLER=0`) so they work there with the plain command. But some — especially nightly-vLLM ones — JIT-compile a CUDA kernel at engine init and crash on the default image with one of:
-
-```
-RuntimeError: Could not find nvcc and default cuda_home='/usr/local/cuda' doesn't exist
-nvrtc: error: failed to open libnvrtc-builtins.so...
-```
-
-Run those on the **`vllm/vllm-openai` image**, which ships the full CUDA toolkit. Add these flags to any recipe — they point `import vllm` at the image's CUDA-matched build:
-
-```bash
-hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
-    --image vllm/vllm-openai --python /usr/bin/python3 \
-    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/<script>.py \
-    INPUT OUTPUT --max-samples 10
-```
-
-This is **required** for a few scripts (e.g. `deepseek-ocr2-vllm.py`, `abot-ocr.py`, `nuextract3.py`) and a safe fallback for any vLLM recipe that crashes at startup. (It's also the more robust way to run any vLLM recipe — full CUDA toolkit, ABI-matched build. It isn't a speed-up: uv still reinstalls the script's deps either way.)
-
 ## Common Options
 
 The scripts aim to expose a **consistent interface**: every OCR model script takes `input-dataset output-dataset` as positional arguments, accepts the shared core flags below, and writes a `markdown` column — so switching models is usually just swapping the script URL. Models differ where they need to, though: some add their own flags (task modes, resolution presets, `--think`, vocab sizes), a few need a specific Docker image, and per-model defaults (batch size, context length, temperature) are tuned to each model card. Always check a script's `--help` for its specifics.
@@ -223,35 +162,6 @@ The scripts aim to expose a **consistent interface**: every OCR model script tak
 | `--verbose` | Log resolved package versions after run |
 
 Open the [script source](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/glm-ocr.py) to inspect its arguments without installing dependencies. On a machine with compatible dependencies, `uv run <script-url> --help` shows its CLI options; `uv` resolves dependencies even for `--help`.
-
-## NuExtract3: markdown OCR + structured extraction
-
-[NuExtract3](https://huggingface.co/numind/NuExtract3) (4B, Apache-2.0) is the one script here that does both document-to-markdown OCR *and* schema-guided JSON extraction. Give it a template (or a JSON Schema / Pydantic model) and it returns JSON shaped to match.
-
-> **Run it with the `vllm/vllm-openai` image.** NuExtract3's Qwen3.5 architecture needs the image's prebuilt CUDA kernels — the default uv-script image lacks `nvcc`, so flashinfer's JIT compile fails at engine warmup. Use `--image vllm/vllm-openai:latest --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages` on `a100-large`.
-
-```bash
-# Markdown OCR (default mode)
-hf jobs uv run --flavor a100-large \
-    --image vllm/vllm-openai:latest \
-    --python /usr/bin/python3 \
-    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
-    -s HF_TOKEN \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nuextract3.py \
-    my-documents my-markdown --max-samples 10
-
-# Structured extraction with an inline template
-hf jobs uv run --flavor a100-large \
-    --image vllm/vllm-openai:latest \
-    --python /usr/bin/python3 \
-    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
-    -s HF_TOKEN \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nuextract3.py \
-    receipts extracted \
-    --template '{"store": "verbatim-string", "date": "date", "total": "number"}'
-```
-
-**Templates** (`--template`) and **JSON Schemas** (`--schema`) each accept **inline JSON, a URL, or a file path**, so a schema can be hosted once and reused. Add `--enable-thinking` for harder layouts (slower; reasoning trace stored in a `<output-column>_reasoning` column). Template field names act as the model's extraction instructions, so name them descriptively — overly leading names can prompt over-generation, so verify against a few examples.
 
 ## Model-specific modes & flags
 
@@ -287,6 +197,75 @@ Beyond the shared flags, some models add their own. Run `--help` on any script f
   ```
 - **Reproducible sampling** — `--shuffle` (with `--seed`, default 42) draws a representative sample instead of the first N rows.
 - **Automatic dataset cards** — every run writes a card with the model config, processing stats, column descriptions, and a reproduction command.
+
+## Structured extraction (image or text → JSON)
+
+Most scripts here output markdown. These take a **schema** and return **structured data** instead — give them the fields you want, they fill them in:
+
+| Script | Model | Size | Input | Output |
+|--------|-------|------|-------|--------|
+| [`lfm2-vl-extract.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lfm2-vl-extract.py) | [LFM2.5-VL-1.6B-Extract](https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B-Extract) | 1.6B | image | JSON |
+| [`nuextract3.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/nuextract3.py) | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | image | markdown **or** JSON |
+| [`lfm2-extract.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lfm2-extract.py) | [LFM2-1.2B-Extract](https://huggingface.co/LiquidAI/LFM2-1.2B-Extract) | 1.2B | **text** | JSON / XML / YAML |
+| [`lift-extract.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lift-extract.py) | [lift](https://huggingface.co/datalab-to/lift) | 9B | image **or** PDF | JSON |
+
+Pass `--schema` (inline JSON, a URL, or a file path). The LFM models are small and fast; run them on the `vllm/vllm-openai` image so the CUDA toolkit is present (each script's docstring has the exact command). Because `lfm2-extract.py` works on a **text** column, you can **chain it after OCR**: a recipe above turns a page into `markdown`, then `lfm2-extract.py` turns that markdown into fields.
+
+`lift-extract.py` is the one outlier: a 9B model that also reads **multi-page PDFs** (`--pdf-column`, `--page-range`) and runs on either Transformers (`--method hf`) or vLLM (`--method vllm`). Its weights are **modified OpenRAIL-M** (free for research, personal use, and startups under $5M; no competitive use against Datalab's API) — the only non-permissive license here, so check the terms.
+
+```bash
+# image → JSON directly
+hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
+    --image vllm/vllm-openai --python /usr/bin/python3 \
+    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
+    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/lfm2-vl-extract.py \
+    my-images my-fields --schema '{"title": "the document title", "date": "any date shown"}'
+```
+
+## NuExtract3: markdown OCR + structured extraction
+
+[NuExtract3](https://huggingface.co/numind/NuExtract3) (4B, Apache-2.0) is the one script here that does both document-to-markdown OCR *and* schema-guided JSON extraction. Give it a template (or a JSON Schema / Pydantic model) and it returns JSON shaped to match.
+
+> **Run it with the `vllm/vllm-openai` image.** NuExtract3's Qwen3.5 architecture needs the image's prebuilt CUDA kernels — the default uv-script image lacks `nvcc`, so flashinfer's JIT compile fails at engine warmup. Use `--image vllm/vllm-openai:latest --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages` on `a100-large`.
+
+```bash
+# Markdown OCR (default mode)
+hf jobs uv run --flavor a100-large \
+    --image vllm/vllm-openai:latest \
+    --python /usr/bin/python3 \
+    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
+    -s HF_TOKEN \
+    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nuextract3.py \
+    my-documents my-markdown --max-samples 10
+
+# Structured extraction with an inline template
+hf jobs uv run --flavor a100-large \
+    --image vllm/vllm-openai:latest \
+    --python /usr/bin/python3 \
+    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
+    -s HF_TOKEN \
+    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nuextract3.py \
+    receipts extracted \
+    --template '{"store": "verbatim-string", "date": "date", "total": "number"}'
+```
+
+**Templates** (`--template`) and **JSON Schemas** (`--schema`) each accept **inline JSON, a URL, or a file path**, so a schema can be hosted once and reused. Add `--enable-thinking` for harder layouts (slower; reasoning trace stored in a `<output-column>_reasoning` column). Template field names act as the model's extraction instructions, so name them descriptively — overly leading names can prompt over-generation, so verify against a few examples.
+
+## Layout detection (not OCR)
+
+`pp-doclayout.py` runs PaddleOCR's [PP-DocLayout-L](https://huggingface.co/PaddlePaddle/PP-DocLayout-L) (or M / S / plus-L) and emits per-image **bounding boxes + region classes** (text, title, table, figure, formula, list, header, footer, ...) — it does NOT extract text. Useful for filtering pages, cropping regions for downstream OCR, dataset analysis, and training-data prep.
+
+| Script | Model | Size | Backend | Notes |
+|--------|-------|------|---------|-------|
+| [`pp-doclayout.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/pp-doclayout.py) | [PP-DocLayout-L](https://huggingface.co/PaddlePaddle/PP-DocLayout-L) | 123M | paddleocr | Layout bboxes (no text). Bucket support: incremental parquet shards, resumable. |
+
+```bash
+hf jobs uv run --flavor l4x1 -s HF_TOKEN \
+    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \
+    your-dataset your-layout-output --max-samples 10
+```
+
+Source/sink can be either an HF dataset repo OR an `hf://buckets/...` URL (auto-detected). Bucket output writes incremental zstd parquet shards via the buckets API — resumable across runs (snapshot-backed source listing) and no git/commit overhead. See the script's `--help` for all flags.
 
 ## Batch processing and live endpoints
 
@@ -341,6 +320,27 @@ job = run_uv_job(
     flavor="l4x1",
 )
 ```
+
+## If a vLLM script crashes at startup (the `nvcc` / `nvrtc` error)
+
+The vLLM recipes run on the **default** Jobs image and carry a guard (`VLLM_USE_FLASHINFER_SAMPLER=0`) so they work there with the plain command. But some — especially nightly-vLLM ones — JIT-compile a CUDA kernel at engine init and crash on the default image with one of:
+
+```
+RuntimeError: Could not find nvcc and default cuda_home='/usr/local/cuda' doesn't exist
+nvrtc: error: failed to open libnvrtc-builtins.so...
+```
+
+Run those on the **`vllm/vllm-openai` image**, which ships the full CUDA toolkit. Add these flags to any recipe — they point `import vllm` at the image's CUDA-matched build:
+
+```bash
+hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
+    --image vllm/vllm-openai --python /usr/bin/python3 \
+    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
+    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/<script>.py \
+    INPUT OUTPUT --max-samples 10
+```
+
+This is **required** for a few scripts (e.g. `deepseek-ocr2-vllm.py`, `abot-ocr.py`, `nuextract3.py`) and a safe fallback for any vLLM recipe that crashes at startup. (It's also the more robust way to run any vLLM recipe — full CUDA toolkit, ABI-matched build. It isn't a speed-up: uv still reinstalls the script's deps either way.)
 
 **Run locally** (needs your own GPU) — same scripts, run directly from the URL:
 
