@@ -80,23 +80,23 @@ These are the maintained recipes. Each one has a tested `[tool.hf-jobs]` header,
 
 | Script | Model | Size | Good at | Licence | GPU |
 |--------|-------|------|---------|---------|-----|
-| [`tesseract-ocr.py`](tesseract-ocr.py) | [Tesseract 5](https://github.com/tesseract-ocr/tesseract) | classical | Baseline plain text, no GPU, 100+ language packs (`--lang`) | Apache-2.0 | `cpu-upgrade` |
-| [`pp-ocrv6.py`](pp-ocrv6.py) | [PP-OCRv6](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) | 1.5M–34.5M | Small detection + recognition pipeline, plain text, 48 languages | Apache-2.0 | `t4-small` |
-| [`surya-ocr.py`](surya-ocr.py) | [Surya OCR 2](https://huggingface.co/datalab-to/surya-ocr-2) | 0.65B | Per-block HTML with boxes and reading order; layout and table tasks; PDFs | modified OpenRAIL-M | `a10g-small` |
-| [`glm-ocr.py`](glm-ocr.py) | [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) | 0.9B | 94.62 OmniDocBench v1.5 | MIT | `a10g-small` |
-| [`paddleocr-vl-1.6.py`](paddleocr-vl-1.6.py) | [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) | 0.9B | 96.33 OmniDocBench v1.6; six task modes | Apache-2.0 | `a10g-small` |
-| [`ovis-ocr2.py`](ovis-ocr2.py) | [OvisOCR2](https://huggingface.co/ATH-MaaS/OvisOCR2) | 0.9B | 96.58 OmniDocBench v1.6; LaTeX and HTML tables | Apache-2.0 | `a10g-small` |
-| [`lighton-ocr2.py`](lighton-ocr2.py) | [LightOnOCR-2-1B](https://huggingface.co/lightonai/LightOnOCR-2-1B) | 1B | 83.2 olmOCR-Bench | Apache-2.0 | `a10g-small` |
-| [`hunyuan-ocr-1.5.py`](hunyuan-ocr-1.5.py) | [HunyuanOCR-1.5](https://huggingface.co/tencent/HunyuanOCR) | 1B | 12 task types, including spotting, charts and translation | [Hunyuan Community](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (excludes EU, UK, South Korea) | `a10g-small` |
-| [`dots-ocr.py`](dots-ocr.py) | [dots.ocr](https://huggingface.co/rednote-hilab/dots.ocr) | 1.7B | 100+ languages; layout modes | MIT | `a10g-small` |
-| [`dots-mocr.py`](dots-mocr.py) | [dots.mocr](https://huggingface.co/rednote-hilab/dots.mocr) | 3B | Eight prompt modes, including SVG from charts | MIT | `a10g-small` |
-| [`deepseek-ocr2-vllm.py`](deepseek-ocr2-vllm.py) | [DeepSeek-OCR-2](https://huggingface.co/deepseek-ai/DeepSeek-OCR-2) | 3B | Newer DeepSeek-OCR | Apache-2.0 | `a10g-small` |
-| [`unlimited-ocr-vllm.py`](unlimited-ocr-vllm.py) | [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) | 3.3B | Markdown with layout boxes (`--strip-grounding` for clean text) | MIT | `a10g-small` |
-| [`deepseek-ocr-vllm.py`](deepseek-ocr-vllm.py) | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | Five prompt modes, including figure description | MIT | `a10g-small` |
-| [`nuextract3.py`](nuextract3.py) | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | Markdown, or JSON from a template ([below](#structured-extraction-and-layout)) | Apache-2.0 | `a10g-small` |
-| [`qianfan-ocr.py`](qianfan-ocr.py) | [Qianfan-OCR](https://huggingface.co/baidu/Qianfan-OCR) | 4.7B | 93.12 OmniDocBench v1.5; optional reasoning (`--think`); key-information extraction | Apache-2.0 | `a10g-small` |
-| [`olmocr2-vllm.py`](olmocr2-vllm.py) | [olmOCR-2-7B](https://huggingface.co/allenai/olmOCR-2-7B-1025-FP8) | 7B (FP8) | 82.4 olmOCR-Bench | Apache-2.0 | `a10g-small` |
-| [`lift-extract.py`](lift-extract.py) | [lift](https://huggingface.co/datalab-to/lift) | 9B | JSON from a schema, from images or multi-page PDFs | modified OpenRAIL-M | `a100-large` |
+| [`tesseract-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/tesseract-ocr.py) | [Tesseract 5](https://github.com/tesseract-ocr/tesseract) | classical | Baseline plain text, no GPU, 100+ language packs (`--lang`) | Apache-2.0 | `cpu-upgrade` |
+| [`pp-ocrv6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/pp-ocrv6.py) | [PP-OCRv6](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) | 1.5M–34.5M | Small detection + recognition pipeline, plain text, 48 languages | Apache-2.0 | `t4-small` |
+| [`surya-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/surya-ocr.py) | [Surya OCR 2](https://huggingface.co/datalab-to/surya-ocr-2) | 0.65B | Per-block HTML with boxes and reading order; layout and table tasks; PDFs | modified OpenRAIL-M | `a10g-small` |
+| [`glm-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/glm-ocr.py) | [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) | 0.9B | 94.62 OmniDocBench v1.5 | MIT | `a10g-small` |
+| [`paddleocr-vl-1.6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl-1.6.py) | [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) | 0.9B | 96.33 OmniDocBench v1.6; six task modes | Apache-2.0 | `a10g-small` |
+| [`ovis-ocr2.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/ovis-ocr2.py) | [OvisOCR2](https://huggingface.co/ATH-MaaS/OvisOCR2) | 0.9B | 96.58 OmniDocBench v1.6; LaTeX and HTML tables | Apache-2.0 | `a10g-small` |
+| [`lighton-ocr2.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr2.py) | [LightOnOCR-2-1B](https://huggingface.co/lightonai/LightOnOCR-2-1B) | 1B | 83.2 olmOCR-Bench | Apache-2.0 | `a10g-small` |
+| [`hunyuan-ocr-1.5.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/hunyuan-ocr-1.5.py) | [HunyuanOCR-1.5](https://huggingface.co/tencent/HunyuanOCR) | 1B | 12 task types, including spotting, charts and translation | [Hunyuan Community](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (excludes EU, UK, South Korea) | `a10g-small` |
+| [`dots-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/dots-ocr.py) | [dots.ocr](https://huggingface.co/rednote-hilab/dots.ocr) | 1.7B | 100+ languages; layout modes | MIT | `a10g-small` |
+| [`dots-mocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/dots-mocr.py) | [dots.mocr](https://huggingface.co/rednote-hilab/dots.mocr) | 3B | Eight prompt modes, including SVG from charts | MIT | `a10g-small` |
+| [`deepseek-ocr2-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/deepseek-ocr2-vllm.py) | [DeepSeek-OCR-2](https://huggingface.co/deepseek-ai/DeepSeek-OCR-2) | 3B | Newer DeepSeek-OCR | Apache-2.0 | `a10g-small` |
+| [`unlimited-ocr-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/unlimited-ocr-vllm.py) | [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) | 3.3B | Markdown with layout boxes (`--strip-grounding` for clean text) | MIT | `a10g-small` |
+| [`deepseek-ocr-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/deepseek-ocr-vllm.py) | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | Five prompt modes, including figure description | MIT | `a10g-small` |
+| [`nuextract3.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/nuextract3.py) | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | Markdown, or JSON from a template ([below](#structured-extraction-and-layout)) | Apache-2.0 | `a10g-small` |
+| [`qianfan-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/qianfan-ocr.py) | [Qianfan-OCR](https://huggingface.co/baidu/Qianfan-OCR) | 4.7B | 93.12 OmniDocBench v1.5; optional reasoning (`--think`); key-information extraction | Apache-2.0 | `a10g-small` |
+| [`olmocr2-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/olmocr2-vllm.py) | [olmOCR-2-7B](https://huggingface.co/allenai/olmOCR-2-7B-1025-FP8) | 7B (FP8) | 82.4 olmOCR-Bench | Apache-2.0 | `a10g-small` |
+| [`lift-extract.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lift-extract.py) | [lift](https://huggingface.co/datalab-to/lift) | 9B | JSON from a schema, from images or multi-page PDFs | modified OpenRAIL-M | `a100-large` |
 
 Start with a model under 2B. Use a larger model only if the output of a small one is not good enough. Check the licence before you use a model: Surya and lift use a modified OpenRAIL-M licence (free for research, personal use and startups under $5M; no competitive use against Datalab's API), and the Hunyuan licence excludes the EU, the UK and South Korea.
 
