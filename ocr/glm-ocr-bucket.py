@@ -3,18 +3,12 @@
 # dependencies = [
 #     "pillow",
 #     "pymupdf",
-#     "vllm",
-#     "torch",
 # ]
 #
-# [[tool.uv.index]]
-# url = "https://wheels.vllm.ai/nightly/cu129"
-#
-# [tool.uv]
-# prerelease = "allow"
-# override-dependencies = ["transformers>=5.1.0"]
-#
 # [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.29.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
 # flavor = "a10g-small"
 # secrets = ["HF_TOKEN"]
 # ///
@@ -37,7 +31,7 @@ Input:                          Output:
 Examples:
 
   # Local test
-  uv run glm-ocr-bucket.py ./test-images ./test-output
+  uv run --with vllm==0.29.0 glm-ocr-bucket.py ./test-images ./test-output
 
   # HF Jobs with bucket volumes (flavor + secrets come from the
   # [tool.hf-jobs] header; needs hf CLI 1.32+)
@@ -186,8 +180,8 @@ Task modes:
   table    Table extraction (HTML)
 
 Examples:
-  uv run glm-ocr-bucket.py ./images ./output
-  uv run glm-ocr-bucket.py /input /output --task table --pdf-dpi 200
+  uv run --with vllm==0.29.0 glm-ocr-bucket.py ./images ./output
+  uv run --with vllm==0.29.0 glm-ocr-bucket.py /input /output --task table --pdf-dpi 200
 
 HF Jobs with bucket volumes (flavor + secrets from the [tool.hf-jobs] header; hf CLI 1.32+):
   hf jobs uv run \\
@@ -381,11 +375,11 @@ if __name__ == "__main__":
         print("Designed for HF Buckets mounted as volumes.")
         print()
         print("Usage:")
-        print("  uv run glm-ocr-bucket.py INPUT_DIR OUTPUT_DIR")
+        print("  uv run --with vllm==0.29.0 glm-ocr-bucket.py INPUT_DIR OUTPUT_DIR")
         print()
         print("Examples:")
-        print("  uv run glm-ocr-bucket.py ./images ./output")
-        print("  uv run glm-ocr-bucket.py /input /output --task table")
+        print("  uv run --with vllm==0.29.0 glm-ocr-bucket.py ./images ./output")
+        print("  uv run --with vllm==0.29.0 glm-ocr-bucket.py /input /output --task table")
         print()
         print("HF Jobs with bucket volumes (flavor + secrets from the")
         print("[tool.hf-jobs] header; needs hf CLI 1.32+):")
@@ -394,7 +388,7 @@ if __name__ == "__main__":
         print("      -v hf://buckets/user/ocr-output:/output \\")
         print("      glm-ocr-bucket.py /input /output")
         print()
-        print("For full help: uv run glm-ocr-bucket.py --help")
+        print("For full help: uv run --with vllm==0.29.0 glm-ocr-bucket.py --help")
         sys.exit(0)
 
     main()
