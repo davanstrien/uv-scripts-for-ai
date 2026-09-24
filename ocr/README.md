@@ -91,7 +91,13 @@ hf datasets leaderboard allenai/olmOCR-bench
 
 But which model wins on *your* documents is still document-dependent — so [ocr-bench](https://github.com/davanstrien/ocr-bench) builds a **per-collection leaderboard** for your own data (pairwise VLM-as-judge, optionally human-validated), using these scripts under the hood.
 
-**Language coverage:** [LANGUAGES.md](LANGUAGES.md) lists what each model's card claims (and how much evidence backs it). Machine-readable catalog for agents — script → model, params, backend, image pins, languages: [`models.json`](models.json).
+**Language coverage:** [LANGUAGES.md](LANGUAGES.md) lists what each model's card claims (and how much evidence backs it). Machine-readable catalog for agents — script → model, params, backend, support level, tested Jobs launch config, languages: [`models.json`](models.json).
+
+**Support levels** (smoke-tested on HF Jobs, 2026-09-23/24; details in the `support` and `support_note` fields of [`models.json`](models.json)):
+
+- **Core** recipes carry a tested `[tool.hf-jobs]` header, so `hf jobs uv run <url> <in> <out>` needs no flags (hf CLI 1.32+). `models.json` has each recipe's launch config under `jobs`.
+- **Less supported (legacy):** they work but are superseded or little used, and have no header yet: `abot-ocr.py`, `falcon-ocr-bucket.py`, `falcon-ocr.py`, `firered-ocr.py`, `glm-ocr-v2.py`, `lfm2-vl-extract.py`, `lighton-ocr.py`, `lighton-ocr2-server.py`, `nanonets-ocr.py`, `nanonets-ocr2.py`, `numarkdown-ocr.py`, `ovis-ocr2-server.py`, `paddleocr-vl.py`.
+- **Unsupported (known broken):** kept for now, don't use: `deepseek-ocr.py`, `hunyuan-ocr.py`, `jina-ocr-v1.py`, `paddleocr-vl-1.5.py`, `rolm-ocr.py`, `smoldocling-ocr.py`. Each script's docstring names the alternative.
 
 _Sorted by model size:_
 

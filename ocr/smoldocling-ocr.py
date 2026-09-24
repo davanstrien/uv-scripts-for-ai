@@ -14,6 +14,8 @@
 # ///
 
 """
+UNSUPPORTED: Broken (2026-09-23): the DocTags-to-markdown converter is a stub, so rows are raw DocTags. See models.json (`support`).
+
 Extract structured documents using SmolDocling-256M with vLLM.
 
 This script processes images through the SmolDocling model to extract

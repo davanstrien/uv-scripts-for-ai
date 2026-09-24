@@ -15,6 +15,8 @@
 # ///
 
 """
+UNSUPPORTED: Broken (2026-09-23): the pinned 1.0 revision fails on current vLLM/transformers. Use hunyuan-ocr-1.5.py. See models.json (`support`).
+
 Convert document images to markdown using HunyuanOCR (v1.0) with vLLM.
 
 HunyuanOCR is a lightweight 1B parameter VLM from Tencent designed for complex

@@ -13,6 +13,8 @@
 # ///
 
 """
+UNSUPPORTED: Broken (2026-09-23): no KV cache room on a 24 GB L4 with the default settings. Use olmocr2-vllm.py. See models.json (`support`).
+
 Extract text from document images using RolmOCR with vLLM.
 
 This script processes images through the RolmOCR model to extract

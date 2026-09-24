@@ -18,6 +18,8 @@
 # ///
 
 """
+UNSUPPORTED: Broken (2026-09-23): every output row is the string 'None' (model.infer returns None). Use deepseek-ocr-vllm.py. See models.json (`support`).
+
 Convert document images to markdown using DeepSeek-OCR with Transformers.
 
 This script processes images through the DeepSeek-OCR model to extract

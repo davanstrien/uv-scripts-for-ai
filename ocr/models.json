@@ -1,8 +1,14 @@
 {
   "_meta": {
-    "description": "Machine-readable catalog of the OCR recipes in this directory: script -> model, params, backend, required image pins, and what the model's own card claims about language coverage. Human-readable language notes: LANGUAGES.md. Language evidence levels, strongest first: per-language-benchmark | count-claim | named-list | multilingual-unspecified | english-only | not-stated | not-applicable. Claims come from model cards (compiled 2026-07-15) - treat as claims, not guarantees.",
-    "updated": "2026-07-15",
-    "run_pattern": "hf jobs uv run --flavor <flavor> -s HF_TOKEN https://huggingface.co/datasets/uv-scripts/ocr/raw/main/<script> <input-dataset> <output-dataset>"
+    "description": "Machine-readable catalog of the OCR recipes in this directory: script -> model, params, backend, support level, the tested Jobs launch config (the script's [tool.hf-jobs] header), and what the model's own card claims about language coverage. Human-readable language notes: LANGUAGES.md. Language evidence levels, strongest first: per-language-benchmark | count-claim | named-list | multilingual-unspecified | english-only | not-stated | not-applicable. Claims come from model cards (compiled 2026-07-15) - treat as claims, not guarantees.",
+    "updated": "2026-09-24",
+    "run_pattern": "hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/<script> <input-dataset> <output-dataset>  (hf CLI >= 1.32 reads image/flavor/secrets from the script's [tool.hf-jobs] header; add --timeout for long runs. Scripts without a `jobs` entry need --flavor/-s HF_TOKEN (and any --image in their docstring).)",
+    "support_levels": {
+      "core": "Maintained. Smoke-tested flagless on HF Jobs on 2026-09-23/24 with the pinned launch config in `jobs`.",
+      "tool": "Maintained companion (judge, layout, text extraction), not a page-OCR recipe.",
+      "legacy": "Works (smoke-tested 2026-09-23) but superseded or little used; no header yet. See support_note for the alternative.",
+      "unsupported": "Known broken as of 2026-09-23; kept in the repo for now. See support_note."
+    }
   },
   "tesseract-ocr.py": {
     "model_id": null,
@@ -17,6 +23,13 @@
       "count": "125 traineddata packs (~100+ languages + script models)",
       "list_url": "https://github.com/tesseract-ocr/tessdata_best",
       "notes": "Broadest named coverage; script models (Latin, Cyrillic, Devanagari, ...) cover languages without a dedicated pack. Legacy baseline quality."
+    },
+    "support": "core",
+    "jobs": {
+      "flavor": "cpu-upgrade",
+      "secrets": [
+        "HF_TOKEN"
+      ]
     }
   },
   "pp-ocrv6.py": {
@@ -29,6 +42,13 @@
     "languages": {
       "evidence": "count-claim",
       "count": 48
+    },
+    "support": "core",
+    "jobs": {
+      "flavor": "t4-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
     }
   },
   "falcon-ocr.py": {
@@ -40,7 +60,9 @@
     "license": "apache-2.0",
     "languages": {
       "evidence": "not-stated"
-    }
+    },
+    "support": "legacy",
+    "support_note": "Falcon-OCR v1; v1.5 work is in PR #110."
   },
   "smoldocling-ocr.py": {
     "model_id": "ds4sd/SmolDocling-256M-preview",
@@ -50,7 +72,9 @@
     "output": "DocTags",
     "languages": {
       "evidence": "english-only"
-    }
+    },
+    "support": "unsupported",
+    "support_note": "Broken (2026-09-23): the DocTags-to-markdown converter is a stub, so rows are raw DocTags."
   },
   "surya-ocr.py": {
     "model_id": "datalab-to/surya-ocr-2",
@@ -65,6 +89,18 @@
       "count": 91,
       "benchmark_url": "https://github.com/datalab-to/surya/blob/master/static/docs/multilingual.md",
       "notes": "38/91 languages score >=90%, 76/91 >=80%; weakest of top-15: Arabic 72.7%, Vietnamese 73.2%."
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.20.1",
+      "python": "/usr/local/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/site-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
     }
   },
   "glm-ocr.py": {
@@ -87,7 +123,20 @@
         "ko"
       ],
       "notes": "Declared in card metadata only; no per-language evidence in the card body."
-    }
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.29.0",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
+    },
+    "image": "vllm/vllm-openai:v0.29.0"
   },
   "paddleocr-vl.py": {
     "model_id": "PaddlePaddle/PaddleOCR-VL",
@@ -99,7 +148,9 @@
       "evidence": "count-claim",
       "count": 109,
       "notes": "Names scripts (Cyrillic, Arabic, Devanagari, Thai); claims handwriting + historical documents; no per-language numbers."
-    }
+    },
+    "support": "legacy",
+    "support_note": "PaddleOCR-VL 1.0; use paddleocr-vl-1.6.py."
   },
   "paddleocr-vl-1.5.py": {
     "model_id": "PaddlePaddle/PaddleOCR-VL-1.5",
@@ -111,7 +162,9 @@
       "evidence": "count-claim",
       "count": "109+ (adds Tibetan, Bengali)",
       "notes": "Claims improved rare-character and ancient-text recognition."
-    }
+    },
+    "support": "unsupported",
+    "support_note": "Broken (2026-09-23): every row is an [OCR ERROR] ('min_pixels' attribute removed in transformers 5). Use paddleocr-vl-1.6.py."
   },
   "paddleocr-vl-1.6.py": {
     "model_id": "PaddlePaddle/PaddleOCR-VL-1.6",
@@ -123,7 +176,20 @@
       "evidence": "count-claim",
       "count": "109+ (inherited from 1.5, not restated)",
       "notes": "Upgrade-focused card; language-specific claims are Chinese ancient documents and rare characters."
-    }
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.29.0",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
+    },
+    "image": "vllm/vllm-openai:v0.29.0"
   },
   "ovis-ocr2.py": {
     "model_id": "ATH-MaaS/OvisOCR2",
@@ -134,7 +200,20 @@
     "license": "apache-2.0",
     "languages": {
       "evidence": "not-stated"
-    }
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.29.0",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
+    },
+    "image": "vllm/vllm-openai:v0.29.0"
   },
   "ovis-ocr2-server.py": {
     "model_id": "ATH-MaaS/OvisOCR2",
@@ -147,19 +226,29 @@
     "notes": "Server-mode sibling of ovis-ocr2.py: ~1.7x its inference throughput, per-request failure isolation. See SERVING.md.",
     "languages": {
       "evidence": "not-stated"
-    }
+    },
+    "support": "legacy",
+    "support_note": "Use ovis-ocr2-saturate.py (same model and server, adaptive concurrency, resumable)."
   },
   "ovis-ocr2-saturate.py": {
     "model_id": "ATH-MaaS/OvisOCR2",
     "params": "0.9B",
     "backend": "saturate (in-job vllm serve + saturate pump)",
-    "image": "vllm/vllm-openai:latest",
+    "image": "vllm/vllm-openai:v0.22.1",
     "task": "ocr",
     "output": "markdown + LaTeX + HTML tables",
     "license": "apache-2.0",
     "notes": "saturate companion of ovis-ocr2-server.py: same model/prompt/sampling/post-processing; the driver half (adaptive concurrency, retries, resumable parquet output, durable error rows) is the saturate library. SERVING dict at the top of the script is the machine-readable tuning prior.",
     "languages": {
       "evidence": "not-stated"
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.22.1",
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
     }
   },
   "lighton-ocr.py": {
@@ -183,7 +272,9 @@
         "da"
       ],
       "notes": "Explicitly European / Latin-alphabet focused."
-    }
+    },
+    "support": "legacy",
+    "support_note": "LightOnOCR v1; use lighton-ocr2.py."
   },
   "lighton-ocr2.py": {
     "model_id": "lightonai/LightOnOCR-2-1B",
@@ -208,7 +299,20 @@
         "ja"
       ],
       "notes": "Adds zh/ja over v1; declared, not benchmarked per language."
-    }
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.22.1",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
+    },
+    "image": "vllm/vllm-openai:v0.22.1"
   },
   "lighton-ocr2-server.py": {
     "model_id": "lightonai/LightOnOCR-2-1B",
@@ -235,13 +339,15 @@
         "ja"
       ],
       "notes": "Adds zh/ja over v1; declared, not benchmarked per language."
-    }
+    },
+    "support": "legacy",
+    "support_note": "Use lighton-ocr2-saturate.py (same model and server, adaptive concurrency, resumable)."
   },
   "lighton-ocr2-saturate.py": {
     "model_id": "lightonai/LightOnOCR-2-1B",
     "params": "1B",
     "backend": "saturate (in-job vllm serve + saturate pump)",
-    "image": "vllm/vllm-openai:latest",
+    "image": "vllm/vllm-openai:v0.22.1",
     "task": "ocr",
     "output": "markdown",
     "notes": "saturate companion of lighton-ocr2-server.py: same model/message shape/sampling; the driver half (adaptive concurrency, retries, resumable parquet output, durable error rows) is the saturate library. SERVING dict at the top of the script is the machine-readable tuning prior.",
@@ -262,6 +368,14 @@
         "ja"
       ],
       "notes": "Adds zh/ja over v1; declared, not benchmarked per language."
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.22.1",
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
     }
   },
   "hunyuan-ocr.py": {
@@ -274,7 +388,9 @@
     "license": "Hunyuan Community License (excludes EU/UK/KR)",
     "languages": {
       "evidence": "multilingual-unspecified"
-    }
+    },
+    "support": "unsupported",
+    "support_note": "Broken (2026-09-23): the pinned 1.0 revision fails on current vLLM/transformers. Use hunyuan-ocr-1.5.py."
   },
   "hunyuan-ocr-1.5.py": {
     "model_id": "tencent/HunyuanOCR",
@@ -286,7 +402,20 @@
     "languages": {
       "evidence": "multilingual-unspecified",
       "notes": "Explicitly targets low-resource + ancient-script OCR as a design goal; nothing enumerated."
-    }
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.24.0",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
+    },
+    "image": "vllm/vllm-openai:v0.24.0"
   },
   "dots-ocr.py": {
     "model_id": "rednote-hilab/dots.ocr",
@@ -298,7 +427,20 @@
       "evidence": "count-claim",
       "count": 100,
       "notes": "Explicit low-resource claim backed by in-house dots.ocr-bench (1,493 PDFs across 100 languages); aggregate scores only."
-    }
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.29.0",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
+    },
+    "image": "vllm/vllm-openai:v0.29.0"
   },
   "firered-ocr.py": {
     "model_id": "FireRedTeam/FireRed-OCR",
@@ -309,7 +451,9 @@
     "license": "apache-2.0",
     "languages": {
       "evidence": "not-stated"
-    }
+    },
+    "support": "legacy",
+    "support_note": "Works; low adoption."
   },
   "abot-ocr.py": {
     "model_id": "acvlab/ABot-OCR",
@@ -320,7 +464,9 @@
     "output": "markdown (text, LaTeX, HTML tables)",
     "languages": {
       "evidence": "not-stated"
-    }
+    },
+    "support": "legacy",
+    "support_note": "Works; low adoption and no declared model licence."
   },
   "nanonets-ocr.py": {
     "model_id": "nanonets/Nanonets-OCR-s",
@@ -330,7 +476,9 @@
     "output": "markdown (LaTeX, tables, forms)",
     "languages": {
       "evidence": "english-only"
-    }
+    },
+    "support": "legacy",
+    "support_note": "Nanonets-OCR-s; use nanonets-ocr2.py."
   },
   "dots-mocr.py": {
     "model_id": "rednote-hilab/dots.mocr",
@@ -340,7 +488,20 @@
     "output": "markdown",
     "languages": {
       "evidence": "multilingual-unspecified"
-    }
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.29.0",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
+    },
+    "image": "vllm/vllm-openai:v0.29.0"
   },
   "nanonets-ocr2.py": {
     "model_id": "nanonets/Nanonets-OCR2-3B",
@@ -366,7 +527,9 @@
         "ar"
       ],
       "notes": "Only card claiming multilingual handwriting; list illustrative, no per-language benchmark."
-    }
+    },
+    "support": "legacy",
+    "support_note": "Works on its pinned vllm/vllm-openai:v0.10.2 image; not header-migrated."
   },
   "deepseek-ocr-vllm.py": {
     "model_id": "deepseek-ai/DeepSeek-OCR",
@@ -377,7 +540,20 @@
     "license": "mit",
     "languages": {
       "evidence": "multilingual-unspecified"
-    }
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.29.0",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
+    },
+    "image": "vllm/vllm-openai:v0.29.0"
   },
   "jina-ocr-v1.py": {
     "model_id": "jinaai/jina-ocr-v1",
@@ -391,6 +567,17 @@
     "languages": {
       "evidence": "multilingual-unspecified",
       "notes": "Card metadata says multilingual; no per-language list or evidence in the card body."
+    },
+    "support": "unsupported",
+    "support_note": "Broken (2026-09-23): vLLM 0.30 DeepEncoder kernel error; pinning vllm/vllm-openai:v0.29.0 likely fixes it (as for deepseek-ocr-vllm.py). CC-BY-NC-4.0 model.",
+    "jobs": {
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ],
+      "env": {
+        "UV_TORCH_BACKEND": "auto"
+      }
     }
   },
   "deepseek-ocr.py": {
@@ -402,18 +589,32 @@
     "license": "mit",
     "languages": {
       "evidence": "multilingual-unspecified"
-    }
+    },
+    "support": "unsupported",
+    "support_note": "Broken (2026-09-23): every output row is the string 'None' (model.infer returns None). Use deepseek-ocr-vllm.py."
   },
   "deepseek-ocr2-vllm.py": {
     "model_id": "deepseek-ai/DeepSeek-OCR-2",
     "params": "3B",
     "backend": "vllm (nightly)",
-    "image": "vllm/vllm-openai",
+    "image": "vllm/vllm-openai:v0.29.0",
     "task": "ocr",
     "output": "markdown",
     "license": "apache-2.0",
     "languages": {
       "evidence": "multilingual-unspecified"
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.29.0",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
     }
   },
   "unlimited-ocr-vllm.py": {
@@ -426,17 +627,41 @@
     "license": "mit",
     "languages": {
       "evidence": "multilingual-unspecified"
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:unlimited-ocr",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
     }
   },
   "nuextract3.py": {
     "model_id": "numind/NuExtract3",
     "params": "4B",
     "backend": "vllm",
-    "image": "vllm/vllm-openai",
+    "image": "vllm/vllm-openai:v0.29.0",
     "task": "ocr | schema-guided extraction",
     "output": "markdown or JSON",
     "languages": {
       "evidence": "multilingual-unspecified"
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.29.0",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
     }
   },
   "qianfan-ocr.py": {
@@ -449,7 +674,20 @@
       "evidence": "count-claim",
       "count": 192,
       "notes": "Headline claim; no list or per-language numbers."
-    }
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.29.0",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
+    },
+    "image": "vllm/vllm-openai:v0.29.0"
   },
   "olmocr2-vllm.py": {
     "model_id": "allenai/olmOCR-2-7B-1025-FP8",
@@ -459,7 +697,20 @@
     "output": "markdown",
     "languages": {
       "evidence": "english-only"
-    }
+    },
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.29.0",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
+    },
+    "image": "vllm/vllm-openai:v0.29.0"
   },
   "rolm-ocr.py": {
     "model_id": "reducto/RolmOCR",
@@ -469,7 +720,9 @@
     "output": "plain text",
     "languages": {
       "evidence": "not-stated"
-    }
+    },
+    "support": "unsupported",
+    "support_note": "Broken (2026-09-23): no KV cache room on a 24 GB L4 with the default settings. Use olmocr2-vllm.py."
   },
   "numarkdown-ocr.py": {
     "model_id": "numind/NuMarkdown-8B-Thinking",
@@ -479,7 +732,9 @@
     "output": "markdown",
     "languages": {
       "evidence": "not-stated"
-    }
+    },
+    "support": "legacy",
+    "support_note": "8B reasoning model; works, little used."
   },
   "lfm2-vl-extract.py": {
     "model_id": "LiquidAI/LFM2.5-VL-1.6B-Extract",
@@ -491,13 +746,15 @@
     "languages": {
       "evidence": "english-only",
       "notes": "Vision card declares en only; the text sibling's 9-language list does NOT carry over."
-    }
+    },
+    "support": "legacy",
+    "support_note": "Works; nuextract3.py and lift-extract.py cover image-to-JSON extraction."
   },
   "lfm2-extract.py": {
     "model_id": "LiquidAI/LFM2-1.2B-Extract",
     "params": "1.2B",
     "backend": "vllm",
-    "image": "vllm/vllm-openai",
+    "image": "vllm/vllm-openai:v0.29.0",
     "task": "schema-guided extraction (text -> structured); chain after any OCR recipe",
     "output": "JSON / XML / YAML",
     "languages": {
@@ -515,6 +772,18 @@
         "es"
       ],
       "notes": "Text-only model (not OCR). Card prose names 9 incl. Portuguese; card YAML lists 8 (pt missing)."
+    },
+    "support": "tool",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.29.0",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
     }
   },
   "lift-extract.py": {
@@ -526,6 +795,13 @@
     "license": "modified OpenRAIL-M",
     "languages": {
       "evidence": "not-stated"
+    },
+    "support": "core",
+    "jobs": {
+      "flavor": "a100-large",
+      "secrets": [
+        "HF_TOKEN"
+      ]
     }
   },
   "pp-doclayout.py": {
@@ -536,29 +812,79 @@
     "output": "bounding boxes + region classes",
     "languages": {
       "evidence": "not-applicable"
+    },
+    "support": "tool",
+    "jobs": {
+      "flavor": "t4-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
     }
   },
   "glm-ocr-v2.py": {
     "variant_of": "glm-ocr.py",
-    "notes": "Adds checkpoint/resume for very large jobs."
+    "notes": "Adds checkpoint/resume for very large jobs.",
+    "support": "legacy",
+    "support_note": "Superseded by glm-ocr.py for most runs; kept for its resume support."
   },
   "glm-ocr-bucket.py": {
     "variant_of": "glm-ocr.py",
-    "notes": "Reads images/PDFs from a mounted bucket, writes one .md per page."
+    "notes": "Reads images/PDFs from a mounted bucket, writes one .md per page.",
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.29.0",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
+    },
+    "image": "vllm/vllm-openai:v0.29.0"
   },
   "falcon-ocr-bucket.py": {
     "variant_of": "falcon-ocr.py",
-    "notes": "Reads images/PDFs from a mounted bucket, writes one .md per page."
+    "notes": "Reads images/PDFs from a mounted bucket, writes one .md per page.",
+    "support": "legacy",
+    "support_note": "Falcon-OCR v1; v1.5 work is in PR #110. --max-samples counts files, not pages."
   },
   "surya-ocr-bucket.py": {
     "variant_of": "surya-ocr.py",
-    "notes": "Bucket-to-bucket structured OCR (--io-mode mount|copy), resumable."
+    "notes": "Bucket-to-bucket structured OCR (--io-mode mount|copy), resumable.",
+    "support": "core",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.20.1",
+      "python": "/usr/local/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/site-packages"
+      },
+      "flavor": "a10g-small",
+      "secrets": [
+        "HF_TOKEN"
+      ]
+    },
+    "image": "vllm/vllm-openai:v0.20.1"
   },
   "ocr-vllm-judge.py": {
     "model_id": "configurable",
     "task": "pairwise OCR-quality judging (VLM-as-judge)",
     "languages": {
       "evidence": "not-applicable"
-    }
+    },
+    "support": "tool",
+    "jobs": {
+      "image": "vllm/vllm-openai:v0.29.0",
+      "python": "/usr/bin/python3",
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"
+      },
+      "flavor": "a100-large",
+      "secrets": [
+        "HF_TOKEN"
+      ]
+    },
+    "image": "vllm/vllm-openai:v0.29.0"
   }
 }
