@@ -17,6 +17,8 @@
 # ///
 
 """
+UNSUPPORTED: Broken (2026-09-23): vLLM 0.30 DeepEncoder kernel error; pinning vllm/vllm-openai:v0.29.0 likely fixes it (as for deepseek-ocr-vllm.py). CC-BY-NC-4.0 model. See models.json (`support`).
+
 Convert document images to markdown using jina-ocr-v1 with vLLM (offline batch).
 
 jina-ocr-v1 (Jina AI, 2026-09) is a DeepSeek-OCR fine-tune: the DeepEncoder vision

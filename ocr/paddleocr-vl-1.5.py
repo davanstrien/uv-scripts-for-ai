@@ -13,6 +13,8 @@
 # ///
 
 """
+UNSUPPORTED: Broken (2026-09-23): every row is an [OCR ERROR] ('min_pixels' attribute removed in transformers 5). Use paddleocr-vl-1.6.py. See models.json (`support`).
+
 Convert document images to text/tables/formulas using PaddleOCR-VL-1.5 with transformers.
 
 PaddleOCR-VL-1.5 is a compact 0.9B OCR model that achieves 94.5% SOTA accuracy on
