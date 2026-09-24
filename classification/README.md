@@ -99,9 +99,8 @@ the model has not seen. Outputs are **private by default** (`--public` to opt ou
 
 These commands use the default base model, `fastino/gliner2.5-multi-v1` (multilingual). For
 English text, `--base-model fastino/gliner2.5-base-v1` is smaller and faster;
-`gliner2.5-small-v1` is the fastest and loses about 4 points on the 52-tag example. For English zero-shot labelling, try
-`--model fastino/GLiNER2.5-Decide`: on BL books it scored 0.851 zero-shot against the default's
-0.767 (train it on `a10g-small`; it is larger). Sizes and speeds: [Choosing a model size](GLINER2-NOTES.md#choosing-a-model-size).
+`gliner2.5-small-v1` is the fastest and loses about 4 points on the 52-tag example. For English zero-shot, try
+`fastino/GLiNER2.5-Decide`. Sizes and speeds: [Choosing a model size](GLINER2-NOTES.md#choosing-a-model-size).
 
 ### Results
 

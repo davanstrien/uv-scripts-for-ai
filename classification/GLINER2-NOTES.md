@@ -111,13 +111,8 @@ How it was set up, if you want to do something similar with your own label list:
 On a GPU, base and small are equally fast per row; the difference only shows on a CPU. For speed on
 a CPU, use plain fp32 PyTorch (see below for what did not work).
 
-**GLiNER2.5-Decide** (released 2026-09-23) is a classification-only, English checkpoint on
-DeBERTa-v3-large. Both scripts load it unchanged with `gliner2==2.0.0` (tested 2026-09-24). On BL
-books (seed 42, the same 174 held-out rows as the table) it scored **0.851 zero-shot**, against
-0.767 for the default; fine-tuned on `a10g-small` in bf16 it scored 0.943 in 110s, against 0.931
-for the default on the same seed and hardware (2 rows apart). So its gain is zero-shot. It is about
-1.4× slower to classify on a T4 (500 ag_news rows: 20s against 14s), and at batch size 16 in fp32 it
-ran a `t4-small` out of memory while training; use `a10g-small`.
+GLiNER2.5-Decide on BL books: 0.851 zero-shot (default 0.767), 0.943 fine-tuned (default 0.931).
+Train it on `a10g-small`; a `t4-small` ran out of memory.
 
 ## Speed and quantization
 
