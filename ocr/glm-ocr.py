@@ -4,19 +4,13 @@
 #     "datasets>=3.1.0",
 #     "huggingface-hub",
 #     "pillow",
-#     "vllm",
 #     "toolz",
-#     "torch",
 # ]
 #
-# [[tool.uv.index]]
-# url = "https://wheels.vllm.ai/nightly/cu129"
-#
-# [tool.uv]
-# prerelease = "allow"
-# override-dependencies = ["transformers>=5.1.0"]
-#
 # [tool.hf-jobs]
+# image = "vllm/vllm-openai:v0.29.0"
+# python = "/usr/bin/python3"
+# env = { PYTHONPATH = "/usr/local/lib/python3.12/dist-packages" }
 # flavor = "a10g-small"
 # secrets = ["HF_TOKEN"]
 # ///
@@ -28,10 +22,10 @@ GLM-OCR is a compact 0.9B parameter OCR model achieving 94.62% on OmniDocBench V
 Uses CogViT visual encoder with GLM-0.5B language decoder and Multi-Token Prediction
 (MTP) loss for fast, accurate document parsing.
 
-NOTE: Requires vLLM nightly wheels from cu129 variant (GLM-OCR added in v0.16.0,
-PR #33005) and transformers>=5.1.0 (GLM-OCR support landed in stable release).
-Uses https://wheels.vllm.ai/nightly/cu129 which has x86_64 wheels.
-First run may take a few minutes to download and install dependencies.
+NOTE: On Jobs, vLLM, torch and transformers come from the vllm/vllm-openai:v0.29.0
+image pinned in the [tool.hf-jobs] header (`hf` CLI 1.32+). GLM-OCR needs vLLM
+>=0.16.0 (PR #33005) and transformers>=5.1.0; the image has both. To run on your
+own GPU: `uv run --with vllm==0.29.0 glm-ocr.py ...`.
 
 Features:
 - 0.9B parameters (ultra-compact)
@@ -43,7 +37,7 @@ Features:
 - MIT licensed
 
 Model: zai-org/GLM-OCR
-vLLM: Requires vLLM nightly build + transformers>=5.1.0
+vLLM: vllm/vllm-openai:v0.29.0 image (see the header)
 Performance: 94.62% on OmniDocBench V1.5
 """
 
@@ -67,7 +61,7 @@ from toolz import partition_all
 # default uv-script image lacks (engine init then crashes). Greedy OCR doesn't use it; this
 # lets the plain default-image command work. On the vllm/vllm-openai image it's a harmless no-op.
 os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
-# Same story for DeepGEMM (nightly vLLM): its init calls _find_cuda_home, which asserts on the
+# Same story for DeepGEMM: its init calls _find_cuda_home, which asserts on the
 # nvcc-less base image (a non-fatal warning that clutters the log and hides the real traceback).
 # Greedy OCR doesn't need the DeepGEMM JIT path, so disable it explicitly.
 os.environ.setdefault("VLLM_USE_DEEP_GEMM", "0")
@@ -524,20 +518,20 @@ if __name__ == "__main__":
         print("  table    - Table extraction")
         print("\nExamples:")
         print("\n1. Basic OCR:")
-        print("   uv run glm-ocr.py input-dataset output-dataset")
+        print("   uv run --with vllm==0.29.0 glm-ocr.py input-dataset output-dataset")
         print("\n2. Formula recognition:")
-        print("   uv run glm-ocr.py docs results --task formula")
+        print("   uv run --with vllm==0.29.0 glm-ocr.py docs results --task formula")
         print("\n3. Table extraction:")
-        print("   uv run glm-ocr.py docs results --task table")
+        print("   uv run --with vllm==0.29.0 glm-ocr.py docs results --task table")
         print("\n4. Test with small sample:")
-        print("   uv run glm-ocr.py large-dataset test --max-samples 10 --shuffle")
+        print("   uv run --with vllm==0.29.0 glm-ocr.py large-dataset test --max-samples 10 --shuffle")
         print("\n5. Running on HF Jobs (hardware and HF_TOKEN come from the")
         print("   script's [tool.hf-jobs] header; --flavor/--timeout override it):")
         print(
             "   hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \\"
         )
         print("       input-dataset output-dataset --batch-size 16")
-        print("\nFor full help: uv run glm-ocr.py --help")
+        print("\nFor full help: uv run --with vllm==0.29.0 glm-ocr.py --help")
         sys.exit(0)
 
     parser = argparse.ArgumentParser(
@@ -550,9 +544,9 @@ Task modes:
   table    Table extraction
 
 Examples:
-  uv run glm-ocr.py my-docs analyzed-docs
-  uv run glm-ocr.py docs results --task formula
-  uv run glm-ocr.py large-dataset test --max-samples 50 --shuffle
+  uv run --with vllm==0.29.0 glm-ocr.py my-docs analyzed-docs
+  uv run --with vllm==0.29.0 glm-ocr.py docs results --task formula
+  uv run --with vllm==0.29.0 glm-ocr.py large-dataset test --max-samples 50 --shuffle
         """,
     )
 
