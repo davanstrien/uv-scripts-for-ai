@@ -21,6 +21,7 @@ input. That gives two ways to use this script:
 
 1. Zero-shot: pass the label names with --labels. No training and no LLM. A t4-small does about
    33 rows/s; cpu-basic works but manages about 1.4 rows/s, so keep CPU for a few hundred rows.
+   For English text, try `--model fastino/GLiNER2.5-Decide`.
 2. Fine-tuned: pass --model with a repo produced by `train-gliner2.py`. The tasks and labels are
    read from the model repo, so no --labels flag is needed.
 

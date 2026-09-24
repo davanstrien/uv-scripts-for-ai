@@ -106,9 +106,13 @@ How it was set up, if you want to do something similar with your own label list:
 | [`fastino/gliner2.5-small-v1`](https://huggingface.co/fastino/gliner2.5-small-v1) | 74M    | speed matters most                         | 0.653          | ~0.3 s                                   | ~19 ms         |
 | [`fastino/gliner2.5-base-v1`](https://huggingface.co/fastino/gliner2.5-base-v1) | 194M   | English text; the best accuracy per second | 0.690          | ~0.7–1 s                                 | ~19 ms         |
 | [`fastino/gliner2.5-multi-v1`](https://huggingface.co/fastino/gliner2.5-multi-v1) (default) | 287M   | non-English or mixed-language text         | not measured   | —                                        | —              |
+| [`fastino/GLiNER2.5-Decide`](https://huggingface.co/fastino/GLiNER2.5-Decide) | 486M   | English classification; best zero-shot     | not measured   | —                                        | —              |
 
 On a GPU, base and small are equally fast per row; the difference only shows on a CPU. For speed on
 a CPU, use plain fp32 PyTorch (see below for what did not work).
+
+GLiNER2.5-Decide on BL books: 0.851 zero-shot (default 0.767), 0.943 fine-tuned (default 0.931).
+Train it on `a10g-small`; a `t4-small` ran out of memory.
 
 ## Speed and quantization
 
