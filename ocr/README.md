@@ -7,348 +7,276 @@ tags: [uv-script, ocr, extraction, vision-language-model, document-processing, h
 
 <a href="https://huggingface.co/uv-scripts"><picture><source media="(prefers-color-scheme: dark)" srcset="https://huggingface.co/datasets/huggingface/badges/resolve/main/follow-us-on-hf-md-dark.svg"><img src="https://huggingface.co/datasets/huggingface/badges/resolve/main/follow-us-on-hf-md.svg" alt="Follow uv-scripts on Hugging Face"></picture></a>
 
-> Part of [uv-scripts](https://huggingface.co/uv-scripts) — self-contained UV scripts you run on Hugging Face Jobs in one command.
+> Part of [uv-scripts](https://huggingface.co/uv-scripts): self-contained UV scripts you run on Hugging Face Jobs in one command.
 
-A model zoo of OCR scripts — one per model — that add a `markdown` column to an image dataset. Pick a model from the table below, point it at your dataset, and run it on a GPU with one command. A few recipes do **structured extraction** instead — image *or* text → JSON given a schema (see [Structured extraction](#structured-extraction-image-or-text--json) below). Two more companions sit alongside: `pp-doclayout.py` detects layout regions (bboxes for text/title/table/figure/…) instead of text, and `ocr-vllm-judge.py` compares model outputs head-to-head.
+One script per OCR model. Each script reads an image dataset from the Hub, runs the model on a GPU with [Hugging Face Jobs](https://huggingface.co/docs/hub/jobs), and pushes the dataset back with a `markdown` column added. A few scripts return JSON from a schema, detect layout regions, or compare the output of two models.
 
 ## Quick Start
 
-First, [install the `hf` CLI and sign in](https://huggingface.co/docs/hub/jobs-quickstart). Jobs requires pay-as-you-go credit.
+First, [install the `hf` CLI and sign in](https://huggingface.co/docs/hub/jobs-quickstart). Jobs needs pay-as-you-go credit.
 
-Try [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) on seven scanned pages from [NASA’s *Food for Space Flight* booklet](https://huggingface.co/datasets/uv-scripts/ocr-demo). Replace `your-username` with your Hugging Face username:
+Run [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) on seven scanned pages from [NASA's *Food for Space Flight* booklet](https://huggingface.co/datasets/uv-scripts/ocr-demo). Replace `your-username` with your Hugging Face username:
 
 ```bash
 hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \
     uv-scripts/ocr-demo your-username/ocr-demo-results
 ```
 
-The script declares its hardware (`a10g-small`) and the `HF_TOKEN` secret in a
-[`[tool.hf-jobs]` header](https://huggingface.co/docs/hub/jobs-configuration#define-the-launch-config-in-the-script)
-(`hf` CLI 1.32 or newer reads it; `hf jobs uv run --dry-run <script>` shows the resolved
-configuration). Flags still win, so add `--timeout 1h` for a larger dataset or `--flavor` to
-change hardware. The Job adds a `markdown` column to all seven rows and saves them in `your-username/ocr-demo-results`. Dependency installation and model loading can take a few minutes before OCR starts. The [dataset card](https://huggingface.co/datasets/uv-scripts/ocr-demo) documents the source and licence. Check the extracted text against the originals, especially tables and reading order.
+The Job adds a `markdown` column to all seven rows and saves them in `your-username/ocr-demo-results`. Dependency installation and model loading can take a few minutes before OCR starts. The [dataset card](https://huggingface.co/datasets/uv-scripts/ocr-demo) gives the source and licence.
+
+> **Note:** the command needs no flags because the script's [`[tool.hf-jobs]` header](https://huggingface.co/docs/hub/jobs-configuration#define-the-launch-config-in-the-script) sets the GPU, the Docker image and the `HF_TOKEN` secret. The `hf` CLI reads the header from version 1.32. `hf jobs uv run --dry-run <script>` shows the resolved settings. Flags override the header, for example `--timeout 1h` for a larger dataset or `--flavor` for other hardware. **Older CLIs ignore the header without a warning**, and the Job then fails on a CPU without your token. Check with `hf version` and upgrade. If you cannot upgrade, copy the header values from the top of the script (or from `jobs` in [`models.json`](models.json)) as flags. For `glm-ocr.py` that is `--flavor a10g-small --secrets HF_TOKEN --image vllm/vllm-openai:v0.29.0 --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages`.
 
 ### Try the same pages as a PDF
 
-The [OCR demo Bucket](https://huggingface.co/buckets/uv-scripts/ocr-demo) holds the
-original PDF, a seven-page extract matching the dataset, and the page images.
-Mount the `demo/` prefix to process just the extract, and create your own Bucket
-for the results:
+The [OCR demo Bucket](https://huggingface.co/buckets/uv-scripts/ocr-demo) holds the original PDF, a seven-page extract that matches the dataset, and the page images. Mount the `demo/` prefix to process only the extract, and create your own Bucket for the results. The header sets the GPU and image, but the `-v` mounts are always flags:
 
 ```bash
 hf buckets create your-username/ocr-output --private
-hf jobs uv run --flavor a10g-small --timeout 15m --secrets HF_TOKEN \
+hf jobs uv run --timeout 15m \
     -v hf://buckets/uv-scripts/ocr-demo/demo:/input:ro \
     -v hf://buckets/your-username/ocr-output/pdf:/output:rw \
     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr-bucket.py \
     /input /output
 ```
 
-This writes `food-for-space-flight/page_001.md` through `page_007.md` under your
-output Bucket's `pdf/` prefix. See [Get and check your results](#get-and-check-your-results)
-for how to download them.
+This writes `food-for-space-flight/page_001.md` through `page_007.md` under the `pdf/` prefix of your output Bucket.
 
 ## Use your own documents
 
-**Images in a Hub dataset:** replace the input dataset ID in the [Quick Start](#quick-start) command and choose a new output dataset ID. Start with `--max-samples 10` to limit OCR processing; loading the input dataset may still download more rows. The defaults expect a `train` split and an `image` column; use `--split` and `--image-column` if yours differ. If the input already has a `markdown` column, choose a different `--output-column`, such as `glm_markdown`. Add `--private` to create a private output dataset.
+**Images in a Hub dataset:** in the Quick Start command, replace the input dataset ID and choose a new output dataset ID. Start with `--max-samples 10`. This limits OCR, but loading the input dataset can still download more rows. The defaults expect a `train` split and an `image` column. Use `--split` and `--image-column` if yours differ. If the input already has a `markdown` column, choose a different `--output-column`, for example `glm_markdown`. Add `--private` for a private output dataset.
 
-**Scans or PDFs on your machine:** put a few images or a short PDF in `./my-scans` for the first run. This recipe processes every supported file in that folder, including subfolders, and every page of each PDF. Create the output folder before launching:
+**Scans or PDFs on your machine:** put a few images or a short PDF in `./my-scans` for the first run. The recipe processes every supported file in the folder and its subfolders, and every page of each PDF. Create the output folder before you start the Job:
 
 ```bash
 mkdir -p ./ocr-output
-hf jobs uv run --flavor a10g-small --timeout 15m --secrets HF_TOKEN \
+hf jobs uv run --timeout 15m \
     -v ./my-scans:/input -v ./ocr-output:/output:rw \
     https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr-bucket.py \
     /input /output
 ```
 
-The CLI uploads the local folders to a private bucket and makes them available inside the Job. `:rw` lets the Job write output. The script saves one `.md` file per image, or per PDF page. See [mounting local data](https://huggingface.co/docs/huggingface_hub/en/guides/jobs#mount-local-data) for more detail.
+The CLI uploads the local folders to a private Bucket and mounts them in the Job. `:rw` lets the Job write output. The script saves one `.md` file per image, or per PDF page. See [mounting local data](https://huggingface.co/docs/huggingface_hub/en/guides/jobs#mount-local-data).
 
 ## Get and check your results
 
-Open the Job page linked by the CLI to see its status and logs. You can also check from your terminal:
+The CLI prints a link to the Job page, which shows status and logs. From the terminal:
 
 ```bash
 hf jobs inspect JOB_ID
 hf jobs logs JOB_ID
 ```
 
-Once the Job has completed:
+When the Job completes:
 
-- **Dataset output:** open `https://huggingface.co/datasets/your-username/ocr-demo-results` and inspect the images alongside their `markdown` results. Use your chosen dataset and column names if you changed them.
-- **Bucket output:** browse your output Bucket or download the files with `hf buckets sync hf://buckets/your-username/ocr-output/pdf ./ocr-output`.
-- **Local-folder output:** run the `hf buckets sync` command printed by the CLI at launch. It downloads the results into `./ocr-output`; they are not synced back automatically. Images produce files such as `page.md`; a PDF produces files such as `report/page_001.md`.
+- **Dataset output:** open `https://huggingface.co/datasets/your-username/ocr-demo-results` and compare the images with their `markdown` results.
+- **Bucket output:** browse the output Bucket, or download the files with `hf buckets sync hf://buckets/your-username/ocr-output/pdf ./ocr-output`.
+- **Local-folder output:** run the `hf buckets sync` command that the CLI printed at launch. The results are not synced back automatically. Images give files such as `page.md`. A PDF gives files such as `report/page_001.md`.
 
-Check for empty results or `[OCR ERROR]` markers and compare a few outputs with their source pages before scaling up. The GLM recipes can finish with failed batches, so a completed Job does not guarantee that every page was processed successfully.
+A completed Job does not mean every page worked. Look for empty results and `[OCR ERROR]` markers, and compare a few outputs with their pages before you scale up. Check tables and reading order in particular. Each dataset run also writes a dataset card with the model settings and a command to reproduce the run.
 
-## Models at a glance
+## Pick a model
 
-**Other models to try after the GLM-OCR example:** **`lighton-ocr2.py`** (1B, very fast), **`paddleocr-vl-1.6.py`** (0.9B, 96.33 OmniDocBench) or **`ovis-ocr2.py`** (0.9B, 96.58 OmniDocBench — current SOTA); for the smallest footprint, **`falcon-ocr.py`** (0.3B, strong on tables). Reach for a 7–8B model only when quality demands it. Several of these models sit on the public [olmOCR-Bench](https://huggingface.co/datasets/allenai/olmOCR-bench) — pull the live ranking from your terminal in one command:
+These are the maintained recipes. Each one has a tested `[tool.hf-jobs]` header, so the Quick Start command works with only the script name changed. The table is sorted by model size, smallest first. Scores are the model authors' own numbers. [OmniDocBench](https://github.com/opendatalab/OmniDocBench) scores document parsing of text, tables and formulas across varied PDF pages. [olmOCR-Bench](https://huggingface.co/datasets/allenai/olmOCR-bench) runs pass/fail unit tests on hard PDF pages.
+
+| Script | Model | Size | Good at | Licence | GPU |
+|--------|-------|------|---------|---------|-----|
+| [`tesseract-ocr.py`](tesseract-ocr.py) | [Tesseract 5](https://github.com/tesseract-ocr/tesseract) | classical | Baseline plain text, no GPU, 100+ language packs (`--lang`) | Apache-2.0 | `cpu-upgrade` |
+| [`pp-ocrv6.py`](pp-ocrv6.py) | [PP-OCRv6](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) | 1.5M–34.5M | Small detection + recognition pipeline, plain text, 48 languages | Apache-2.0 | `t4-small` |
+| [`surya-ocr.py`](surya-ocr.py) | [Surya OCR 2](https://huggingface.co/datalab-to/surya-ocr-2) | 0.65B | Per-block HTML with boxes and reading order; layout and table tasks; PDFs | modified OpenRAIL-M | `a10g-small` |
+| [`glm-ocr.py`](glm-ocr.py) | [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) | 0.9B | 94.62 OmniDocBench v1.5 | MIT | `a10g-small` |
+| [`paddleocr-vl-1.6.py`](paddleocr-vl-1.6.py) | [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) | 0.9B | 96.33 OmniDocBench v1.6; six task modes | Apache-2.0 | `a10g-small` |
+| [`ovis-ocr2.py`](ovis-ocr2.py) | [OvisOCR2](https://huggingface.co/ATH-MaaS/OvisOCR2) | 0.9B | 96.58 OmniDocBench v1.6; LaTeX and HTML tables | Apache-2.0 | `a10g-small` |
+| [`lighton-ocr2.py`](lighton-ocr2.py) | [LightOnOCR-2-1B](https://huggingface.co/lightonai/LightOnOCR-2-1B) | 1B | 83.2 olmOCR-Bench | Apache-2.0 | `a10g-small` |
+| [`hunyuan-ocr-1.5.py`](hunyuan-ocr-1.5.py) | [HunyuanOCR-1.5](https://huggingface.co/tencent/HunyuanOCR) | 1B | 12 task types, including spotting, charts and translation | [Hunyuan Community](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (excludes EU, UK, South Korea) | `a10g-small` |
+| [`dots-ocr.py`](dots-ocr.py) | [dots.ocr](https://huggingface.co/rednote-hilab/dots.ocr) | 1.7B | 100+ languages; layout modes | MIT | `a10g-small` |
+| [`dots-mocr.py`](dots-mocr.py) | [dots.mocr](https://huggingface.co/rednote-hilab/dots.mocr) | 3B | Eight prompt modes, including SVG from charts | MIT | `a10g-small` |
+| [`deepseek-ocr2-vllm.py`](deepseek-ocr2-vllm.py) | [DeepSeek-OCR-2](https://huggingface.co/deepseek-ai/DeepSeek-OCR-2) | 3B | Newer DeepSeek-OCR | Apache-2.0 | `a10g-small` |
+| [`unlimited-ocr-vllm.py`](unlimited-ocr-vllm.py) | [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) | 3.3B | Markdown with layout boxes (`--strip-grounding` for clean text) | MIT | `a10g-small` |
+| [`deepseek-ocr-vllm.py`](deepseek-ocr-vllm.py) | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | Five prompt modes, including figure description | MIT | `a10g-small` |
+| [`nuextract3.py`](nuextract3.py) | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | Markdown, or JSON from a template ([below](#structured-extraction-and-layout)) | Apache-2.0 | `a10g-small` |
+| [`qianfan-ocr.py`](qianfan-ocr.py) | [Qianfan-OCR](https://huggingface.co/baidu/Qianfan-OCR) | 4.7B | 93.12 OmniDocBench v1.5; optional reasoning (`--think`); key-information extraction | Apache-2.0 | `a10g-small` |
+| [`olmocr2-vllm.py`](olmocr2-vllm.py) | [olmOCR-2-7B](https://huggingface.co/allenai/olmOCR-2-7B-1025-FP8) | 7B (FP8) | 82.4 olmOCR-Bench | Apache-2.0 | `a10g-small` |
+| [`lift-extract.py`](lift-extract.py) | [lift](https://huggingface.co/datalab-to/lift) | 9B | JSON from a schema, from images or multi-page PDFs | modified OpenRAIL-M | `a100-large` |
+
+Start with a model under 2B. Use a larger model only if the output of a small one is not good enough. Check the licence before you use a model: Surya and lift use a modified OpenRAIL-M licence (free for research, personal use and startups under $5M; no competitive use against Datalab's API), and the Hunyuan licence excludes the EU, the UK and South Korea.
+
+**Variants and tools:** `glm-ocr-bucket.py` and `surya-ocr-bucket.py` read images and PDFs from a Bucket and write one `.md` per page. `lighton-ocr2-saturate.py` and `ovis-ocr2-saturate.py` are for large runs, and `ocr-vllm-judge.py` compares outputs ([Scaling up](#scaling-up)). `pp-doclayout.py` and `lfm2-extract.py` are described in [Structured extraction and layout](#structured-extraction-and-layout).
+
+Which model is best depends on your documents. The public olmOCR-Bench leaderboard is one command away:
 
 ```bash
 hf datasets leaderboard allenai/olmOCR-bench
 ```
 
-But which model wins on *your* documents is still document-dependent — so [ocr-bench](https://github.com/davanstrien/ocr-bench) builds a **per-collection leaderboard** for your own data (pairwise VLM-as-judge, optionally human-validated), using these scripts under the hood.
+To rank models on your own collection, [ocr-bench](https://github.com/davanstrien/ocr-bench) builds a per-collection leaderboard (pairwise VLM judge, optional human checks) with these scripts. [LANGUAGES.md](LANGUAGES.md) lists the language coverage that each model card claims. [`models.json`](models.json) is the machine-readable catalogue: model, size, backend, licence, support level, tested launch config and languages for every script.
 
-**Language coverage:** [LANGUAGES.md](LANGUAGES.md) lists what each model's card claims (and how much evidence backs it). Machine-readable catalog for agents — script → model, params, backend, support level, tested Jobs launch config, languages: [`models.json`](models.json).
+### Less supported and unsupported
 
-**Support levels** (smoke-tested on HF Jobs, 2026-09-23/24; details in the `support` and `support_note` fields of [`models.json`](models.json)):
+These scripts stay in the repo but have no header, so pass `--flavor a10g-small --secrets HF_TOKEN` and any `--image` from the script's docstring. Status was checked on HF Jobs on 2026-09-23. The `support_note` field in [`models.json`](models.json) has details.
 
-- **Core** recipes carry a tested `[tool.hf-jobs]` header, so `hf jobs uv run <url> <in> <out>` needs no flags (hf CLI 1.32+). `models.json` has each recipe's launch config under `jobs`.
-- **Less supported (legacy):** they work but are superseded or little used, and have no header yet: `abot-ocr.py`, `falcon-ocr-bucket.py`, `falcon-ocr.py`, `firered-ocr.py`, `glm-ocr-v2.py`, `lfm2-vl-extract.py`, `lighton-ocr.py`, `lighton-ocr2-server.py`, `nanonets-ocr.py`, `nanonets-ocr2.py`, `numarkdown-ocr.py`, `ovis-ocr2-server.py`, `paddleocr-vl.py`.
-- **Unsupported (known broken):** kept for now, don't use: `deepseek-ocr.py`, `hunyuan-ocr.py`, `jina-ocr-v1.py`, `paddleocr-vl-1.5.py`, `rolm-ocr.py`, `smoldocling-ocr.py`. Each script's docstring names the alternative.
+| Script | Status | Use instead |
+|--------|--------|-------------|
+| `lighton-ocr.py`, `nanonets-ocr.py`, `paddleocr-vl.py` | works, older model | `lighton-ocr2.py`, `nanonets-ocr2.py`, `paddleocr-vl-1.6.py` |
+| `lighton-ocr2-server.py`, `ovis-ocr2-server.py` | works | the matching `-saturate.py` recipe |
+| `glm-ocr-v2.py` | works | `glm-ocr.py`, unless you need its resume support |
+| `lfm2-vl-extract.py` | works | `nuextract3.py` or `lift-extract.py` |
+| `nanonets-ocr2.py` | works on its pinned `vllm/vllm-openai:v0.10.2` image | |
+| `falcon-ocr.py`, `falcon-ocr-bucket.py` | works (Falcon-OCR v1; a v1.5 update is in progress) | |
+| `abot-ocr.py`, `firered-ocr.py`, `numarkdown-ocr.py` | works, little used | |
+| `deepseek-ocr.py` | broken: every row is `None` | `deepseek-ocr-vllm.py` |
+| `hunyuan-ocr.py` | broken on current vLLM | `hunyuan-ocr-1.5.py` |
+| `paddleocr-vl-1.5.py` | broken: every row is an `[OCR ERROR]` | `paddleocr-vl-1.6.py` |
+| `rolm-ocr.py` | broken: no room for the KV cache on a 24 GB GPU | `olmocr2-vllm.py` |
+| `jina-ocr-v1.py` | broken on vLLM 0.30 (CC-BY-NC-4.0 model) | |
+| `smoldocling-ocr.py` | broken: rows are raw DocTags, not markdown | |
 
-_Sorted by model size:_
+## Common options
 
-| Script | Model | Size | Backend | Notes |
-|--------|-------|------|---------|-------|
-| [`tesseract-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/tesseract-ocr.py) | [Tesseract 5](https://github.com/tesseract-ocr/tesseract) | n/a (classical) | pytesseract (CPU) | **The legacy baseline** — no GPU at all, runs on `cpu-upgrade`. Plain-text output, `--lang`/`--psm`/`--oem` exposed, 100+ language packs via apt. Apache 2.0 |
-| [`pp-ocrv6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/pp-ocrv6.py) | [PP-OCRv6](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) | 1.5–34.5M | PaddleOCR (paddle) | **Smallest neural** — classical det+rec pipeline, not a VLM. Three tiers (`--model-tier tiny\|small\|medium`), plain-text output (not markdown). 48 langs. Runs on `t4-small`. Apache 2.0 |
-| [`falcon-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/falcon-ocr.py) | [Falcon-OCR](https://huggingface.co/tiiuae/Falcon-OCR) | 0.3B | falcon-perception | Smallest VLM in collection. #1 on multi-column docs and tables (olmOCR), Apache 2.0 |
-| [`smoldocling-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/smoldocling-ocr.py) | [SmolDocling](https://huggingface.co/ds4sd/SmolDocling-256M-preview) | 256M | Transformers | DocTags structured output |
-| [`surya-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/surya-ocr.py) | [Surya OCR 2](https://huggingface.co/datalab-to/surya-ocr-2) | 0.65B | vLLM | **Structured** OCR + `--task layout\|table`: per-block HTML with bboxes & reading order in an extra `surya_blocks` column. 91 langs, top-under-3B on olmOCR-Bench. Modified OpenRAIL-M license. Needs the **pinned** `vllm/vllm-openai:v0.20.1` image |
-| [`glm-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/glm-ocr.py) | [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) | 0.9B | vLLM | 94.62% OmniDocBench V1.5 |
-| [`paddleocr-vl.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl.py) | [PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL) | 0.9B | vLLM | 4 task modes (ocr/table/formula/chart) |
-| [`paddleocr-vl-1.5.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl-1.5.py) | [PaddleOCR-VL-1.5](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.5) | 0.9B | Transformers | 94.5% OmniDocBench, 6 task modes |
-| [`paddleocr-vl-1.6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl-1.6.py) | [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) | 0.9B | vLLM | **96.33% OmniDocBench v1.6**, drop-in upgrade of 1.5 |
-| [`ovis-ocr2.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/ovis-ocr2.py) | [OvisOCR2](https://huggingface.co/ATH-MaaS/OvisOCR2) | 0.9B | vLLM | **96.58 OmniDocBench v1.6** (SOTA; first end-to-end model to top it). Qwen3.5 base; markdown + LaTeX + HTML tables. Apache 2.0 |
-| [`ovis-ocr2-server.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/ovis-ocr2-server.py) | [OvisOCR2](https://huggingface.co/ATH-MaaS/OvisOCR2) | 0.9B | vLLM server | **Server-mode sibling** of `ovis-ocr2.py`: in-job `vllm serve` + concurrent driver — ~1.7× its throughput, per-image failure isolation. See [SERVING.md](SERVING.md) |
-| [`lighton-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr.py) | [LightOnOCR-1B](https://huggingface.co/lightonai/LightOnOCR-1B-1025) | 1B | vLLM | Fast, 3 vocab sizes |
-| [`lighton-ocr2.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr2.py) | [LightOnOCR-2-1B](https://huggingface.co/lightonai/LightOnOCR-2-1B) | 1B | vLLM | 7× faster than v1, RLVR trained |
-| [`lighton-ocr2-server.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr2-server.py) | [LightOnOCR-2-1B](https://huggingface.co/lightonai/LightOnOCR-2-1B) | 1B | vLLM server | **Server-mode sibling** of `lighton-ocr2.py` (the card's own documented path) — ~1.8× its throughput. See [SERVING.md](SERVING.md) |
-| [`hunyuan-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/hunyuan-ocr.py) | [HunyuanOCR 1.0](https://huggingface.co/tencent/HunyuanOCR/tree/f6af82ee007fe6091b29fb3bb287b491ead41c82) | 1B | vLLM | Lightweight VLM. Pinned to the last 1.0 revision (repo root became 1.5 in-place on 2026-07-06). [Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (excludes EU/UK/KR) |
-| [`hunyuan-ocr-1.5.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/hunyuan-ocr-1.5.py) | [HunyuanOCR-1.5](https://huggingface.co/tencent/HunyuanOCR) | 1B | vLLM | 128K context, 4K images, 12 task types, ancient scripts. ~4-5× faster/page than dots.ocr & DeepSeek-OCR-2 (tech report). [Hunyuan Community License](https://huggingface.co/tencent/HunyuanOCR/blob/main/LICENSE) (excludes EU/UK/KR) |
-| [`dots-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/dots-ocr.py) | [dots.ocr](https://huggingface.co/rednote-hilab/dots.ocr) | 1.7B | vLLM | 100 languages (in-house bench), explicit low-resource claim |
-| [`firered-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/firered-ocr.py) | [FireRed-OCR](https://huggingface.co/FireRedTeam/FireRed-OCR) | 2.1B | vLLM | Qwen3-VL fine-tune, Apache 2.0 |
-| [`abot-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/abot-ocr.py) | [ABot-OCR](https://huggingface.co/acvlab/ABot-OCR) | 2B | vLLM | Qwen3-VL based, doc→Markdown (text/LaTeX/HTML tables). Needs `vllm/vllm-openai` image. [paper](https://arxiv.org/abs/2605.27978) |
-| [`nanonets-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/nanonets-ocr.py) | [Nanonets-OCR-s](https://huggingface.co/nanonets/Nanonets-OCR-s) | 2B | vLLM | LaTeX, tables, forms |
-| [`dots-mocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/dots-mocr.py) | [dots.mocr](https://huggingface.co/rednote-hilab/dots.mocr) | 3B | vLLM | 8 prompt modes incl. SVG generation, layout + bbox, 100+ languages |
-| [`nanonets-ocr2.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/nanonets-ocr2.py) | [Nanonets-OCR2-3B](https://huggingface.co/nanonets/Nanonets-OCR2-3B) | 3B | vLLM | Next-gen, Qwen2.5-VL base. **Pin `--image vllm/vllm-openai:v0.10.2`** (vLLM ≥0.11 breaks Qwen2.5-VL → all `!`) |
-| [`deepseek-ocr-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/deepseek-ocr-vllm.py) | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | vLLM | 5 resolution + 5 prompt modes |
-| [`jina-ocr-v1.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/jina-ocr-v1.py) | [jina-ocr-v1](https://huggingface.co/jinaai/jina-ocr-v1) | 3.4B MoE (~570M active) | vLLM | DeepSeek-OCR fine-tune + FastMTP speculative decoding (`--spec 0` to disable) and an n-gram repetition stop. Card: 91.14 OmniDocBench v1.6, **83.4 olmOCR-Bench**. Offline vLLM only. **CC-BY-NC-4.0** |
-| [`deepseek-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/deepseek-ocr.py) | [DeepSeek-OCR](https://huggingface.co/deepseek-ai/DeepSeek-OCR) | 4B | Transformers | Same model, Transformers backend |
-| [`deepseek-ocr2-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/deepseek-ocr2-vllm.py) | [DeepSeek-OCR-2](https://huggingface.co/deepseek-ai/DeepSeek-OCR-2) | 3B | vLLM | Newer; needs nightly vLLM **+ the `vllm/vllm-openai` image** ([why](#if-a-vllm-script-crashes-at-startup-the-nvcc--nvrtc-error)) |
-| [`unlimited-ocr-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/unlimited-ocr-vllm.py) | [Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) | 3.3B | vLLM | DeepSeek-OCR-based; layout-grounded markdown (`--strip-grounding` for clean text). Single-image batch — needs Baidu's **dedicated `vllm/vllm-openai:unlimited-ocr` image** (`-cu129` on Hopper). Multi-page "long-horizon" parsing → serve it ([doc](serving-unlimited-ocr.md)); both engines do clean docs, **SGLang more robust** on hard scans. MIT |
-| [`nuextract3.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/nuextract3.py) | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | vLLM | Markdown OCR **+ schema-guided JSON extraction** (template/Pydantic). Needs `vllm/vllm-openai` image |
-| [`qianfan-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/qianfan-ocr.py) | [Qianfan-OCR](https://huggingface.co/baidu/Qianfan-OCR) | 4.7B | vLLM | #1 OmniDocBench v1.5 (93.12), Layout-as-Thought, 192 languages |
-| [`olmocr2-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/olmocr2-vllm.py) | [olmOCR-2-7B](https://huggingface.co/allenai/olmOCR-2-7B-1025-FP8) | 7B | vLLM | 82.4% olmOCR-Bench |
-| [`rolm-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/rolm-ocr.py) | [RolmOCR](https://huggingface.co/reducto/RolmOCR) | 7B | vLLM | Qwen2.5-VL based, general-purpose |
-| [`numarkdown-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/numarkdown-ocr.py) | [NuMarkdown-8B](https://huggingface.co/numind/NuMarkdown-8B-Thinking) | 8B | vLLM | Reasoning-based OCR |
+Every dataset recipe takes `INPUT_DATASET OUTPUT_DATASET` as positional arguments, so you can usually switch models by changing the script URL. Defaults such as batch size and context length follow each model card. Run `--help`, or read the script source on the Hub, for the full list. Local `uv run <script-url> --help` installs the dependencies first.
 
-**Variants & tools** (same models, different I/O): `glm-ocr-v2.py` adds checkpoint/resume for very large jobs · `glm-ocr-bucket.py` and `falcon-ocr-bucket.py` read images/PDFs from a mounted bucket and write one `.md` per page · `surya-ocr-bucket.py` is the structured bucket recipe — OCR a bucket of files (no dataset round-trip) via either a FUSE mount **or** `huggingface_hub` batch-copy (`--io-mode mount|copy`), writing per-page `.md` + `.json` (`surya_blocks`) back to a bucket (resumable) and/or a pushed dataset · `ocr-vllm-judge.py` runs pairwise OCR-quality comparisons.
+| Option | What it does | Notes |
+|--------|--------------|-------|
+| `--max-samples N` | Process only the first N rows | All recipes. The `-saturate.py` recipes also accept `--limit`. `falcon-ocr-bucket.py` counts files, not pages |
+| `--shuffle`, `--seed` | Shuffle before `--max-samples` for a representative sample (seed default 42) | Not the `-saturate.py` recipes |
+| `--split` | Input split (default `train`) | |
+| `--image-column` | Input image column (default `image`) | |
+| `--output-column` | Output column (default `markdown`) | Not the `-saturate.py` recipes |
+| `--overwrite` | Replace the output column if the input already has it. Without it the script stops | Not the `-saturate.py` recipes |
+| `--private` | Make the output dataset private | Not the `-saturate.py` recipes |
+| `--batch-size` | Images per batch (default 8 or 16 for the OCR recipes) | Not `tesseract-ocr.py`, `pp-ocrv6.py` or the `-saturate.py` recipes |
+| `--max-model-len`, `--max-tokens`, `--gpu-memory-utilization` | vLLM engine limits | Most vLLM recipes |
+| `--config NAME`, `--create-pr` | Push the output as a named config, as a pull request | Most dataset recipes. Used to compare models in one repo ([Scaling up](#scaling-up)). In `-saturate.py`, `--config` selects the input config |
+| `--verbose` | Log resolved package versions | Most recipes |
 
-`surya-ocr.py` is the structured outlier: besides the flattened text column it writes a `surya_blocks` JSON column (per-block HTML + bounding boxes + reading order), and `--task` switches between OCR, `layout`, and `table`. It runs as **offline vLLM batch** (no server) and must use the **pinned** `vllm/vllm-openai:v0.20.1` image — its `qwen3_5` architecture is recent and version-sensitive, and that image puts vLLM at `/usr/local/lib/python3.12/site-packages` (use `--python /usr/local/bin/python3`; the exact command is in the script's docstring). Weights are **modified OpenRAIL-M**.
-
-## Common Options
-
-The scripts aim to expose a **consistent interface**: every OCR model script takes `input-dataset output-dataset` as positional arguments, accepts the shared core flags below, and writes a `markdown` column — so switching models is usually just swapping the script URL. Models differ where they need to, though: some add their own flags (task modes, resolution presets, `--think`, vocab sizes), a few need a specific Docker image, and per-model defaults (batch size, context length, temperature) are tuned to each model card. Always check a script's `--help` for its specifics.
-
-| Option | Description |
-|--------|-------------|
-| `--image-column` | Column containing images (default: `image`) |
-| `--output-column` | Output column name (default: `markdown`) |
-| `--split` | Dataset split (default: `train`) |
-| `--max-samples` | Limit number of samples (useful for testing) |
-| `--private` | Make output dataset private |
-| `--shuffle` | Shuffle dataset before processing |
-| `--seed` | Random seed for shuffling (default: `42`) |
-| `--batch-size` | Images per batch (default varies per model) |
-| `--max-model-len` | Max context length (default varies per model) |
-| `--max-tokens` | Max output tokens (default varies per model) |
-| `--gpu-memory-utilization` | GPU memory fraction (default: `0.8`) |
-| `--config` | Config name for Hub push (for benchmarking) |
-| `--create-pr` | Push as PR instead of direct commit |
-| `--verbose` | Log resolved package versions after run |
-
-Open the [script source](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/glm-ocr.py) to inspect its arguments without installing dependencies. On a machine with compatible dependencies, `uv run <script-url> --help` shows its CLI options; `uv` resolves dependencies even for `--help`.
-
-## Model-specific modes & flags
-
-Beyond the shared flags, some models add their own. Run `--help` on any script for the full list; the common ones:
-
-| Script | Extra options |
-|--------|---------------|
-| [`surya-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/surya-ocr.py) | `--task ocr\|layout\|table`, `--table-mode full\|simple`, `--pdf-column`/`--page-range`, `--blocks-column` |
-| [`pp-ocrv6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/pp-ocrv6.py) | `--model-tier tiny\|small\|medium` (1.5M–34.5M params) |
-| [`glm-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/glm-ocr.py) | `--task ocr\|formula\|table` |
-| [`ovis-ocr2.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/ovis-ocr2.py) | `--keep-image-tags` (retain visual-region `<img>` bbox tags, filtered by default), `--min-pixels`/`--max-pixels` (processor bounds, card defaults 448²/2880²) |
-| [`paddleocr-vl.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl.py) | `--task-mode ocr\|table\|formula\|chart` |
-| [`paddleocr-vl-1.5.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl-1.5.py) | `--task-mode ocr\|table\|formula\|chart\|spotting\|seal` |
-| [`paddleocr-vl-1.6.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/paddleocr-vl-1.6.py) | `--task-mode ocr\|table\|formula` |
-| [`lighton-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr.py) | `--vocab-size 151k\|32k\|16k` (smaller = faster on European languages) |
-| [`deepseek-ocr-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/deepseek-ocr-vllm.py) | `--resolution-mode tiny\|small\|base\|large\|gundam`, `--prompt-mode document\|image\|free\|figure\|describe`; pass `-e UV_TORCH_BACKEND=auto` |
-| [`dots-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/dots-ocr.py) | `--prompt-mode ocr\|layout-all\|layout-only` |
-| [`dots-mocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/dots-mocr.py) | `--prompt-mode` (8: ocr, layout-all, layout-only, web-parsing, scene-spotting, grounding-ocr, svg, general); SVG: `--model rednote-hilab/dots.mocr-svg --prompt-mode svg` |
-| [`qianfan-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/qianfan-ocr.py) | `--prompt-mode ocr\|table\|formula\|chart\|scene\|kie`, `--think` (Layout-as-Thought); `kie` needs `--custom-prompt` |
-| [`unlimited-ocr-vllm.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/unlimited-ocr-vllm.py) | `--strip-grounding` (drop `<\|det\|>`/`<\|ref\|>` grounding tags); needs the **`vllm/vllm-openai:unlimited-ocr`** image |
-| [`numarkdown-ocr.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/numarkdown-ocr.py) | `--include-thinking` (store the reasoning trace) |
-| [`nuextract3.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/nuextract3.py) | `--template` / `--schema` / `--enable-thinking` — see the NuExtract3 section above |
-
-**Image-mode models** — `abot-ocr.py` and `nuextract3.py` (Qwen3.5 architecture) need the `vllm/vllm-openai` image because the default uv-script image lacks `nvcc`. Add `--image vllm/vllm-openai:latest --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages` (see the NuExtract3 example above for the full command). `unlimited-ocr-vllm.py` is a special case — its architecture isn't in any stable vLLM wheel, so it needs Baidu's **dedicated** `vllm/vllm-openai:unlimited-ocr` image (tag `:unlimited-ocr-cu129` on Hopper), e.g. `--image vllm/vllm-openai:unlimited-ocr --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages` (its docstring has the full command).
-
-## Output & features
-
-- **Markdown column** — each run adds an `--output-column` (default `markdown`) with the OCR result.
-- **Multi-model comparison** — every script records `inference_info`, so you can run several models into the *same* dataset and compare. Point a second model at the same output repo:
-  ```bash
-  uv run rolm-ocr.py     my-dataset my-dataset --max-samples 100
-  uv run nanonets-ocr.py my-dataset my-dataset --max-samples 100   # appends
-  ```
-- **Reproducible sampling** — `--shuffle` (with `--seed`, default 42) draws a representative sample instead of the first N rows.
-- **Automatic dataset cards** — every run writes a card with the model config, processing stats, column descriptions, and a reproduction command.
-
-## Structured extraction (image or text → JSON)
-
-Most scripts here output markdown. These take a **schema** and return **structured data** instead — give them the fields you want, they fill them in:
-
-| Script | Model | Size | Input | Output |
-|--------|-------|------|-------|--------|
-| [`lfm2-vl-extract.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lfm2-vl-extract.py) | [LFM2.5-VL-1.6B-Extract](https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B-Extract) | 1.6B | image | JSON |
-| [`nuextract3.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/nuextract3.py) | [NuExtract3](https://huggingface.co/numind/NuExtract3) | 4B | image | markdown **or** JSON |
-| [`lfm2-extract.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lfm2-extract.py) | [LFM2-1.2B-Extract](https://huggingface.co/LiquidAI/LFM2-1.2B-Extract) | 1.2B | **text** | JSON / XML / YAML |
-| [`lift-extract.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lift-extract.py) | [lift](https://huggingface.co/datalab-to/lift) | 9B | image **or** PDF | JSON |
-
-Pass `--schema` (inline JSON, a URL, or a file path). The LFM models are small and fast; run them on the `vllm/vllm-openai` image so the CUDA toolkit is present (each script's docstring has the exact command). Because `lfm2-extract.py` works on a **text** column, you can **chain it after OCR**: a recipe above turns a page into `markdown`, then `lfm2-extract.py` turns that markdown into fields.
-
-`lift-extract.py` is the one outlier: a 9B model that also reads **multi-page PDFs** (`--pdf-column`, `--page-range`) and runs on either Transformers (`--method hf`) or vLLM (`--method vllm`). Its weights are **modified OpenRAIL-M** (free for research, personal use, and startups under $5M; no competitive use against Datalab's API) — the only non-permissive license here, so check the terms.
+To compare models on the same pages, run them into one dataset with a separate output column each:
 
 ```bash
-# image → JSON directly
-hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
-    --image vllm/vllm-openai --python /usr/bin/python3 \
-    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/lfm2-vl-extract.py \
-    my-images my-fields --schema '{"title": "the document title", "date": "any date shown"}'
+hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \
+    my-dataset my-dataset --max-samples 100 --output-column glm_markdown
+hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/lighton-ocr2.py \
+    my-dataset my-dataset --max-samples 100 --output-column lighton_markdown
 ```
 
-## NuExtract3: markdown OCR + structured extraction
+Each dataset recipe also records the model and settings in an `inference_info` column.
 
-[NuExtract3](https://huggingface.co/numind/NuExtract3) (4B, Apache-2.0) is the one script here that does both document-to-markdown OCR *and* schema-guided JSON extraction. Give it a template (or a JSON Schema / Pydantic model) and it returns JSON shaped to match.
+### Model-specific flags
 
-> **Run it with the `vllm/vllm-openai` image.** NuExtract3's Qwen3.5 architecture needs the image's prebuilt CUDA kernels — the default uv-script image lacks `nvcc`, so flashinfer's JIT compile fails at engine warmup. Use `--image vllm/vllm-openai:latest --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages` on `a100-large`.
+| Script | Flags |
+|--------|-------|
+| `tesseract-ocr.py` | `--lang` (for example `eng+fra`), `--psm`, `--oem` |
+| `pp-ocrv6.py` | `--model-tier tiny\|small\|medium` |
+| `surya-ocr.py` | `--task ocr\|layout\|table`, `--table-mode full\|simple`, `--pdf-column`, `--page-range` |
+| `glm-ocr.py` | `--task ocr\|formula\|table` |
+| `paddleocr-vl-1.6.py` | `--task-mode ocr\|table\|formula\|chart\|spotting\|seal` |
+| `ovis-ocr2.py` | `--keep-image-tags`, `--min-pixels`, `--max-pixels` |
+| `hunyuan-ocr-1.5.py` | `--task-type` (12 types, default `doc_parse`), `--custom-prompt` |
+| `dots-ocr.py` | `--prompt-mode ocr\|layout-all\|layout-only` |
+| `dots-mocr.py` | `--prompt-mode` (8 modes). For SVG: `--model rednote-hilab/dots.mocr-svg --prompt-mode svg` |
+| `deepseek-ocr-vllm.py` | `--prompt-mode document\|image\|free\|figure\|describe` |
+| `deepseek-ocr2-vllm.py` | `--prompt-mode document\|free` |
+| `unlimited-ocr-vllm.py` | `--strip-grounding`, `--grounding-column` |
+| `qianfan-ocr.py` | `--prompt-mode ocr\|table\|formula\|chart\|scene\|kie`, `--think`. `kie` needs `--custom-prompt` |
 
-```bash
-# Markdown OCR (default mode)
-hf jobs uv run --flavor a100-large \
-    --image vllm/vllm-openai:latest \
-    --python /usr/bin/python3 \
-    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
-    -s HF_TOKEN \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nuextract3.py \
-    my-documents my-markdown --max-samples 10
-
-# Structured extraction with an inline template
-hf jobs uv run --flavor a100-large \
-    --image vllm/vllm-openai:latest \
-    --python /usr/bin/python3 \
-    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
-    -s HF_TOKEN \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nuextract3.py \
-    receipts extracted \
-    --template '{"store": "verbatim-string", "date": "date", "total": "number"}'
-```
-
-**Templates** (`--template`) and **JSON Schemas** (`--schema`) each accept **inline JSON, a URL, or a file path**, so a schema can be hosted once and reused. Add `--enable-thinking` for harder layouts (slower; reasoning trace stored in a `<output-column>_reasoning` column). Template field names act as the model's extraction instructions, so name them descriptively — overly leading names can prompt over-generation, so verify against a few examples.
-
-## Layout detection (not OCR)
-
-`pp-doclayout.py` runs PaddleOCR's [PP-DocLayout-L](https://huggingface.co/PaddlePaddle/PP-DocLayout-L) (or M / S / plus-L) and emits per-image **bounding boxes + region classes** (text, title, table, figure, formula, list, header, footer, ...) — it does NOT extract text. Useful for filtering pages, cropping regions for downstream OCR, dataset analysis, and training-data prep.
-
-| Script | Model | Size | Backend | Notes |
-|--------|-------|------|---------|-------|
-| [`pp-doclayout.py`](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/pp-doclayout.py) | [PP-DocLayout-L](https://huggingface.co/PaddlePaddle/PP-DocLayout-L) | 123M | paddleocr | Layout bboxes (no text). Bucket support: incremental parquet shards, resumable. |
+For example, key-information extraction with Qianfan-OCR:
 
 ```bash
-hf jobs uv run --flavor l4x1 -s HF_TOKEN \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \
-    your-dataset your-layout-output --max-samples 10
-```
-
-Source/sink can be either an HF dataset repo OR an `hf://buckets/...` URL (auto-detected). Bucket output writes incremental zstd parquet shards via the buckets API — resumable across runs (snapshot-backed source listing) and no git/commit overhead. See the script's `--help` for all flags.
-
-## Batch processing and live endpoints
-
-Start with the batch examples above to process a collection of documents. For
-concurrent processing or an API for your application:
-
-- **Process a dataset:** `-server.py` recipes start vLLM inside the Job and send
-  page requests concurrently. See the [server-mode OCR guide](SERVING.md) for
-  supported models, setup and measured throughput. The
-  [LightOnOCR-2](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/lighton-ocr2-saturate.py)
-  and [OvisOCR2](https://huggingface.co/datasets/uv-scripts/ocr/blob/main/ovis-ocr2-saturate.py)
-  `-saturate.py` variants add automatic concurrency and resumable output; their
-  script headers explain how to run them and read their results.
-- **Call OCR from an app or agent:** expose a model server with
-  [Jobs serving](https://huggingface.co/docs/hub/jobs-serving). The endpoint stays
-  available until you cancel the Job or its timeout is reached. The
-  [Unlimited-OCR walkthrough](serving-unlimited-ocr.md) covers server setup,
-  requests and parsing several pages together in one request.
-
-The [PDF example above](#try-the-same-pages-as-a-pdf) processes pages independently
-in a batch Job.
-
-## More examples
-
-```bash
-# DeepSeek-OCR on historical scans, large resolution mode
-hf jobs uv run --flavor a100-large -s HF_TOKEN -e UV_TORCH_BACKEND=auto \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/deepseek-ocr-vllm.py \
-    NationalLibraryOfScotland/Britain-and-UK-Handbooks-Dataset out \
-    --max-samples 100 --shuffle --resolution-mode large
-
-# dots.mocr — SVG generation from charts/figures
-hf jobs uv run --flavor l4x1 -s HF_TOKEN \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/dots-mocr.py \
-    your-charts svg-output --prompt-mode svg --model rednote-hilab/dots.mocr-svg
-
-# Qianfan — key-information extraction
-hf jobs uv run --flavor l4x1 -s HF_TOKEN \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/qianfan-ocr.py \
+hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/qianfan-ocr.py \
     invoices extracted-fields \
     --prompt-mode kie --custom-prompt "Extract: name, date, total. Output as JSON."
 ```
 
-**Python API:**
+## Structured extraction and layout
+
+These recipes return structured data instead of page text.
+
+**[NuExtract3](https://huggingface.co/numind/NuExtract3)** (`nuextract3.py`, 4B, Apache-2.0) does markdown OCR by default. Give it a `--template` or a JSON Schema (`--schema`) and it returns JSON in that shape. Both flags accept inline JSON, a URL or a file path, so you can host a schema once and reuse it. Template field names act as instructions to the model, so name them clearly and check the output on a few examples. `--enable-thinking` helps with hard layouts; it is slower and stores the reasoning in a `<output-column>_reasoning` column.
+
+```bash
+hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nuextract3.py \
+    receipts extracted \
+    --template '{"store": "verbatim-string", "date": "date", "total": "number"}'
+```
+
+**[lift](https://huggingface.co/datalab-to/lift)** (`lift-extract.py`, 9B) returns JSON that matches a JSON Schema. It also reads multi-page PDFs (`--pdf-column`, `--page-range`) and extracts one result per document. The default Transformers backend (`--method hf`) is the tested path. Its weights use a modified OpenRAIL-M licence, so check the terms.
+
+**[LFM2-1.2B-Extract](https://huggingface.co/LiquidAI/LFM2-1.2B-Extract)** (`lfm2-extract.py`) works on a **text** column, so you can run it after an OCR recipe: OCR turns a page into `markdown`, then this recipe turns the markdown into fields. `--format` selects JSON, XML or YAML.
+
+```bash
+hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/lfm2-extract.py \
+    your-username/ocr-demo-results your-username/ocr-demo-fields \
+    --text-column markdown --schema '{"title": "the document title", "date": "any date shown"}'
+```
+
+**[PP-DocLayout](https://huggingface.co/PaddlePaddle/PP-DocLayout-L)** (`pp-doclayout.py`, 123M) finds layout regions but does not read text. It writes a `layout` column with a box, a class (text, title, table, figure, formula, header, footer and more) and a score for each region. Use it to filter pages, crop regions for OCR, or prepare training data. `--model-name` selects the L, M, S or plus-L model. The input and output can each be a dataset or an `hf://buckets/...` path. Bucket output is written in resumable parquet shards.
+
+```bash
+hf jobs uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/pp-doclayout.py \
+    your-dataset your-layout-output --max-samples 10
+```
+
+## Scaling up
+
+**Large datasets:** `lighton-ocr2-saturate.py` and `ovis-ocr2-saturate.py` start a vLLM server in the Job and send pages to it with adaptive concurrency. They stream results to the output repo as parquet parts. If a run stops, run the same command again and it skips the rows that are done. A failed page is stored as an error row, and `--retry-errors` tries those rows again. The output layout is different from the other recipes; the script header explains how to read it. [SERVING.md](SERVING.md) compares server mode with offline batches (measured throughput and output parity).
+
+```bash
+hf jobs uv run --detach --timeout 4h \
+    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/lighton-ocr2-saturate.py \
+    your-dataset your-output
+```
+
+**A live endpoint for an app or agent:** [Jobs serving](https://huggingface.co/docs/hub/jobs-serving) exposes a model server that stays up until you cancel the Job or it reaches its timeout. The [Unlimited-OCR walkthrough](serving-unlimited-ocr.md) covers setup, requests, and parsing several pages in one request.
+
+**Compare models:** run several recipes into one repo with `--config <name> --create-pr`, then judge the outputs pairwise with `ocr-vllm-judge.py` ([ocr-bench](https://github.com/davanstrien/ocr-bench) automates this):
+
+```bash
+hf jobs uv run --timeout 1h \
+    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/ocr-vllm-judge.py \
+    your-username/my-bench --from-prs --judge-model Qwen/Qwen3-VL-8B-Instruct --max-samples 50
+```
+
+**Python API:** `run_uv_job` does not read the `[tool.hf-jobs]` header, so pass the header values yourself:
 
 ```python
-from huggingface_hub import run_uv_job
+from huggingface_hub import get_token, run_uv_job
 
 job = run_uv_job(
-    "https://huggingface.co/datasets/uv-scripts/ocr/raw/main/nanonets-ocr.py",
-    args=["input-dataset", "output-dataset", "--batch-size", "16"],
-    flavor="l4x1",
+    "https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py",
+    script_args=["input-dataset", "output-dataset", "--max-samples", "10"],
+    flavor="a10g-small",
+    image="vllm/vllm-openai:v0.29.0",
+    python="/usr/bin/python3",
+    env={"PYTHONPATH": "/usr/local/lib/python3.12/dist-packages"},
+    secrets={"HF_TOKEN": get_token()},
 )
 ```
 
-## If a vLLM script crashes at startup (the `nvcc` / `nvrtc` error)
+## Troubleshooting
 
-The vLLM recipes run on the **default** Jobs image and carry a guard (`VLLM_USE_FLASHINFER_SAMPLER=0`) so they work there with the plain command. But some — especially nightly-vLLM ones — JIT-compile a CUDA kernel at engine init and crash on the default image with one of:
+**The Job runs on a CPU, or cannot push to the Hub.** Your `hf` CLI is older than 1.32 and ignored the header. Upgrade, or pass the header values as flags (see the [Quick Start](#quick-start) note).
+
+**A vLLM recipe crashes at startup with an `nvcc` or `nvrtc` error:**
 
 ```
 RuntimeError: Could not find nvcc and default cuda_home='/usr/local/cuda' doesn't exist
 nvrtc: error: failed to open libnvrtc-builtins.so...
 ```
 
-Run those on the **`vllm/vllm-openai` image**, which ships the full CUDA toolkit. Add these flags to any recipe — they point `import vllm` at the image's CUDA-matched build:
+The Job ran on the default image, which has no CUDA toolkit. This happens with an older CLI, with a legacy recipe, or when you override `--image`. Run it on the `vllm/vllm-openai` image:
 
 ```bash
-hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
-    --image vllm/vllm-openai --python /usr/bin/python3 \
-    -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages \
-    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/<script>.py \
-    INPUT OUTPUT --max-samples 10
+--image vllm/vllm-openai:v0.29.0 --python /usr/bin/python3 -e PYTHONPATH=/usr/local/lib/python3.12/dist-packages
 ```
 
-This is **required** for a few scripts (e.g. `deepseek-ocr2-vllm.py`, `abot-ocr.py`, `nuextract3.py`) and a safe fallback for any vLLM recipe that crashes at startup. (It's also the more robust way to run any vLLM recipe — full CUDA toolkit, ABI-matched build. It isn't a speed-up: uv still reinstalls the script's deps either way.)
+Use the tag from the script's header. The Surya recipes use `/usr/local/bin/python3` and `site-packages` instead; copy their header exactly. `unlimited-ocr-vllm.py` needs Baidu's `vllm/vllm-openai:unlimited-ocr` image (`:unlimited-ocr-cu129` on H100 or H200).
 
-**Run locally** (needs your own GPU) — same scripts, run directly from the URL:
+**The Job stops before it finishes.** Jobs stop at their timeout. Pass a longer `--timeout`, or use a `-saturate.py` recipe, which can resume.
+
+**Run locally on your own GPU.** Most recipes get vLLM from the Docker image, not from their dependencies. Add the vLLM version from the header tag:
 
 ```bash
-uv run https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \
-    input-dataset output-dataset
+uv run --with vllm==0.29.0 \
+    https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py \
+    input-dataset output-dataset --max-samples 10
 ```
 
----
-
-Works with any Hugging Face dataset containing images — documents, forms, receipts, books, handwriting.
+The Surya recipes need `vllm==0.20.1`. `unlimited-ocr-vllm.py` needs an architecture that no stable vLLM wheel has yet, so it runs only inside its image.
