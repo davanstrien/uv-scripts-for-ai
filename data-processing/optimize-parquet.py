@@ -19,13 +19,10 @@ Setup (once):
         uv run https://huggingface.co/datasets/uv-scripts/data-processing/raw/main/optimize-parquet.py
 
     # 2. A webhook on the input bucket that re-runs that Job on every change.
-    from huggingface_hub import create_webhook
-    create_webhook(
-        job_id="<job id from step 1>",
-        watched=[{"type": "bucket", "name": "<user>/<input-bucket>"}],
-        domains=["repo"],
-        secret="<fine-grained token>",
-    )
+    #    --secrets HF_TOKEN gives every triggered run a token for the two buckets;
+    #    a webhook run does not inherit the base Job's own secrets.
+    hf webhooks create --job-id <job id from step 1> \\
+        --watch bucket:<user>/<input-bucket> --domain repo --secrets HF_TOKEN
 
 Then upload files to the input bucket, e.g.
 `hf buckets cp data.csv hf://buckets/<user>/<input-bucket>/data.csv`,
@@ -39,10 +36,6 @@ import tempfile
 from pathlib import PurePosixPath
 
 from datasets import load_dataset
-
-# Use the webhook secret as the token when HF_TOKEN is not set.
-if "HF_TOKEN" not in os.environ and "WEBHOOK_SECRET" in os.environ:
-    os.environ["HF_TOKEN"] = os.environ["WEBHOOK_SECRET"]
 
 BUILDERS = {".csv": "csv", ".json": "json", ".jsonl": "json", ".parquet": "parquet"}
 

@@ -50,18 +50,12 @@ Use `hf jobs run ... uv run <url>` here, not `hf jobs uv run <url>`. `hf jobs uv
 
 **2. Create a webhook on the input bucket that re-runs this Job:**
 
-```python
-from huggingface_hub import create_webhook
-
-create_webhook(
-    job_id="<job id from step 1>",
-    watched=[{"type": "bucket", "name": "<user>/my-raw-files"}],
-    domains=["repo"],
-    secret="<fine-grained token>",
-)
+```bash
+hf webhooks create --job-id <job id from step 1> \
+    --watch bucket:<user>/my-raw-files --domain repo --secrets HF_TOKEN
 ```
 
-The Job uses the webhook `secret` as its token to read and write the buckets. Use a fine-grained token, not your main one.
+`--secrets HF_TOKEN` stores a token with the webhook, encrypted, and every triggered run receives it as a secret to read and write the buckets. The value comes from `HF_TOKEN` in your environment, or from the token you logged in with; pass `--secrets HF_TOKEN=hf_…` to use a different one. Use a fine-grained token, not your main one. The base Job needs no `--secrets`, because a webhook run does not inherit the Job's own secrets.
 
 **3. Upload a file:**
 
