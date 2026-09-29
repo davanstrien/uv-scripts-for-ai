@@ -20,6 +20,14 @@ planned **self-review skill** (see [Deferred](#deferred--tracked)) just enforces
   changed, [LANGUAGES.md](./LANGUAGES.md). Language fields record what the **model card claims**
   (with an evidence level), never inferred coverage. Hand-maintained for now; if drift becomes a
   problem, the follow-up is generating the README table from the JSON.
+- **Model-card fidelity.** Default prompts, sampling and processor settings come from the model
+  card or official client — cite the exact source in a comment (e.g. `# glmocr/config.py
+  PageLoaderConfig`), or say "card gives none" if upstream is silent. Upstream-locked values stay
+  locked; expose only the knobs upstream sanctions. Deliberate deviations go in the docstring with
+  the why. Benchmark before overriding a card value that looks wrong (e.g. hunyuan-1.5
+  `repetition_penalty` on tables, [#85](https://github.com/davanstrien/uv-scripts-for-ai/issues/85))
+  — never silently "improve" it. Docstring/card claims (params, scores, languages) must match the
+  card too.
 - **Self-contained single file.** Each recipe is one PEP 723 UV script runnable from a raw URL
   (`hf jobs uv run <url>`). No shared *importable local* module (the job env only gets the one file).
   Extra pip deps are fine — **pin them**. A heavy/stable/shared subsystem may become an opt-in *package*
