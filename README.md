@@ -119,6 +119,20 @@ Why reach for [Jobs](https://huggingface.co/docs/hub/jobs):
 - **No infra** — `hf jobs uv run <url>` and you're done. See the [`hf jobs` CLI](https://huggingface.co/docs/huggingface_hub/guides/cli#hf-jobs).
 - **Hub-native** — read and write datasets, models, and [storage buckets](https://huggingface.co/docs/hub/storage-buckets) directly. Running from the `https://huggingface.co/datasets/uv-scripts/…` URL also attributes usage to the recipe.
 
+## Pin a recipe version
+
+`/raw/main/` always runs the latest version of a recipe. To run the same file every time, replace `main` with a Hub commit SHA:
+
+```bash
+# the current commit of the recipe's Hub repo
+hf datasets info uv-scripts/ocr --expand sha --json | jq -r .sha
+
+SCRIPT=https://huggingface.co/datasets/uv-scripts/ocr/raw/<commit-sha>/glm-ocr.py
+hf jobs uv run --flavor a10g-small --timeout 15m --secrets HF_TOKEN $SCRIPT uv-scripts/ocr-demo your-username/ocr-demo-results
+```
+
+`uv run $SCRIPT …` works the same way. Use the commit SHA of the **Hub** repo, not a commit from this GitHub repo: each sync makes a new Hub commit, so the SHAs differ. To pin an older version, pick a commit from the repo's history page (e.g. [`uv-scripts/ocr` commits](https://huggingface.co/datasets/uv-scripts/ocr/commits/main)). Pinning fixes the script and its header (including any `[tool.hf-jobs]` image tag). Dependencies without a version pin in the header can still resolve to newer releases.
+
 ## Model licenses
 
 These scripts are orchestration code: they download third-party models from the Hugging Face Hub at runtime and run inference. **This repo does not redistribute any model weights.** Each model you run carries its own license (MIT, Apache-2.0, OpenRAIL-M, and some with non-commercial or other use-based terms); those terms govern your use of the *model*, not this repo's code. **You are responsible for checking each model's license** — on its Hugging Face model card — before using it, especially in production.

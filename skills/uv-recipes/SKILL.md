@@ -30,6 +30,8 @@ hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
 - Track a run: `hf jobs logs <job-id>`, `hf jobs ps`, `hf jobs inspect <job-id>`.
 - Jobs concepts, hardware flavors, and pricing: https://huggingface.co/docs/hub/jobs
 
+**Pin the version for reproducible runs.** `/raw/main/` follows the latest recipe. To lock the exact file (e.g. in a pipeline you will re-run), replace `main` with the Hub repo's commit SHA — `hf datasets info uv-scripts/<repo> --expand sha --json | jq -r .sha` — giving `https://huggingface.co/datasets/uv-scripts/<repo>/raw/<sha>/<script>.py`. Use the Hub SHA, not a GitHub commit; older SHAs are on `https://huggingface.co/datasets/uv-scripts/<repo>/commits/main`. This pins the script, not unpinned dependencies.
+
 **Or run locally** — the same file works with `uv run <url> INPUT OUTPUT` when your machine has the hardware it needs (usually a CUDA GPU). Inspect the source first: `uv run <url> --help` resolves dependencies, and recipes such as GLM-OCR import GPU libraries before parsing arguments. This can fail on a laptop.
 
 ## Discover recipes (no fixed list — read it live)
