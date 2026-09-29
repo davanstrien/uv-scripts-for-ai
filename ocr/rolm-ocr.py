@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import sys
+import time
 from typing import Any, Dict, List, Union
 
 import torch
@@ -239,6 +240,8 @@ def main(
     split: str = "train",
     max_samples: int = None,
     private: bool = False,
+    config: str | None = None,
+    create_pr: bool = False,
     output_column: str = None,
     overwrite: bool = False,
     shuffle: bool = False,
@@ -375,9 +378,34 @@ def main(
         inference_list = [json.dumps([inference_entry])] * len(dataset)
         dataset = dataset.add_column("inference_info", inference_list)
 
-    # Push to hub
+    # Push to hub with retry and XET fallback
     logger.info(f"Pushing to {output_dataset}")
-    dataset.push_to_hub(output_dataset, private=private, token=HF_TOKEN)
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attempt > 1:
+                logger.warning("Disabling XET (fallback to HTTP upload)")
+                os.environ["HF_HUB_DISABLE_XET"] = "1"
+            dataset.push_to_hub(
+                output_dataset,
+                private=private,
+                token=HF_TOKEN,
+                max_shard_size="500MB",
+                **({"config_name": config} if config else {}),
+                create_pr=create_pr,
+                commit_message=f"Add {model} results ({len(dataset)} samples)"
+                + (f" [{config}]" if config else ""),
+            )
+            break
+        except Exception as e:
+            logger.error(f"Upload attempt {attempt}/{max_retries} failed: {e}")
+            if attempt < max_retries:
+                delay = 30 * (2 ** (attempt - 1))
+                logger.info(f"Retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                logger.error("All upload attempts failed. Results are lost.")
+                sys.exit(1)
 
     # Calculate processing time
     end_time = datetime.now()
@@ -533,6 +561,15 @@ Examples:
         "--private", action="store_true", help="Make output dataset private"
     )
     parser.add_argument(
+        "--config",
+        help="Config/subset name when pushing to Hub (for benchmarking multiple models in one repo)",
+    )
+    parser.add_argument(
+        "--create-pr",
+        action="store_true",
+        help="Create a pull request instead of pushing directly (for parallel benchmarking)",
+    )
+    parser.add_argument(
         "--output-column",
         default=None,
         help="Name of the output column for extracted text (default: markdown)",
@@ -575,6 +612,8 @@ Examples:
         split=args.split,
         max_samples=args.max_samples,
         private=args.private,
+        config=args.config,
+        create_pr=args.create_pr,
         output_column=args.output_column,
         overwrite=args.overwrite,
         shuffle=args.shuffle,
