@@ -32,7 +32,7 @@ jobs:
     env:
       REPO_ID: ${{ inputs.repo_id != '' && inputs.repo_id || format('uv-scripts/{0}', inputs.folder) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Gate — folder must be a superset of the Hub repo (guards --delete="*")
         env:

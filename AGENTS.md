@@ -89,7 +89,7 @@ workflow's optional `repo_id` / `repo_type` inputs.)
   action-version bump or gate change is a one-file edit.
 - It uploads file **bytes** over HTTP, creates the repo if missing (`--exist-ok`), makes **one squashed
   commit**, and **excludes `.git*` and `.github*`** (so `.gitattributes` is not synced). No git history carried.
-- **`repo_type: dataset` is required** (the action defaults to `space`). Pin `huggingface/hub-sync@v0.1.0`.
+- **`repo_type: dataset` is required** (the action defaults to `space`). Pin `huggingface/hub-sync@v0.2.0`.
 - **Commit binaries as plain blobs — do NOT use Git LFS here.** Files are well under GitHub's 100 MB limit; HF
   stores large files as LFS/xet automatically on upload. Because every binary repo's `.gitattributes` has
   `*.gif`/`*.png`/`*.pdf filter=lfs`, **delete `.gitattributes` on seed** (above) so `git add` can't make a
