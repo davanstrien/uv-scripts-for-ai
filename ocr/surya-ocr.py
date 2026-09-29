@@ -647,7 +647,7 @@ def main(
     dataset = dataset.add_column(blocks_column, blocks)
 
     inference_entry = {
-        "model": model,
+        "model_id": model,
         "model_name": "surya-ocr-2",
         "column_name": output_column,
         "blocks_column": blocks_column,

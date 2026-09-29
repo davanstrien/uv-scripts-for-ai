@@ -783,7 +783,7 @@ class DatasetSink:
             return
 
         inference_entry = {
-            "model": summary["model"],
+            "model_id": summary["model"],
             "model_name": "surya-ocr-2",
             "column_name": self.output_column,
             "blocks_column": self.blocks_column,

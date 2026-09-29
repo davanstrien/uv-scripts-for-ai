@@ -575,7 +575,7 @@ def main(
     dataset = dataset.add_column(output_column, extractions)
 
     inference_entry = {
-        "model": model,
+        "model_id": model,
         "model_name": "lift",
         "column_name": output_column,
         "task": "schema-constrained extraction",
