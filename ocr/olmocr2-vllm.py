@@ -478,6 +478,7 @@ def main(
     # script's own extras (version, timestamp, sampling params) ride along as extra keys.
     inference_entry = {
         "model_id": model,
+        "model_name": model.split("/")[-1],
         "column_name": output_column,
         "script": "olmocr2-vllm.py",
         "version": "1.0.0",

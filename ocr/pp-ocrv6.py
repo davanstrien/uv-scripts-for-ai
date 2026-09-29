@@ -699,6 +699,7 @@ class BucketShardSink:
 def build_inference_entry(tier: str, det_model: str, rec_model: str, args_dict: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "model_id": f"PaddlePaddle/PP-OCRv6_{tier}",
+        "model_name": f"PP-OCRv6_{tier}",
         "det_model": det_model,
         "rec_model": rec_model,
         "tier": tier,

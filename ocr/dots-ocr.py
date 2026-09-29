@@ -412,6 +412,7 @@ def main(
     # Handle inference_info tracking (for multi-model comparisons)
     inference_entry = {
         "model_id": model,
+        "model_name": model.split("/")[-1],
         "column_name": output_column,
         "timestamp": datetime.now().isoformat(),
         "prompt_mode": prompt_mode if not custom_prompt else "custom",
