@@ -55,6 +55,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime
 from typing import Any, Dict, Union
 
@@ -344,14 +345,30 @@ def main():
         dataset = dataset.add_column("inference_info", [json.dumps([inference_entry])] * len(dataset))
 
     logger.info(f"Pushing to {args.output_dataset}")
-    dataset.push_to_hub(
-        args.output_dataset,
-        private=args.private,
-        token=hf_token,
-        **({"config_name": args.config} if args.config else {}),
-        create_pr=args.create_pr,
-        commit_message=f"Add {MODEL_ID} OCR results ({len(dataset)} samples)" + (f" [{args.config}]" if args.config else ""),
-    )
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attempt > 1:
+                logger.warning("Disabling XET (fallback to HTTP upload)")
+                os.environ["HF_HUB_DISABLE_XET"] = "1"
+            dataset.push_to_hub(
+                args.output_dataset,
+                private=args.private,
+                token=hf_token,
+                **({"config_name": args.config} if args.config else {}),
+                create_pr=args.create_pr,
+                commit_message=f"Add {MODEL_ID} OCR results ({len(dataset)} samples)" + (f" [{args.config}]" if args.config else ""),
+            )
+            break
+        except Exception as e:
+            logger.error(f"Upload attempt {attempt}/{max_retries} failed: {e}")
+            if attempt < max_retries:
+                delay = 30 * (2 ** (attempt - 1))
+                logger.info(f"Retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                logger.error("All upload attempts failed. OCR results are lost.")
+                sys.exit(1)
     card = DatasetCard(create_dataset_card(
         source_dataset=args.input_dataset, num_samples=len(dataset), processing_time=processing_time_str,
         batch_size=args.batch_size, max_model_len=args.max_model_len, max_tokens=args.max_tokens,

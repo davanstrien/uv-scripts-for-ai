@@ -531,16 +531,32 @@ def main(
         split=split,
     )
 
-    # Push to hub
+    # Push to hub with retry and XET fallback
     logger.info(f"Pushing to HuggingFace Hub: {output_dataset}")
-    commit_info = ds.push_to_hub(
-        output_dataset,
-        private=private,
-        **({"config_name": config} if config else {}),
-        create_pr=create_pr,
-        commit_message=f"Add {model} OCR results ({len(ds)} samples)"
-        + (f" [{config}]" if config else ""),
-    )
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attempt > 1:
+                logger.warning("Disabling XET (fallback to HTTP upload)")
+                os.environ["HF_HUB_DISABLE_XET"] = "1"
+            commit_info = ds.push_to_hub(
+                output_dataset,
+                private=private,
+                **({"config_name": config} if config else {}),
+                create_pr=create_pr,
+                commit_message=f"Add {model} OCR results ({len(ds)} samples)"
+                + (f" [{config}]" if config else ""),
+            )
+            break
+        except Exception as e:
+            logger.error(f"Upload attempt {attempt}/{max_retries} failed: {e}")
+            if attempt < max_retries:
+                delay = 30 * (2 ** (attempt - 1))
+                logger.info(f"Retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                logger.error("All upload attempts failed. OCR results are lost.")
+                sys.exit(1)
 
     # Update dataset card
     card = DatasetCard(card_content)
