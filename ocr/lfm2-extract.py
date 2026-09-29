@@ -54,6 +54,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from typing import List, Optional
 from urllib.request import urlopen
@@ -156,6 +157,8 @@ def main(
     max_model_len: int = 8192,
     max_tokens: int = 4096,
     private: bool = False,
+    config: str | None = None,
+    create_pr: bool = False,
     hf_token: Optional[str] = None,
 ) -> None:
     check_cuda_availability()
@@ -211,7 +214,8 @@ def main(
     dataset = dataset.add_column(output_column, all_outputs)
 
     inference_entry = {
-        "model": model,
+        "model_id": model,
+        "model_name": model.split("/")[-1],
         "column_name": output_column,
         "task": "structured extraction",
         "format": output_format,
@@ -233,7 +237,32 @@ def main(
         )
 
     logger.info(f"Pushing to {output_dataset}")
-    dataset.push_to_hub(output_dataset, private=private, token=HF_TOKEN)
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attempt > 1:
+                logger.warning("Disabling XET (fallback to HTTP upload)")
+                os.environ["HF_HUB_DISABLE_XET"] = "1"
+            dataset.push_to_hub(
+                output_dataset,
+                private=private,
+                token=HF_TOKEN,
+                max_shard_size="500MB",
+                **({"config_name": config} if config else {}),
+                create_pr=create_pr,
+                commit_message=f"Add {model} results ({len(dataset)} samples)"
+                + (f" [{config}]" if config else ""),
+            )
+            break
+        except Exception as e:
+            logger.error(f"Upload attempt {attempt}/{max_retries} failed: {e}")
+            if attempt < max_retries:
+                delay = 30 * (2 ** (attempt - 1))
+                logger.info(f"Retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                logger.error("All upload attempts failed. Results are lost.")
+                sys.exit(1)
 
     card_text = f"""---
 tags:
@@ -312,6 +341,15 @@ if __name__ == "__main__":
     parser.add_argument("--max-model-len", type=int, default=8192, help="Max context length (default: 8192)")
     parser.add_argument("--max-tokens", type=int, default=4096, help="Max output tokens (default: 4096)")
     parser.add_argument("--private", action="store_true", help="Make output dataset private")
+    parser.add_argument(
+        "--config",
+        help="Config/subset name when pushing to Hub (for benchmarking multiple models in one repo)",
+    )
+    parser.add_argument(
+        "--create-pr",
+        action="store_true",
+        help="Create a pull request instead of pushing directly (for parallel benchmarking)",
+    )
     parser.add_argument("--hf-token", help="HF token (or set HF_TOKEN)")
     args = parser.parse_args()
 
@@ -332,5 +370,7 @@ if __name__ == "__main__":
         max_model_len=args.max_model_len,
         max_tokens=args.max_tokens,
         private=args.private,
+        config=args.config,
+        create_pr=args.create_pr,
         hf_token=args.hf_token,
     )
