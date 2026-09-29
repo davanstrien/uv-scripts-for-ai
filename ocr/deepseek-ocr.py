@@ -44,6 +44,7 @@ import logging
 import os
 import shutil
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -265,6 +266,8 @@ def main(
     split: str = "train",
     max_samples: int = None,
     private: bool = False,
+    config: str | None = None,
+    create_pr: bool = False,
     shuffle: bool = False,
     seed: int = 42,
     output_column: str = "markdown",
@@ -434,6 +437,7 @@ def main(
     new_info = {
         "column_name": output_column,
         "model_id": model,
+        "model_name": model.split("/")[-1],
         "processing_date": datetime.now().isoformat(),
         "resolution_mode": resolution_mode,
         "base_size": final_base_size,
@@ -451,9 +455,34 @@ def main(
     info_json = json.dumps(existing_info, ensure_ascii=False)
     dataset = dataset.add_column("inference_info", [info_json] * len(dataset))
 
-    # Push to hub
+    # Push to hub with retry and XET fallback
     logger.info(f"Pushing to {output_dataset}")
-    dataset.push_to_hub(output_dataset, private=private, token=HF_TOKEN)
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attempt > 1:
+                logger.warning("Disabling XET (fallback to HTTP upload)")
+                os.environ["HF_HUB_DISABLE_XET"] = "1"
+            dataset.push_to_hub(
+                output_dataset,
+                private=private,
+                token=HF_TOKEN,
+                max_shard_size="500MB",
+                **({"config_name": config} if config else {}),
+                create_pr=create_pr,
+                commit_message=f"Add {model} results ({len(dataset)} samples)"
+                + (f" [{config}]" if config else ""),
+            )
+            break
+        except Exception as e:
+            logger.error(f"Upload attempt {attempt}/{max_retries} failed: {e}")
+            if attempt < max_retries:
+                delay = 30 * (2 ** (attempt - 1))
+                logger.info(f"Retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                logger.error("All upload attempts failed. Results are lost.")
+                sys.exit(1)
 
     # Calculate processing time
     end_time = datetime.now()
@@ -600,6 +629,15 @@ Examples:
         "--private", action="store_true", help="Make output dataset private"
     )
     parser.add_argument(
+        "--config",
+        help="Config/subset name when pushing to Hub (for benchmarking multiple models in one repo)",
+    )
+    parser.add_argument(
+        "--create-pr",
+        action="store_true",
+        help="Create a pull request instead of pushing directly (for parallel benchmarking)",
+    )
+    parser.add_argument(
         "--shuffle",
         action="store_true",
         help="Shuffle the dataset before processing (useful for random sampling)",
@@ -638,6 +676,8 @@ Examples:
         split=args.split,
         max_samples=args.max_samples,
         private=args.private,
+        config=args.config,
+        create_pr=args.create_pr,
         shuffle=args.shuffle,
         seed=args.seed,
         output_column=args.output_column,
