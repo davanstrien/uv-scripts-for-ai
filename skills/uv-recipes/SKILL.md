@@ -27,8 +27,8 @@ hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
 - `--flavor` picks hardware: `cpu-basic`, `t4-small`, `l4x1` (good default for ≤3B vision models), `a10g-large`, `a100-large`. Run `hf jobs hardware` for live prices.
 - **Default timeout is 30 min.** For training or large batches add `--timeout 2h`.
 - Default image is `astral-sh/uv:python3.12-bookworm`. Some vLLM recipes need `--image vllm/vllm-openai` — **the recipe's docstring has the exact command; read it first.**
-- Track a run: `hf jobs logs <job-id>`, `hf jobs ps`, `hf jobs inspect <job-id>`. For long runs add `--detach` and check back later instead of polling in a loop.
-- **The first run is slow:** dependency install, model download and engine warmup dominate small runs. Cost per item drops sharply past a few hundred items, so test small, then scale.
+- Track a run: `hf jobs logs <job-id>`, `hf jobs ps`, `hf jobs inspect <job-id>`. `hf jobs uv run` streams logs until the Job ends; for long runs add `--detach` (prints the Job ID) and check back with `hf jobs logs <job-id>` instead of polling in a loop.
+- **The first run is slow:** dependency install, model download and engine warmup dominate small runs. For model-heavy recipes, cost per item drops sharply past a few hundred items, so test small, then scale.
 - Flags change between CLI versions — `hf jobs uv run --help` is the source of truth, not this skill.
 - Jobs concepts, hardware flavors, and pricing: https://huggingface.co/docs/hub/jobs
 

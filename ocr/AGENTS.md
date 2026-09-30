@@ -287,6 +287,8 @@ ARM wheels) — if a nightly-recipe install fails on resolution, wait and retry 
 
 ## Change log
 
+- **2026-09-30** — agent docs split: these dev notes moved here from `CLAUDE.md` (now a pointer);
+  the previous user-facing `AGENTS.md` content moved to the `uv-recipes` skill and the README "For agents" section.
 - **2026-07-29** — added the first two **`-saturate.py` companions**: `lighton-ocr2-saturate.py` and
   `ovis-ocr2-saturate.py`. Same model/prompt/sampling/post-processing as their `-server.py` siblings;
   the driver half (concurrency, retries, output, resume) is the `saturate` package (pinned `>=0.1.1`,

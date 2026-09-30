@@ -21,7 +21,7 @@ hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
   /mnt/input /mnt/output
 ```
 
-The `ocr` family already ships bucket-aware recipes — **`glm-ocr-bucket.py`** and **`falcon-ocr-bucket.py`** read images/PDFs from a mounted bucket and write one `.md` per page. Read the recipe's `--help` for exact arguments.
+The `ocr` family already ships bucket-aware recipes — **`glm-ocr-bucket.py`**, **`surya-ocr-bucket.py`** and **`falcon-ocr-bucket.py`** read images/PDFs from a mounted bucket and write one `.md` per page. Read the recipe's `--help` for exact arguments.
 
 ## Mount a local folder (no upload step)
 
