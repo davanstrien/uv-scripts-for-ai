@@ -36,6 +36,11 @@ mirror the org's *demo* Spaces. (One Space *is*
 mirrored — the org profile card: `org-card/` → `uv-scripts/README`, a static Space, via the reusable
 workflow's optional `repo_id` / `repo_type` inputs.)
 
+**Agent docs follow the [AGENTS.md](https://agents.md) convention.** An `AGENTS.md` (this file, or a folder's own,
+e.g. `ocr/AGENTS.md`) is for agents **working on** the code: conventions, gotchas, internal tooling. A `CLAUDE.md`
+only points to its sibling `AGENTS.md`. Guidance for agents **using** the recipes lives in the agent skills
+(`skills/`) and each folder's `README.md`, not in `AGENTS.md`.
+
 ## Script conventions
 
 - Self-contained **[PEP 723](https://peps.python.org/pep-0723/) / [UV script](https://docs.astral.sh/uv/guides/scripts/)** — deps inline, no `requirements.txt`, no shared importable lib:

@@ -1,7 +1,7 @@
 # OCR Benchmark — results & history
 
 Result tables and validation history for the OCR benchmark tooling. **How to *run* the tools**
-(`ocr-bench-run.py`, `ocr-vllm-judge.py`, `ocr-human-eval.py`) lives in `CLAUDE.md` → "Internal
+(`ocr-bench-run.py`, `ocr-vllm-judge.py`, `ocr-human-eval.py`) lives in [`AGENTS.md`](AGENTS.md) → "Internal
 tooling"; this file is the accumulated *evidence*.
 
 ## Model registry (as benchmarked)
