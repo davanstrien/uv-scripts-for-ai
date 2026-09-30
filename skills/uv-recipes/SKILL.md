@@ -10,7 +10,7 @@ A recipe is one self-contained Python file (a [PEP 723](https://peps.python.org/
 ## Requires
 
 - **`uv`** — `curl -LsSf https://astral.sh/uv/install.sh | sh`.
-- **The `hf` CLI** — `curl -LsSf https://hf.co/cli/install.sh | bash -s` (or `uv tool install "huggingface_hub[cli]"`). Authenticate with `hf auth login`, or set `HF_TOKEN`. Jobs is pay-as-you-go (no subscription needed) — it just needs a Hugging Face account with credit.
+- **The `hf` CLI** — `curl -LsSf https://hf.co/cli/install.sh | bash -s` (or `uv tool install "huggingface_hub[cli]"`). Authenticate with `hf auth login`, or set `HF_TOKEN`; check with `hf auth whoami`. Jobs is pay-as-you-go (no subscription needed) — it just needs a Hugging Face account with credit.
 - **Strongly recommended — install the Hugging Face skills:** `hf skills add`. This installs the **`hf-cli`** skill (the full `hf` surface: jobs, auth, repos, datasets, buckets, webhooks) and stays current via `hf skills update`. The two compose: `uv-recipes` picks and runs a recipe, `hf-cli` drives everything else on the Hub.
 
 ## Run a recipe
@@ -27,7 +27,9 @@ hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
 - `--flavor` picks hardware: `cpu-basic`, `t4-small`, `l4x1` (good default for ≤3B vision models), `a10g-large`, `a100-large`. Run `hf jobs hardware` for live prices.
 - **Default timeout is 30 min.** For training or large batches add `--timeout 2h`.
 - Default image is `astral-sh/uv:python3.12-bookworm`. Some vLLM recipes need `--image vllm/vllm-openai` — **the recipe's docstring has the exact command; read it first.**
-- Track a run: `hf jobs logs <job-id>`, `hf jobs ps`, `hf jobs inspect <job-id>`.
+- Track a run: `hf jobs logs <job-id>`, `hf jobs ps`, `hf jobs inspect <job-id>`. For long runs add `--detach` and check back later instead of polling in a loop.
+- **The first run is slow:** dependency install, model download and engine warmup dominate small runs. Cost per item drops sharply past a few hundred items, so test small, then scale.
+- Flags change between CLI versions — `hf jobs uv run --help` is the source of truth, not this skill.
 - Jobs concepts, hardware flavors, and pricing: https://huggingface.co/docs/hub/jobs
 
 **Or run locally** — the same file works with `uv run <url> INPUT OUTPUT` when your machine has the hardware it needs (usually a CUDA GPU). Inspect the source first: `uv run <url> --help` resolves dependencies, and recipes such as GLM-OCR import GPU libraries before parsing arguments. This can fail on a laptop.
@@ -47,6 +49,8 @@ curl -fsSL https://huggingface.co/datasets/uv-scripts/ocr/raw/main/glm-ocr.py
 ```
 
 Repo name is the task family (e.g. `ocr`, `transcription`, `sam3`, `gliner`, `classification`, `build-atlas`); a few repos are utilities, not recipes. Prefer a smaller model first (0.3–1B on `l4x1`); scale up only if quality demands it.
+
+To choose between models, read the family's `README.md` table first. Some families also ship a machine-readable catalogue (e.g. `ocr/models.json`: model, backend, image pins, and the languages the model card claims, with an evidence level). For benchmark numbers, read the model card's eval results, not a markdown table that can drift: `HfApi().model_info(MODEL_ID, expand=["evalResults"]).eval_results` ([leaderboard data guide](https://huggingface.co/docs/hub/en/leaderboard-data-guide)). Some families have `-bucket.py` variants (folder in, one file per item out); list the repo to check one exists before you use it.
 
 ## Adapt a recipe
 

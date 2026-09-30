@@ -280,3 +280,7 @@ uv run --with vllm==0.29.0 \
 ```
 
 The Surya recipes need `vllm==0.20.1`. `unlimited-ocr-vllm.py` needs an architecture that no stable vLLM wheel has yet, so it runs only inside its image.
+
+## For agents
+
+To have a coding agent run these recipes, point it at the [`uv-recipes` agent skill](https://github.com/davanstrien/uv-scripts-for-ai/tree/main/skills/uv-recipes). It covers how to discover recipes, read a script's header before running it, run on Jobs, and check the output. [`models.json`](models.json) is the machine-readable catalogue of the scripts. [AGENTS.md](AGENTS.md) is for agents that change the recipes: conventions, per-script gotchas and internal tooling.
