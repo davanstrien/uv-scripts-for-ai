@@ -748,30 +748,57 @@ def evaluate(model_path: str, eval_sets: dict, tasks: list, batch_size: int, exp
     return metrics_by_split
 
 
-# The smallest Jobs flavor for each GPU, keyed by a fragment of the GPU's name. "L40" comes
-# before "L4" because the first match wins.
-GPU_NAME_TO_FLAVOR = {"T4": "t4-small", "A10G": "a10g-small", "L40": "l40sx1", "L4": "l4x1", "A100": "a100-large"}
-
-
 def jobs_flavor() -> str:
-    """Return the Jobs hardware flavor, or "" when it is not known.
+    """Return the HF Jobs hardware flavor this run is on, or "" when it cannot be told.
 
-    The docs say ACCELERATOR holds the flavor ("a10g-small"). On the t4-small and a10g-small
-    jobs that tested this script it held a bare "gpu", which is not a valid --flavor. So use
-    ACCELERATOR when it looks like a flavor, and otherwise name the smallest flavor that has
-    this GPU. A larger flavor of the same GPU reproduces the same result.
+    HF Jobs sets ACCELERATOR to "cpu" or "gpu", not the flavor name, so the flavor is looked up
+    in the public Jobs hardware list: first by GPU model and count, then by the CPU_CORES and
+    MEMORY values that Jobs sets in the container (to tell a10g-small from a10g-large, or
+    cpu-basic from cpu-upgrade). Any failure (no network, older huggingface_hub) returns "".
     """
     hardware = os.environ.get("ACCELERATOR") or ""
-    looks_like_flavor = "-" in hardware or any(character.isdigit() for character in hardware)
-    if looks_like_flavor:
-        return hardware
-    if not torch.cuda.is_available():
+    if "-" in hardware or any(character.isdigit() for character in hardware):
+        return hardware  # already a flavor name
+    try:
+        from huggingface_hub import HfApi
+
+        gpu_name, gpu_count = "", 0
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                gpu_name = torch.cuda.get_device_name(0)
+                gpu_count = torch.cuda.device_count()
+        except ImportError:
+            pass
+
+        candidates = []
+        for flavor in HfApi(token=False).list_jobs_hardware():
+            accelerator = flavor.accelerator
+            if gpu_count == 0 and accelerator is None:
+                candidates.append(flavor)
+            elif (
+                gpu_count > 0
+                and accelerator is not None
+                and accelerator.model in gpu_name
+                and int(accelerator.quantity) == gpu_count
+            ):
+                candidates.append(flavor)
+        if not candidates:
+            return ""
+
+        cores = float(os.environ.get("CPU_CORES") or 0)
+        memory_gb = float((os.environ.get("MEMORY") or "0").upper().rstrip("GIB ") or 0)
+
+        def distance(flavor) -> float:
+            # Relative gap to the listed vCPUs and RAM; Jobs reports slightly different numbers.
+            listed_cores = float(flavor.cpu.split()[0])
+            listed_memory = float(flavor.ram.split()[0])
+            return abs(listed_cores - cores) / listed_cores + abs(listed_memory - memory_gb) / listed_memory
+
+        return min(candidates, key=distance).name
+    except Exception:
         return ""
-    gpu_name = torch.cuda.get_device_name(0)
-    for fragment, flavor in GPU_NAME_TO_FLAVOR.items():
-        if fragment in gpu_name:
-            return flavor
-    return ""
 
 
 def build_reproduce_command(args) -> str:
