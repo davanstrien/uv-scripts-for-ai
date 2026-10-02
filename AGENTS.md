@@ -74,10 +74,11 @@ workflow's optional `repo_id` / `repo_type` inputs.)
 
   **Do not stamp the raw `ACCELERATOR` value.** On Jobs it holds only `cpu` / `gpu` (verified on t4-small,
   a10g-small, l4x1, a10g-largex2 and l4x4, 2026-09/10), not the flavor the hub docs describe, so a raw stamp
-  prints "(`gpu`)" and a reproduce command built from it says `--flavor gpu`. Copy the `GPU_FLAVORS` table and
-  `jobs_flavor()` helper from `ocr/glm-ocr.py` (it names the flavor from the GPU model **and count**, e.g.
-  `a10g-largex2`, and returns "" on CPU), and use `jobs_flavor() or "<default>"` for the reproduce
-  command's `--flavor`.
+  prints "(`gpu`)" and a reproduce command built from it says `--flavor gpu`. Copy the `jobs_flavor()`
+  helper from `ocr/glm-ocr.py`: it looks the flavor up in the public Jobs hardware list
+  (`HfApi().list_jobs_hardware()`, no token needed) by GPU model and count, then by the `CPU_CORES` /
+  `MEMORY` values Jobs sets, so it also tells `a10g-small` from `a10g-large` and names CPU flavors. It
+  returns "" on any failure. Use `jobs_flavor() or "<default>"` for the reproduce command's `--flavor`.
 
   Rules: the reproduce command is **`hf jobs uv run`** (never bare `uv run` — the card is the Jobs
   advertisement); the "Produced on HF Jobs" claim is **gated on `JOB_ID`** (a local run must not claim it);
