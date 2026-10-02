@@ -191,29 +191,41 @@ def label_counts_table(tasks: list, counts_by_task: dict, total: int) -> str:
     return "\n".join(lines)
 
 
-# The smallest Jobs flavor for each GPU, keyed by a fragment of the GPU's name. "L40" comes
-# before "L4" because the first match wins.
-GPU_NAME_TO_FLAVOR = {"T4": "t4-small", "A10G": "a10g-small", "L40": "l40sx1", "L4": "l4x1", "A100": "a100-large"}
+# HF Jobs sets ACCELERATOR to "cpu" or "gpu", not the flavor name, so the provenance stamp
+# names the flavor from the GPU model and count. Keys are fragments of
+# torch.cuda.get_device_name(); "L40S" comes before "L4" because the first match wins.
+GPU_FLAVORS = {
+    "T4": {1: "t4-small"},
+    "A10G": {1: "a10g-small", 2: "a10g-largex2", 4: "a10g-largex4"},
+    "L40S": {1: "l40sx1", 4: "l40sx4", 8: "l40sx8"},
+    "L4": {1: "l4x1", 4: "l4x4"},
+    "A100": {1: "a100-large", 4: "a100x4", 8: "a100x8"},
+    "H200": {1: "h200", 2: "h200x2", 4: "h200x4", 8: "h200x8"},
+    "RTX PRO 6000": {1: "rtx-pro-6000", 2: "rtx-pro-6000x2", 4: "rtx-pro-6000x4", 8: "rtx-pro-6000x8"},
+}
 
 
 def jobs_flavor() -> str:
-    """Return the Jobs hardware flavor, or "" when it is not known.
+    """Return the HF Jobs hardware flavor, or "" when it is not known (CPU, or an unknown GPU).
 
-    The docs say ACCELERATOR holds the flavor ("a10g-small"). On the t4-small and a10g-small
-    jobs that tested this script it held a bare "gpu", which is not a valid --flavor. So use
-    ACCELERATOR when it looks like a flavor, and otherwise name the smallest flavor that has
-    this GPU. A larger flavor of the same GPU reproduces the same result.
+    ACCELERATOR is used when it already looks like a flavor. Otherwise the flavor is named from
+    the GPU model and count. Flavors with the same GPUs but more CPU/RAM (a10g-small vs
+    a10g-large) cannot be told apart, so the smallest one is named; it reproduces the run.
     """
     hardware = os.environ.get("ACCELERATOR") or ""
-    looks_like_flavor = "-" in hardware or any(character.isdigit() for character in hardware)
-    if looks_like_flavor:
+    if "-" in hardware or any(character.isdigit() for character in hardware):
         return hardware
+    try:
+        import torch
+    except ImportError:
+        return ""
     if not torch.cuda.is_available():
         return ""
     gpu_name = torch.cuda.get_device_name(0)
-    for fragment, flavor in GPU_NAME_TO_FLAVOR.items():
+    gpu_count = torch.cuda.device_count()
+    for fragment, flavors in GPU_FLAVORS.items():
         if fragment in gpu_name:
-            return flavor
+            return flavors.get(gpu_count, flavors[1])
     return ""
 
 

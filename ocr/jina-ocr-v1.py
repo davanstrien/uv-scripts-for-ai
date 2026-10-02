@@ -142,6 +142,44 @@ def load_model_glue(revision: str | None):
     return snapshot, deepseek_ocr_mtp
 
 
+# HF Jobs sets ACCELERATOR to "cpu" or "gpu", not the flavor name, so the provenance stamp
+# names the flavor from the GPU model and count. Keys are fragments of
+# torch.cuda.get_device_name(); "L40S" comes before "L4" because the first match wins.
+GPU_FLAVORS = {
+    "T4": {1: "t4-small"},
+    "A10G": {1: "a10g-small", 2: "a10g-largex2", 4: "a10g-largex4"},
+    "L40S": {1: "l40sx1", 4: "l40sx4", 8: "l40sx8"},
+    "L4": {1: "l4x1", 4: "l4x4"},
+    "A100": {1: "a100-large", 4: "a100x4", 8: "a100x8"},
+    "H200": {1: "h200", 2: "h200x2", 4: "h200x4", 8: "h200x8"},
+    "RTX PRO 6000": {1: "rtx-pro-6000", 2: "rtx-pro-6000x2", 4: "rtx-pro-6000x4", 8: "rtx-pro-6000x8"},
+}
+
+
+def jobs_flavor() -> str:
+    """Return the HF Jobs hardware flavor, or "" when it is not known (CPU, or an unknown GPU).
+
+    ACCELERATOR is used when it already looks like a flavor. Otherwise the flavor is named from
+    the GPU model and count. Flavors with the same GPUs but more CPU/RAM (a10g-small vs
+    a10g-large) cannot be told apart, so the smallest one is named; it reproduces the run.
+    """
+    hardware = os.environ.get("ACCELERATOR") or ""
+    if "-" in hardware or any(character.isdigit() for character in hardware):
+        return hardware
+    try:
+        import torch
+    except ImportError:
+        return ""
+    if not torch.cuda.is_available():
+        return ""
+    gpu_name = torch.cuda.get_device_name(0)
+    gpu_count = torch.cuda.device_count()
+    for fragment, flavors in GPU_FLAVORS.items():
+        if fragment in gpu_name:
+            return flavors.get(gpu_count, flavors[1])
+    return ""
+
+
 def create_dataset_card(
     source_dataset: str,
     num_samples: int,
@@ -157,7 +195,7 @@ def create_dataset_card(
     image_count_per_sec: float,
 ) -> str:
     on_jobs = os.environ.get("JOB_ID") is not None
-    hw = os.environ.get("ACCELERATOR") or ""
+    hw = jobs_flavor()  # flavor name, e.g. "a10g-small"; "" on CPU
     origin = (
         "Produced on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs)"
         + (f" (`{hw}`)" if hw else "")

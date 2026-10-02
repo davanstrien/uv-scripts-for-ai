@@ -55,7 +55,7 @@ workflow's optional `repo_id` / `repo_type` inputs.)
 
   ```python
   on_jobs = os.environ.get("JOB_ID") is not None          # set by HF Jobs in-container
-  hw = os.environ.get("ACCELERATOR") or ""                # e.g. "a10g-small"; empty on CPU
+  hw = jobs_flavor()                                      # e.g. "a10g-small"; "" on CPU
   origin = (
       f"Produced on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs)"
       + (f" (`{hw}`)" if hw else "")
@@ -71,6 +71,13 @@ workflow's optional `repo_id` / `repo_type` inputs.)
   hf jobs uv run <script-raw-url> <args>
   ```
   ```
+
+  **Do not stamp the raw `ACCELERATOR` value.** On Jobs it holds only `cpu` / `gpu` (verified on t4-small,
+  a10g-small, l4x1, a10g-largex2 and l4x4, 2026-09/10), not the flavor the hub docs describe, so a raw stamp
+  prints "(`gpu`)" and a reproduce command built from it says `--flavor gpu`. Copy the `GPU_FLAVORS` table and
+  `jobs_flavor()` helper from `ocr/glm-ocr.py` (it names the flavor from the GPU model **and count**, e.g.
+  `a10g-largex2`, and returns "" on CPU), and use `jobs_flavor() or "<default>"` for the reproduce
+  command's `--flavor`.
 
   Rules: the reproduce command is **`hf jobs uv run`** (never bare `uv run` — the card is the Jobs
   advertisement); the "Produced on HF Jobs" claim is **gated on `JOB_ID`** (a local run must not claim it);

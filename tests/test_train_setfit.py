@@ -148,6 +148,28 @@ def test_reproduction_preserves_jobs_gpu_flavor(monkeypatch, job_id, accelerator
     assert command.startswith(f"hf jobs uv run --flavor {expected} --secrets HF_TOKEN")
 
 
+@pytest.mark.parametrize(
+    ("gpu_name", "gpu_count", "expected"),
+    [
+        ("Tesla T4", 1, "t4-small"),
+        ("NVIDIA A10G", 2, "a10g-largex2"),
+        ("NVIDIA L40S", 1, "l40sx1"),
+        ("NVIDIA L4", 4, "l4x4"),
+        ("NVIDIA H200", 8, "h200x8"),
+    ],
+)
+def test_reproduction_names_flavor_when_accelerator_is_bare_gpu(monkeypatch, gpu_name, gpu_count, expected):
+    """On Jobs, ACCELERATOR is "gpu", not the flavor: the flavor comes from the GPU model and count."""
+    monkeypatch.setattr("sys.argv", [str(SCRIPT), "fixture", "user/model"])
+    monkeypatch.setenv("JOB_ID", "job-123")
+    monkeypatch.setenv("ACCELERATOR", "gpu")
+    monkeypatch.setattr(recipe.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(recipe.torch.cuda, "get_device_name", lambda index=0: gpu_name)
+    monkeypatch.setattr(recipe.torch.cuda, "device_count", lambda: gpu_count)
+    command = recipe.build_reproduce_command(recipe.parse_args())
+    assert command.startswith(f"hf jobs uv run --flavor {expected} --secrets HF_TOKEN")
+
+
 @pytest.mark.parametrize("is_private", [False, True])
 def test_private_destination_visibility_checked_before_loading_data(monkeypatch, is_private):
     monkeypatch.setattr("sys.argv", [str(SCRIPT), "fixture", "user/model", "--private", "--hf-token", "fake"])
